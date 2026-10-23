@@ -2602,6 +2602,14 @@ components:
         state:
           type: string
           enum: [LOCKED, AVAILABLE, IN_PROGRESS, COMPLETED]
+        lockedReason:
+          type: ["string", "null"]
+          enum: [quota_exhausted, null]
+          description: >-
+            Set when the lesson is locked by the student's PLAN rather than by
+            curriculum progression, so the UI can offer an upgrade instead of
+            "finish the previous lesson". Null when the lock is ordinary
+            progression, or when the lesson is not locked.
         isUnlocked:
           type: boolean
         isCompleted:
@@ -2997,9 +3005,19 @@ components:
             type: string
         includesConversationPartner:
           type: boolean
-        lessonsAccess:
+        lessonTrack:
           type: string
-          enum: [a1_only, full, professional_only]
+          description: >-
+            Which content track this plan unlocks, matched for equality against
+            a lesson's lessonType. The tracks are mutually exclusive, not
+            nested: a general subscriber does not see professional lessons.
+          example: general
+        freeLessonQuota:
+          type: ["integer", "null"]
+          description: >-
+            How many distinct lessons a subscriber may start. Null means
+            unlimited. 1 on the free plan — the single trial lesson after the
+            placement test.
 
     SubscriptionInput:
       type: object

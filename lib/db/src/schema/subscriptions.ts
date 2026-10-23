@@ -14,7 +14,23 @@ export const subscriptionPlansTable = pgTable("subscription_plans", {
   features: text("features").array().notNull().default([]),
   featuresAr: text("features_ar").array().notNull().default([]),
   includesConversationPartner: boolean("includes_conversation_partner").notNull().default(false),
-  lessonsAccess: text("lessons_access", { enum: ["a1_only", "full", "professional_only"] }).notNull().default("a1_only"),
+  /**
+   * Which content track this plan unlocks, matched against `lessons.lessonType`.
+   *
+   * The tracks are mutually exclusive, not nested: a `general` subscriber must
+   * not see professional lessons and a `professional` subscriber must not see
+   * general ones. Plain text rather than an enum, matching `lessons.lessonType`
+   * — that column was deliberately widened from a pgEnum so a new lesson type
+   * needs only an INSERT (docs/multi-curriculum-arch.md).
+   */
+  lessonTrack: text("lesson_track").notNull().default("general"),
+  /**
+   * How many distinct lessons a subscriber may start. `null` means unlimited.
+   *
+   * 1 on the free plan: the single trial lesson a student gets after placement,
+   * before everything locks.
+   */
+  freeLessonQuota: integer("free_lesson_quota"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

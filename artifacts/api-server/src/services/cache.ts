@@ -35,7 +35,7 @@
  *   v1:curricula:list
  *   v1:sub:plans
  *   v1:levels:c:{curriculumId}
- *   v1:lesson:{lessonId}:content
+ *   v2:lesson:{lessonId}:content
  *   v1:vocab:lesson:{lessonId}
  *   v1:vocab:level:{levelId}
  */
@@ -65,7 +65,11 @@ export const CK = {
   curriculaList:      () => "v1:curricula:list",
   subPlans:           () => "v1:sub:plans",
   levelsByCurriculum: (cid: number) => `v1:levels:c:${cid}`,
-  lessonContent:      (lid: number) => `v1:lesson:${lid}:content`,
+  // v2: the bundle gained `lesson.track`, which the paywall matches against the
+  // student's plan. A v1 entry written before that deploy has no track, so the
+  // check would compare against undefined and 403 a paying student until the
+  // entry expired. Bumping the version retires those entries on deploy.
+  lessonContent:      (lid: number) => `v2:lesson:${lid}:content`,
   vocabByLesson:      (lid: number) => `v1:vocab:lesson:${lid}`,
   vocabByLevel:       (lid: number) => `v1:vocab:level:${lid}`,
 } as const;

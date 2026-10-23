@@ -358,6 +358,17 @@ export const LessonSummaryState = {
   COMPLETED: 'COMPLETED',
 } as const;
 
+/**
+ * Set when the lesson is locked by the student's PLAN rather than by curriculum progression, so the UI can offer an upgrade instead of "finish the previous lesson". Null when the lock is ordinary progression, or when the lesson is not locked.
+ * @nullable
+ */
+export type LessonSummaryLockedReason = typeof LessonSummaryLockedReason[keyof typeof LessonSummaryLockedReason] | null;
+
+
+export const LessonSummaryLockedReason = {
+  quota_exhausted: 'quota_exhausted',
+} as const;
+
 export interface LessonSummary {
   id: number;
   levelId: number;
@@ -372,6 +383,11 @@ export interface LessonSummary {
   lessonType: LessonSummaryLessonType;
   estimatedMinutes: number;
   state: LessonSummaryState;
+  /**
+     * Set when the lesson is locked by the student's PLAN rather than by curriculum progression, so the UI can offer an upgrade instead of "finish the previous lesson". Null when the lock is ordinary progression, or when the lesson is not locked.
+     * @nullable
+     */
+  lockedReason?: LessonSummaryLockedReason;
   isUnlocked: boolean;
   isCompleted: boolean;
   /** @nullable */
@@ -810,15 +826,6 @@ export const SubscriptionPlanBillingCycle = {
   yearly: 'yearly',
 } as const;
 
-export type SubscriptionPlanLessonsAccess = typeof SubscriptionPlanLessonsAccess[keyof typeof SubscriptionPlanLessonsAccess];
-
-
-export const SubscriptionPlanLessonsAccess = {
-  a1_only: 'a1_only',
-  full: 'full',
-  professional_only: 'professional_only',
-} as const;
-
 export interface SubscriptionPlan {
   id: number;
   code: SubscriptionPlanCode;
@@ -834,7 +841,13 @@ export interface SubscriptionPlan {
   features: string[];
   featuresAr: string[];
   includesConversationPartner?: boolean;
-  lessonsAccess?: SubscriptionPlanLessonsAccess;
+  /** Which content track this plan unlocks, matched for equality against a lesson's lessonType. The tracks are mutually exclusive, not nested: a general subscriber does not see professional lessons. */
+  lessonTrack?: string;
+  /**
+     * How many distinct lessons a subscriber may start. Null means unlimited. 1 on the free plan — the single trial lesson after the placement test.
+     * @nullable
+     */
+  freeLessonQuota?: number | null;
 }
 
 export type SubscriptionInputPlanCode = typeof SubscriptionInputPlanCode[keyof typeof SubscriptionInputPlanCode];

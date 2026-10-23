@@ -30,7 +30,8 @@ router.get("/subscription-plans", async (_req, res): Promise<void> => {
       features: p.features ?? [],
       featuresAr: p.featuresAr ?? [],
       includesConversationPartner: p.includesConversationPartner,
-      lessonsAccess: p.lessonsAccess,
+      lessonTrack: p.lessonTrack,
+      freeLessonQuota: p.freeLessonQuota,
     }));
   });
 

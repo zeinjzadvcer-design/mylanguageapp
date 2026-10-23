@@ -23,24 +23,34 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
+/**
+ * The two paid plans are mutually exclusive CONTENT TRACKS, not tiers: neither
+ * is a superset of the other, and `lessonTrack` is matched for equality against
+ * `lessons.lesson_type`. A general subscriber never sees professional lessons
+ * and vice versa.
+ *
+ * `freeLessonQuota` is how many distinct lessons may be STARTED; null is
+ * unlimited. The free plan's 1 is the single trial lesson a student gets after
+ * the placement test, before everything locks.
+ */
 const PLANS = [
   {
     code: 'free', name: 'Free', nameAr: 'مجاني',
-    priceUsd: 0, lessonsAccess: 'a1_only',
-    description: 'Access to A1.1 only',
-    descriptionAr: 'الوصول إلى المستوى A1.1 فقط',
+    priceUsd: 0, lessonTrack: 'general', freeLessonQuota: 1,
+    description: 'Placement test and one free lesson',
+    descriptionAr: 'اختبار تحديد المستوى ودرس مجاني واحد',
   },
   {
     code: 'general_english', name: 'General English', nameAr: 'الإنجليزية العامة',
-    priceUsd: 2, lessonsAccess: 'full',
-    description: 'Full access to A1–C2',
-    descriptionAr: 'وصول كامل من A1 إلى C2',
+    priceUsd: 2, lessonTrack: 'general', freeLessonQuota: null,
+    description: 'Full access to the general track, A1–C2',
+    descriptionAr: 'وصول كامل لمسار اللغة العامة من A1 إلى C2',
   },
   {
     code: 'professional_english', name: 'Professional English', nameAr: 'الإنجليزية المهنية',
-    priceUsd: 4, lessonsAccess: 'full',
-    description: 'Full access plus business vocabulary',
-    descriptionAr: 'وصول كامل بالإضافة إلى مفردات الأعمال',
+    priceUsd: 4, lessonTrack: 'professional', freeLessonQuota: null,
+    description: 'Full access to the professional track, A1–C2',
+    descriptionAr: 'وصول كامل لمسار اللغة المهنية من A1 إلى C2',
   },
 ];
 
@@ -207,11 +217,23 @@ try {
   // ── Subscription plans ────────────────────────────────────────────────────
   for (const p of PLANS) {
     await client.query(
+      // Access columns and copy are UPDATEd on conflict rather than left alone.
+      // Migration 021 backfills lesson_track and free_lesson_quota, but the old
+      // descriptions ("Access to A1.1 only", "Full access plus business
+      // vocabulary") describe a model the product no longer sells, and an
+      // existing database would keep showing them to students. Price is left
+      // untouched on purpose: it is an admin's to set, not the seed's to reset.
       `INSERT INTO subscription_plans
-         (code, name, name_ar, price_usd, lessons_access, description, description_ar)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (code) DO NOTHING`,
-      [p.code, p.name, p.nameAr, p.priceUsd, p.lessonsAccess, p.description, p.descriptionAr],
+         (code, name, name_ar, price_usd, lesson_track, free_lesson_quota,
+          description, description_ar)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (code) DO UPDATE SET
+         lesson_track      = EXCLUDED.lesson_track,
+         free_lesson_quota = EXCLUDED.free_lesson_quota,
+         description       = EXCLUDED.description,
+         description_ar    = EXCLUDED.description_ar`,
+      [p.code, p.name, p.nameAr, p.priceUsd, p.lessonTrack, p.freeLessonQuota,
+       p.description, p.descriptionAr],
     );
   }
   console.log(`Subscription plans: ${PLANS.length} ensured.`);
