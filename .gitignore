@@ -50,3 +50,37 @@ Thumbs.db
 
 # Local env
 .env
+
+# Backups made while editing .env hold the same secrets the file does.
+.env.bak*
+.env.local
+.env.*.local
+
+# Credentials kept loose in the working tree. Listed individually rather than
+# as *.txt so a deliberate text file can still be committed, and by pattern so
+# the next one does not have to be remembered.
+*_key.txt
+*-key.txt
+*.token.txt
+*-token.txt
+claude-token.txt
+assemblyAi_key.txt
+
+# Per-machine compose overrides. The file in this repo says so itself: it
+# carries local networking workarounds (DNS resolvers, IPv4-first, a substitute
+# image) that would be wrong on anyone else's machine and on every deployment.
+docker-compose.override.yml
+
+# Deployment credentials collected by hand while provisioning. These hold
+# live database URIs, storage keys and session secrets — the whole deployment
+# in one file.
+deploy_details.txt
+deploy-details.txt
+*credentials*.txt
+*secrets*.txt
+
+# Local scratch: notes, exports, and the stray NUL that Windows redirection
+# leaves behind.
+notes.txt
+NUL
+*.pdf
