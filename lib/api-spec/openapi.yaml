@@ -597,6 +597,8 @@ paths:
                 properties:
                   shamCash:
                     $ref: "#/components/schemas/ShamCashDetails"
+                  crypto:
+                    $ref: "#/components/schemas/CryptoPaymentDetails"
         "401":
           description: Not authenticated
           content:
@@ -655,6 +657,49 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: A payment for this subscription is already under review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /subscription/crypto-submissions:
+    post:
+      operationId: createCryptoSubmission
+      tags: [subscriptions]
+      summary: Submit a BEP-20 transaction hash for automatic verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CryptoSubmissionInput"
+      responses:
+        "201":
+          description: Accepted, verification in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSubmission"
+        "400":
+          description: Malformed transaction hash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No pending subscription found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: That transaction has already bought a subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Crypto payments are not enabled on this deployment
           content:
             application/json:
               schema:
@@ -3126,6 +3171,40 @@ components:
           description: >-
             False when no QR has been uploaded, so the payment page can explain
             rather than showing an empty box the student cannot act on.
+
+    CryptoPaymentDetails:
+      type: object
+      description: Where to send USDT, and on which network.
+      properties:
+        configured:
+          type: boolean
+        walletAddress:
+          type: ["string", "null"]
+          description: >-
+            Read-only. Set by deploy configuration and never writable from the
+            app: it is the trust anchor of the automated path, since payments
+            to it activate a subscription with no human review.
+        network:
+          type: string
+          example: BEP20
+        networkLabel:
+          type: string
+          description: >-
+            Shown prominently. A student who sends TRC-20 or ERC-20 USDT to
+            this 0x address loses the money permanently.
+        tokenSymbol:
+          type: string
+          example: USDT
+
+    CryptoSubmissionInput:
+      type: object
+      required: [subscriptionId, txHash]
+      properties:
+        subscriptionId:
+          type: number
+        txHash:
+          type: string
+          description: A 0x-prefixed 64-hex-character BNB Smart Chain transaction hash.
 
     PaymentSubmissionInput:
       type: object

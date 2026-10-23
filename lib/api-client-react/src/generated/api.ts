@@ -33,6 +33,7 @@ import type {
   ConversationStartInput,
   ConversationTurn,
   ConversationTurnInput,
+  CryptoSubmissionInput,
   Curriculum,
   DashboardStats,
   ErrorResponse,
@@ -1941,6 +1942,77 @@ export const useCreatePaymentSubmission = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getCreatePaymentSubmissionMutationOptions(options));
+    }
+
+export const getCreateCryptoSubmissionUrl = () => {
+
+
+
+
+  return `/api/subscription/crypto-submissions`
+}
+
+/**
+ * @summary Submit a BEP-20 transaction hash for automatic verification
+ */
+export const createCryptoSubmission = async (cryptoSubmissionInput: CryptoSubmissionInput, options?: Parameters<typeof customFetch>[1]): Promise<PaymentSubmission> => {
+
+  return customFetch<PaymentSubmission>(getCreateCryptoSubmissionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(cryptoSubmissionInput)
+  }
+);}
+
+
+
+
+
+export const getCreateCryptoSubmissionMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCryptoSubmission>>, TError,{data: BodyType<CryptoSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createCryptoSubmission>>, TError,{data: BodyType<CryptoSubmissionInput>}, TContext> => {
+
+const mutationKey = ['createCryptoSubmission'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createCryptoSubmission>>, {data: BodyType<CryptoSubmissionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createCryptoSubmission(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateCryptoSubmissionMutationResult = NonNullable<Awaited<ReturnType<typeof createCryptoSubmission>>>
+    export type CreateCryptoSubmissionMutationBody = BodyType<CryptoSubmissionInput>
+    export type CreateCryptoSubmissionMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Submit a BEP-20 transaction hash for automatic verification
+ */
+export const useCreateCryptoSubmission = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCryptoSubmission>>, TError,{data: BodyType<CryptoSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createCryptoSubmission>>,
+        TError,
+        {data: BodyType<CryptoSubmissionInput>},
+        TContext
+      > => {
+      return useMutation(getCreateCryptoSubmissionMutationOptions(options));
     }
 
 export const getGetSubscriptionPlansUrl = () => {

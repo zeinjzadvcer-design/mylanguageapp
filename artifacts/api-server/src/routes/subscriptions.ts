@@ -11,6 +11,9 @@ import {
 import { requireAuth } from "../middlewares/auth";
 import { cached, CK, TTL } from "../services/cache";
 import { getShamCashDetails } from "../services/payment-settings";
+import { cryptoConfig } from "../services/crypto-config";
+import { isValidTxHash } from "../services/crypto-verify-policy";
+import { verifySubmission } from "../services/crypto-verify";
 
 const router: IRouter = Router();
 
@@ -219,7 +222,25 @@ router.get(
  */
 router.get("/subscription/payment-details", requireAuth, async (_req, res): Promise<void> => {
   const shamCash = await getShamCashDetails();
-  res.json({ shamCash });
+  const crypto = cryptoConfig();
+
+  res.json({
+    shamCash,
+    crypto: {
+      configured: crypto.enabled,
+      // Shown for the student to send to. Only ever read here; it is set by
+      // deploy configuration and nothing in the app can change it.
+      walletAddress: crypto.enabled ? crypto.walletAddress : null,
+      /**
+       * The network, carried explicitly so the UI can shout about it. A
+       * student who sends TRC-20 USDT to a 0x address loses the money
+       * permanently, and 0x addresses look valid on Ethereum too.
+       */
+      network: "BEP20",
+      networkLabel: "BNB Smart Chain (BEP-20)",
+      tokenSymbol: "USDT",
+    },
+  });
 });
 
 const submissionSchema = z.object({
@@ -353,6 +374,128 @@ router.post(
       status: submission.status,
       amountExpected: submission.amountExpected,
       createdAt: submission.createdAt.toISOString(),
+    });
+  },
+);
+
+const cryptoSubmissionSchema = z.object({
+  subscriptionId: z.number().int().positive(),
+  txHash: z.string().trim(),
+});
+
+/**
+ * POST /subscription/crypto-submissions
+ *
+ * The automated path. A student sends USDT to our wallet and gives us the
+ * transaction hash; we look it up on BNB Smart Chain and, if it genuinely paid
+ * the right amount to the right address with the right token, activate without
+ * anyone reviewing it.
+ */
+router.post(
+  "/subscription/crypto-submissions",
+  requireAuth,
+  async (req, res): Promise<void> => {
+    const userId = req.session.userId!;
+
+    if (!cryptoConfig().enabled) {
+      res.status(503).json({ error: "Crypto payments are not enabled" });
+      return;
+    }
+
+    const parsed = cryptoSubmissionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "A subscription and transaction hash are required" });
+      return;
+    }
+
+    const subscriptionId = parsed.data.subscriptionId;
+    // Normalised once. The unique index is on lower(tx_hash), so storing mixed
+    // case would let the same transaction be submitted twice in two spellings.
+    const txHash = parsed.data.txHash.toLowerCase();
+
+    if (!isValidTxHash(txHash)) {
+      res.status(400).json({
+        error: "That does not look like a BNB Smart Chain transaction hash",
+        errorAr: "معرّف العملية غير صحيح. يجب أن يبدأ بـ 0x ويتكون من 64 خانة.",
+      });
+      return;
+    }
+
+    const [subscription] = await db
+      .select()
+      .from(studentSubscriptionsTable)
+      .where(
+        and(
+          eq(studentSubscriptionsTable.id, subscriptionId),
+          eq(studentSubscriptionsTable.userId, userId),
+          eq(studentSubscriptionsTable.status, "pending_payment"),
+        ),
+      )
+      .limit(1);
+
+    if (!subscription) {
+      res.status(404).json({ error: "No pending subscription found" });
+      return;
+    }
+
+    const [plan] = await db
+      .select({ priceUsd: subscriptionPlansTable.priceUsd })
+      .from(subscriptionPlansTable)
+      .where(sql`${subscriptionPlansTable.code} = ${subscription.planCode}`)
+      .limit(1);
+
+    if (!plan) {
+      res.status(400).json({ error: "Plan not found" });
+      return;
+    }
+
+    let submissionId: number;
+
+    try {
+      const [submission] = await db
+        .insert(paymentSubmissionsTable)
+        .values({
+          subscriptionId,
+          userId,
+          method: "crypto_usdt_bep20",
+          // Starts at `verifying`: the job below decides, and a submission
+          // nobody has checked yet should not sit in the admin queue.
+          status: "verifying",
+          amountExpected: plan.priceUsd.toFixed(2),
+          txHash,
+        })
+        .returning();
+      submissionId = submission.id;
+    } catch (err) {
+      // The unique index on lower(tx_hash) is what stops one paid transaction
+      // buying ten subscriptions. Catching the violation here turns it into a
+      // clear refusal rather than a 500 — and it is the database, not a prior
+      // SELECT, that decides, so two simultaneous submissions cannot both win.
+      const code = (err as { code?: string }).code;
+      if (code === "23505") {
+        res.status(409).json({
+          error: "That transaction has already been used for a subscription",
+          errorAr: "تم استخدام معرّف هذه العملية مسبقاً لاشتراك آخر.",
+        });
+        return;
+      }
+      throw err;
+    }
+
+    // Check now so a student who already has their confirmations is activated
+    // while they are still looking at the screen. Not awaited: an RPC round
+    // trip must not hold the response open, and the sweeper re-checks anything
+    // this misses.
+    void verifySubmission(submissionId).catch(() => {
+      // Already logged inside; the sweeper will try again.
+    });
+
+    res.status(201).json({
+      id: submissionId,
+      subscriptionId,
+      method: "crypto_usdt_bep20",
+      status: "verifying",
+      amountExpected: plan.priceUsd.toFixed(2),
     });
   },
 );

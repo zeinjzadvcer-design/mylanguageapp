@@ -890,6 +890,28 @@ export interface ShamCashDetails {
   configured?: boolean;
 }
 
+/**
+ * Where to send USDT, and on which network.
+ */
+export interface CryptoPaymentDetails {
+  configured?: boolean;
+  /**
+     * Read-only. Set by deploy configuration and never writable from the app: it is the trust anchor of the automated path, since payments to it activate a subscription with no human review.
+     * @nullable
+     */
+  walletAddress?: string | null;
+  network?: string;
+  /** Shown prominently. A student who sends TRC-20 or ERC-20 USDT to this 0x address loses the money permanently. */
+  networkLabel?: string;
+  tokenSymbol?: string;
+}
+
+export interface CryptoSubmissionInput {
+  subscriptionId: number;
+  /** A 0x-prefixed 64-hex-character BNB Smart Chain transaction hash. */
+  txHash: string;
+}
+
 export interface PaymentSubmissionInput {
   subscriptionId: number;
   /** A completed payment_receipt upload belonging to the caller. Required — a claim with no proof is not reviewable. */
@@ -2170,6 +2192,7 @@ levelId?: number;
 
 export type GetPaymentDetails200 = {
   shamCash?: ShamCashDetails;
+  crypto?: CryptoPaymentDetails;
 };
 
 export type GetAdminStudentsParams = {

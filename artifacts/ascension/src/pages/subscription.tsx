@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useGetSubscriptionPlans, useGetSubscription, useCreateSubscription } from "@workspace/api-client-react";
 import { ShamCashPayment } from "@/components/sham-cash-payment";
+import { CryptoPayment } from "@/components/crypto-payment";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,7 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { CheckCircle2, Crown, AlertTriangle, Loader2 } from "lucide-react";
+import { CheckCircle2, Crown, Loader2 } from "lucide-react";
 import { SubscriptionInputPlanCode, SubscriptionInputPaymentMethod } from "@workspace/api-client-react";
 
 export default function Subscription() {
@@ -194,15 +195,15 @@ export default function Subscription() {
                 }}
               />
             ) : (
-              /* Crypto is step 4. Saying so is better than a dead dialog. */
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 text-amber-800">
-                <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
-                <div className="text-sm leading-relaxed">
-                  <strong>الدفع بالعملات الرقمية قيد التجهيز.</strong>
-                  <br />
-                  يرجى اختيار شام كاش في الوقت الحالي.
-                </div>
-              </div>
+              <CryptoPayment
+                subscriptionId={pending.id}
+                priceUsd={pending.priceUsd}
+                onSubmitted={() => {
+                  setSelectedPlanCode(null);
+                  setPending(null);
+                  refetch();
+                }}
+              />
             )
           ) : (
             <>

@@ -16,10 +16,25 @@
 
 import { logger } from "../lib/logger";
 import { expireSubscriptions } from "./subscription-activation";
+import { sweepPendingVerifications } from "./crypto-verify";
 
 const INTERVAL_MS = parseInt(process.env.SUBSCRIPTION_SWEEP_INTERVAL_MS ?? "3600000", 10);
 
+/**
+ * Crypto verification runs far more often than expiry.
+ *
+ * A student who submits a transaction hash seconds after sending is waiting on
+ * confirmations that arrive about a minute later, with no further request to
+ * trigger a re-check. Making them wait an hour for a payment the chain already
+ * settled would be the worst part of the whole flow.
+ */
+const VERIFY_INTERVAL_MS = parseInt(
+  process.env.CRYPTO_VERIFY_INTERVAL_MS ?? "60000",
+  10,
+);
+
 let timer: NodeJS.Timeout | null = null;
+let verifyTimer: NodeJS.Timeout | null = null;
 
 /**
  * Start sweeping on an interval.
@@ -47,13 +62,25 @@ export function startSubscriptionSweeper(): void {
     });
   }, INTERVAL_MS);
 
-  // Do not hold the process open for the timer alone.
-  timer.unref?.();
+  verifyTimer = setInterval(() => {
+    void sweepPendingVerifications().catch((err) => {
+      logger.error({ err }, "Crypto verification sweep failed");
+    });
+  }, VERIFY_INTERVAL_MS);
 
-  logger.info({ intervalMs: INTERVAL_MS }, "Subscription sweeper started");
+  // Do not hold the process open for the timers alone.
+  timer.unref?.();
+  verifyTimer.unref?.();
+
+  logger.info(
+    { intervalMs: INTERVAL_MS, verifyIntervalMs: VERIFY_INTERVAL_MS },
+    "Subscription sweeper started",
+  );
 }
 
 export function stopSubscriptionSweeper(): void {
   if (timer) clearInterval(timer);
+  if (verifyTimer) clearInterval(verifyTimer);
   timer = null;
+  verifyTimer = null;
 }
