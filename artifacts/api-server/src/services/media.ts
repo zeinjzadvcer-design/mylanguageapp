@@ -21,14 +21,18 @@ import {
   storage,
   recordingKey,
   curriculumKey,
+  paymentImageKey,
   ALLOWED_AUDIO_TYPES,
   ALLOWED_CMS_TYPES,
+  ALLOWED_PAYMENT_IMAGE_TYPES,
+  MAX_PAYMENT_IMAGE_BYTES,
   MAX_RECORDING_BYTES,
   MAX_CMS_BYTES,
   MAX_RECORDING_SECONDS,
   type PresignedUpload,
 } from "./storage";
 import { logger } from "../lib/logger";
+import { canReadMediaAsset } from "./entitlement-policy";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,7 +46,21 @@ export type MediaPurpose =
    * reachable by a route that accepts a student's own `lesson_activity`
    * recording, and it is deleted once the transcript exists.
    */
-  | "practice_call";
+  | "practice_call"
+  /**
+   * A student's proof of a ShamCash transfer. Owned by that student, readable
+   * by them and by staff reviewing the payment — the same rule as a recording,
+   * which is why it reuses `ownerUserId` rather than needing its own.
+   */
+  | "payment_receipt"
+  /**
+   * The ShamCash receive QR an admin uploads for students to scan.
+   *
+   * The one payment asset with NO owner: every student must be able to see it,
+   * exactly like curriculum material. Setting an owner here would hide the QR
+   * from everyone but the admin who uploaded it.
+   */
+  | "payment_qr";
 
 export interface BeginUploadInput {
   userId: number;
@@ -103,8 +121,18 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
   const { userId, purpose, contentType, sizeBytes, durationSec, originalName } = input;
 
   const isCurriculum = purpose === "curriculum";
-  const allowed = isCurriculum ? ALLOWED_CMS_TYPES : ALLOWED_AUDIO_TYPES;
-  const maxBytes = isCurriculum ? MAX_CMS_BYTES : MAX_RECORDING_BYTES;
+  const isPaymentImage = purpose === "payment_receipt" || purpose === "payment_qr";
+
+  const allowed = isPaymentImage
+    ? ALLOWED_PAYMENT_IMAGE_TYPES
+    : isCurriculum
+      ? ALLOWED_CMS_TYPES
+      : ALLOWED_AUDIO_TYPES;
+  const maxBytes = isPaymentImage
+    ? MAX_PAYMENT_IMAGE_BYTES
+    : isCurriculum
+      ? MAX_CMS_BYTES
+      : MAX_RECORDING_BYTES;
 
   // MediaRecorder reports the codec alongside the type — "audio/webm;codecs=opus".
   // The allowlist holds bare types, so compare on the type and keep the
@@ -132,6 +160,7 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
 
   if (
     !isCurriculum &&
+    !isPaymentImage &&
     durationSec != null &&
     (!Number.isFinite(durationSec) || durationSec > MAX_RECORDING_SECONDS)
   ) {
@@ -141,7 +170,9 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
     );
   }
 
-  if (!isCurriculum) {
+  // The daily cap counts recordings. A payment image is not one, and a student
+  // who has been practising all day must still be able to send a receipt.
+  if (!isCurriculum && !isPaymentImage) {
     const used = await countTodaysUploads(userId);
     if (used >= DAILY_RECORDING_LIMIT) {
       throw new MediaValidationError(
@@ -151,9 +182,11 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
     }
   }
 
-  const key = isCurriculum
-    ? curriculumKey(baseContentType, originalName)
-    : recordingKey(userId, baseContentType);
+  const key = isPaymentImage
+    ? paymentImageKey(purpose === "payment_qr" ? "qr" : "receipt", userId, baseContentType)
+    : isCurriculum
+      ? curriculumKey(baseContentType, originalName)
+      : recordingKey(userId, baseContentType);
 
   const upload = await storage.presignUpload(key, baseContentType);
 
@@ -166,8 +199,10 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
       sizeBytes,
       durationSec: durationSec ?? null,
       // Curriculum media belongs to the curriculum, not to the staff member who
-      // uploaded it — otherwise no student could ever play it back.
-      ownerUserId: isCurriculum ? null : userId,
+      // uploaded it — otherwise no student could ever play it back. The payment
+      // QR is the same case: every student has to be able to see it to pay.
+      // A receipt is the opposite — it is the student's own, like a recording.
+      ownerUserId: isCurriculum || purpose === "payment_qr" ? null : userId,
       status: "pending",
       purpose,
       createdBy: userId,
@@ -279,12 +314,10 @@ const STAFF_ROLES = new Set(["admin", "content_manager", "content_reviewer"]);
  * it to grade speaking work. Nobody else, ever.
  */
 export function canReadAsset(
-  asset: { ownerUserId: number | null },
+  asset: { ownerUserId: number | null; purpose?: string | null },
   viewer: { userId: number; role: string | undefined },
 ): boolean {
-  if (asset.ownerUserId === null) return true;
-  if (asset.ownerUserId === viewer.userId) return true;
-  return STAFF_ROLES.has(viewer.role ?? "");
+  return canReadMediaAsset(asset, viewer, STAFF_ROLES);
 }
 
 /**

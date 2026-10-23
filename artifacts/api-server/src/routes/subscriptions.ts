@@ -1,14 +1,16 @@
 import { Router, type IRouter } from "express";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   db,
   subscriptionPlansTable,
   studentSubscriptionsTable,
   paymentSubmissionsTable,
+  mediaAssetsTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { cached, CK, TTL } from "../services/cache";
+import { getShamCashDetails } from "../services/payment-settings";
 
 const router: IRouter = Router();
 
@@ -206,6 +208,152 @@ router.get(
         reviewedAt: r.reviewedAt?.toISOString() ?? null,
       })),
     );
+  },
+);
+
+/**
+ * GET /subscription/payment-details
+ *
+ * Everything a student needs on screen to pay. ShamCash details come from the
+ * admin-managed settings row; the crypto side is step 4.
+ */
+router.get("/subscription/payment-details", requireAuth, async (_req, res): Promise<void> => {
+  const shamCash = await getShamCashDetails();
+  res.json({ shamCash });
+});
+
+const submissionSchema = z.object({
+  subscriptionId: z.number().int().positive(),
+  /**
+   * The receipt image, from the media upload handshake. Required for ShamCash:
+   * a claim with no proof is not reviewable, and an admin would have to reject
+   * it anyway.
+   */
+  receiptMediaId: z.number().int().positive(),
+  /** The student describing what they did. Shown to the admin as-is. */
+  studentNote: z.string().trim().max(2000).optional(),
+});
+
+/**
+ * POST /subscription/payment-submissions
+ *
+ * A student saying "I paid, here is the proof". Creates a pending submission
+ * for an admin to review; it grants nothing on its own.
+ */
+router.post(
+  "/subscription/payment-submissions",
+  requireAuth,
+  async (req, res): Promise<void> => {
+    const userId = req.session.userId!;
+
+    const parsed = submissionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "A receipt image and subscription are required" });
+      return;
+    }
+    const { subscriptionId, receiptMediaId, studentNote } = parsed.data;
+
+    // The subscription must be the caller's own and still awaiting payment.
+    // Checked rather than trusted: the id comes from the request body, and
+    // without this a student could attach a receipt to someone else's
+    // subscription and have an admin activate it.
+    const [subscription] = await db
+      .select()
+      .from(studentSubscriptionsTable)
+      .where(
+        and(
+          eq(studentSubscriptionsTable.id, subscriptionId),
+          eq(studentSubscriptionsTable.userId, userId),
+          eq(studentSubscriptionsTable.status, "pending_payment"),
+        ),
+      )
+      .limit(1);
+
+    if (!subscription) {
+      res.status(404).json({ error: "No pending subscription found" });
+      return;
+    }
+
+    // The receipt must be this student's own completed upload of the right
+    // purpose — the same check assertUsableRecording makes for audio, for the
+    // same reason: a media id from the body is otherwise a pointer to any
+    // object in the bucket.
+    const [asset] = await db
+      .select({
+        ownerUserId: mediaAssetsTable.ownerUserId,
+        purpose: mediaAssetsTable.purpose,
+        status: mediaAssetsTable.status,
+      })
+      .from(mediaAssetsTable)
+      .where(eq(mediaAssetsTable.id, receiptMediaId))
+      .limit(1);
+
+    if (
+      !asset ||
+      asset.purpose !== "payment_receipt" ||
+      asset.status !== "ready" ||
+      asset.ownerUserId !== userId
+    ) {
+      res.status(400).json({ error: "That receipt upload is not usable" });
+      return;
+    }
+
+    // Don't stack submissions: a student who sends a second receipt while one
+    // is still pending would otherwise give the admin two rows to reconcile
+    // for one payment.
+    const [existingPending] = await db
+      .select({ id: paymentSubmissionsTable.id })
+      .from(paymentSubmissionsTable)
+      .where(
+        and(
+          eq(paymentSubmissionsTable.subscriptionId, subscriptionId),
+          eq(paymentSubmissionsTable.status, "pending"),
+        ),
+      )
+      .limit(1);
+
+    if (existingPending) {
+      res.status(409).json({
+        error: "A payment for this subscription is already under review",
+        submissionId: existingPending.id,
+      });
+      return;
+    }
+
+    const [plan] = await db
+      .select({ priceUsd: subscriptionPlansTable.priceUsd })
+      .from(subscriptionPlansTable)
+      .where(sql`${subscriptionPlansTable.code} = ${subscription.planCode}`)
+      .limit(1);
+
+    if (!plan) {
+      res.status(400).json({ error: "Plan not found" });
+      return;
+    }
+
+    const [submission] = await db
+      .insert(paymentSubmissionsTable)
+      .values({
+        subscriptionId,
+        userId,
+        method: "sham_cash",
+        status: "pending",
+        // Snapshotted: a price change before review must not invalidate a
+        // payment that was correct when it was made.
+        amountExpected: plan.priceUsd.toFixed(2),
+        receiptMediaId,
+        studentNote: studentNote ?? null,
+      })
+      .returning();
+
+    res.status(201).json({
+      id: submission.id,
+      subscriptionId: submission.subscriptionId,
+      method: submission.method,
+      status: submission.status,
+      amountExpected: submission.amountExpected,
+      createdAt: submission.createdAt.toISOString(),
+    });
   },
 );
 

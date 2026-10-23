@@ -97,3 +97,32 @@ export function addBillingCycle(from: Date, cycle: string): Date {
   }
   return to;
 }
+
+/**
+ * Who may read a stored media asset.
+ *
+ * Lives here, away from the database, so the rule can be tested directly — it
+ * decides whether one student can read another's payment receipt, which is not
+ * a thing to find out from a failing integration test.
+ *
+ * Curriculum material and the ShamCash QR have no owner and are readable by
+ * anyone signed in: both are meant to be seen by every student. An owned asset
+ * is readable by its owner, and otherwise only by staff who need it.
+ */
+export function canReadMediaAsset(
+  asset: { ownerUserId: number | null; purpose?: string | null },
+  viewer: { userId: number; role: string | undefined },
+  staffRoles: ReadonlySet<string>,
+): boolean {
+  if (asset.ownerUserId === null) return true;
+  if (asset.ownerUserId === viewer.userId) return true;
+
+  // A payment receipt is a financial record, not coursework. The staff set is
+  // the people who review LESSON content — a content_manager and a
+  // content_reviewer are here to check exercises, and neither has any reason
+  // to see a student's bank transfer. Only an admin, the only role that can
+  // act on a payment at all, may read one.
+  if (asset.purpose === "payment_receipt") return viewer.role === "admin";
+
+  return staffRoles.has(viewer.role ?? "");
+}

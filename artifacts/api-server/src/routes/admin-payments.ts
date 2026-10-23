@@ -17,7 +17,9 @@ import { z } from "zod";
 import {
   db,
   paymentSubmissionsTable,
+  paymentSettingsTable,
   studentSubscriptionsTable,
+  mediaAssetsTable,
   usersTable,
 } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
@@ -26,6 +28,7 @@ import {
   rejectSubmission,
 } from "../services/subscription-activation";
 import { resolvePlaybackUrl } from "../services/media";
+import { SETTINGS_ROW_ID } from "../services/payment-settings";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -212,5 +215,100 @@ router.post(
     res.json({ ok: true });
   },
 );
+
+// ─── ShamCash receive settings ────────────────────────────────────────────────
+
+const settingsSchema = z.object({
+  /**
+   * A media id from the upload handshake, purpose `payment_qr`. Verified
+   * below — a client could otherwise point this at any asset in the bucket.
+   */
+  shamCashQrMediaId: z.number().int().positive().nullable().optional(),
+  shamCashAccountName: z.string().trim().max(200).nullable().optional(),
+  shamCashAccountNumber: z.string().trim().max(100).nullable().optional(),
+  shamCashInstructionsAr: z.string().trim().max(4000).nullable().optional(),
+});
+
+/** GET /admin/payment-settings — what students are currently shown. */
+router.get("/admin/payment-settings", requireAdmin, async (_req, res): Promise<void> => {
+  const [row] = await db
+    .select()
+    .from(paymentSettingsTable)
+    .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID))
+    .limit(1);
+
+  res.json({
+    shamCashQrMediaId: row?.shamCashQrMediaId ?? null,
+    shamCashAccountName: row?.shamCashAccountName ?? null,
+    shamCashAccountNumber: row?.shamCashAccountNumber ?? null,
+    shamCashInstructionsAr: row?.shamCashInstructionsAr ?? null,
+    updatedAt: row?.updatedAt?.toISOString() ?? null,
+  });
+});
+
+/**
+ * PATCH /admin/payment-settings
+ *
+ * Partial by design: an admin reissuing the QR should not have to retype the
+ * account number, and a typo in one field must not blank the others.
+ */
+router.patch("/admin/payment-settings", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = settingsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payment settings" });
+    return;
+  }
+
+  const patch = parsed.data;
+
+  // Verify the media id really is a ready payment QR before pointing students
+  // at it. Without this an admin could set it to any asset id — including
+  // another student's private recording, which would then be served to
+  // everyone as a "QR".
+  if (patch.shamCashQrMediaId != null) {
+    const [asset] = await db
+      .select({
+        purpose: mediaAssetsTable.purpose,
+        status: mediaAssetsTable.status,
+      })
+      .from(mediaAssetsTable)
+      .where(eq(mediaAssetsTable.id, patch.shamCashQrMediaId))
+      .limit(1);
+
+    if (!asset || asset.purpose !== "payment_qr" || asset.status !== "ready") {
+      res.status(400).json({
+        error: "That media id is not a completed payment QR upload",
+      });
+      return;
+    }
+  }
+
+  // Only the keys actually sent are written, so an omitted field keeps its
+  // value rather than being overwritten with undefined.
+  const update: Record<string, unknown> = { updatedBy: req.session.userId! };
+  if ("shamCashQrMediaId" in patch) update.shamCashQrMediaId = patch.shamCashQrMediaId;
+  if ("shamCashAccountName" in patch) update.shamCashAccountName = patch.shamCashAccountName;
+  if ("shamCashAccountNumber" in patch) update.shamCashAccountNumber = patch.shamCashAccountNumber;
+  if ("shamCashInstructionsAr" in patch) update.shamCashInstructionsAr = patch.shamCashInstructionsAr;
+
+  const [row] = await db
+    .update(paymentSettingsTable)
+    .set(update)
+    .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID))
+    .returning();
+
+  logger.info(
+    { adminId: req.session.userId, fields: Object.keys(patch) },
+    "ShamCash payment settings updated",
+  );
+
+  res.json({
+    shamCashQrMediaId: row?.shamCashQrMediaId ?? null,
+    shamCashAccountName: row?.shamCashAccountName ?? null,
+    shamCashAccountNumber: row?.shamCashAccountNumber ?? null,
+    shamCashInstructionsAr: row?.shamCashInstructionsAr ?? null,
+    updatedAt: row?.updatedAt?.toISOString() ?? null,
+  });
+});
 
 export default router;

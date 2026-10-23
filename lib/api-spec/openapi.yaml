@@ -582,6 +582,28 @@ paths:
 
   # ─── Subscriptions ──────────────────────────────────────────────────────────
 
+  /subscription/payment-details:
+    get:
+      operationId: getPaymentDetails
+      tags: [subscriptions]
+      summary: What a student needs on screen to pay
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shamCash:
+                    $ref: "#/components/schemas/ShamCashDetails"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /subscription/payment-submissions:
     get:
       operationId: getPaymentSubmissions
@@ -598,6 +620,41 @@ paths:
                   $ref: "#/components/schemas/PaymentSubmission"
         "401":
           description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createPaymentSubmission
+      tags: [subscriptions]
+      summary: Submit proof of a ShamCash transfer for review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentSubmissionInput"
+      responses:
+        "201":
+          description: Created, awaiting review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSubmission"
+        "400":
+          description: Receipt upload unusable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No pending subscription found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A payment for this subscription is already under review
           content:
             application/json:
               schema:
@@ -3050,6 +3107,40 @@ components:
         paymentMethod:
           type: string
           enum: [sham_cash, crypto_usdt_bep20]
+
+    ShamCashDetails:
+      type: object
+      description: The ShamCash receive details an admin has configured.
+      properties:
+        qrUrl:
+          type: ["string", "null"]
+          description: Signed URL for the receive QR, null when none is uploaded.
+        accountName:
+          type: ["string", "null"]
+        accountNumber:
+          type: ["string", "null"]
+        instructionsAr:
+          type: ["string", "null"]
+        configured:
+          type: boolean
+          description: >-
+            False when no QR has been uploaded, so the payment page can explain
+            rather than showing an empty box the student cannot act on.
+
+    PaymentSubmissionInput:
+      type: object
+      required: [subscriptionId, receiptMediaId]
+      properties:
+        subscriptionId:
+          type: number
+        receiptMediaId:
+          type: number
+          description: >-
+            A completed payment_receipt upload belonging to the caller. Required
+            — a claim with no proof is not reviewable.
+        studentNote:
+          type: string
+          maxLength: 2000
 
     PaymentSubmission:
       type: object

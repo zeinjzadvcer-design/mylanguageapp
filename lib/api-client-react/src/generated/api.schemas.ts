@@ -871,6 +871,33 @@ export interface SubscriptionInput {
   paymentMethod: SubscriptionInputPaymentMethod;
 }
 
+/**
+ * The ShamCash receive details an admin has configured.
+ */
+export interface ShamCashDetails {
+  /**
+     * Signed URL for the receive QR, null when none is uploaded.
+     * @nullable
+     */
+  qrUrl?: string | null;
+  /** @nullable */
+  accountName?: string | null;
+  /** @nullable */
+  accountNumber?: string | null;
+  /** @nullable */
+  instructionsAr?: string | null;
+  /** False when no QR has been uploaded, so the payment page can explain rather than showing an empty box the student cannot act on. */
+  configured?: boolean;
+}
+
+export interface PaymentSubmissionInput {
+  subscriptionId: number;
+  /** A completed payment_receipt upload belonging to the caller. Required — a claim with no proof is not reviewable. */
+  receiptMediaId: number;
+  /** @maxLength 2000 */
+  studentNote?: string;
+}
+
 export type PaymentSubmissionMethod = typeof PaymentSubmissionMethod[keyof typeof PaymentSubmissionMethod];
 
 
@@ -2139,6 +2166,10 @@ levelId?: number;
 export type GetVocabularyParams = {
 lessonId?: number;
 levelId?: number;
+};
+
+export type GetPaymentDetails200 = {
+  shamCash?: ShamCashDetails;
 };
 
 export type GetAdminStudentsParams = {

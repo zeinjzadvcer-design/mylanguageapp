@@ -44,6 +44,27 @@ export const ALLOWED_AUDIO_TYPES: Record<string, string> = {
   "audio/x-wav": "wav",
 };
 
+/**
+ * Payment images: a ShamCash receive QR uploaded by an admin, and a transfer
+ * receipt uploaded by a student.
+ *
+ * Images only, and deliberately not the CMS list — that one also admits audio
+ * and video, and a payment receipt is never either. Narrow on purpose: these
+ * are the one upload path where an unauthenticated-ish actor (any student)
+ * sends a file that staff will later open.
+ */
+export const ALLOWED_PAYMENT_IMAGE_TYPES: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+/**
+ * 8MB. A phone screenshot of a transfer confirmation is well under 1MB; the
+ * headroom is for an uncropped photo of a screen taken by a modern camera.
+ */
+export const MAX_PAYMENT_IMAGE_BYTES = 8 * 1024 * 1024;
+
 /** Curriculum media a content manager may upload. */
 export const ALLOWED_CMS_TYPES: Record<string, string> = {
   ...ALLOWED_AUDIO_TYPES,
@@ -128,6 +149,23 @@ export function recordingKey(userId: number, contentType: string): string {
 }
 
 /** Build the storage key for curriculum media uploaded by staff. */
+/**
+ * Storage key for a payment image.
+ *
+ * Namespaced away from recordings and curriculum material so a bucket policy,
+ * a lifecycle rule or a bulk delete aimed at one can never catch the other —
+ * these are financial records and outlive the lesson content around them.
+ */
+export function paymentImageKey(
+  kind: "receipt" | "qr",
+  userId: number,
+  contentType: string,
+): string {
+  const ext = ALLOWED_PAYMENT_IMAGE_TYPES[contentType] ?? "bin";
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `payments/${kind}/${userId}/${unique}.${ext}`;
+}
+
 export function curriculumKey(contentType: string, originalName?: string | null): string {
   const ext = ALLOWED_CMS_TYPES[contentType] ?? "bin";
   const slug = (originalName ?? "asset")

@@ -148,3 +148,36 @@ export const paymentSubmissionsTable = pgTable("payment_submissions", {
 }));
 
 export type PaymentSubmission = typeof paymentSubmissionsTable.$inferSelect;
+
+/**
+ * The ShamCash receive details students see. Singleton: `id` is always 1.
+ *
+ * Admin-editable, unlike the crypto wallet address which lives in env. The
+ * difference is the human: an admin reads every ShamCash receipt before any
+ * subscription activates, so a swapped QR surfaces as receipts naming an
+ * unfamiliar account. The crypto path has no such review, which makes its
+ * address a trust anchor that must not be changeable from the app.
+ */
+export const paymentSettingsTable = pgTable("payment_settings", {
+  id: integer("id").primaryKey().default(1),
+  /** Admin-uploaded receive QR, purpose `payment_qr`, owned by nobody. */
+  shamCashQrMediaId: integer("sham_cash_qr_media_id").references(
+    () => mediaAssetsTable.id,
+    { onDelete: "set null" },
+  ),
+  /** Shown beside the QR so a student can confirm the account before paying. */
+  shamCashAccountName: text("sham_cash_account_name"),
+  shamCashAccountNumber: text("sham_cash_account_number"),
+  /** Arabic payment instructions. Data, because wallet UIs change often. */
+  shamCashInstructionsAr: text("sham_cash_instructions_ar"),
+  /** These settings decide where money goes; changes must be attributable. */
+  updatedBy: integer("updated_by").references(() => usersTable.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export type PaymentSettings = typeof paymentSettingsTable.$inferSelect;

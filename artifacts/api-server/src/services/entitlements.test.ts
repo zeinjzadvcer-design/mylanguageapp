@@ -3,6 +3,7 @@ import {
   checkLessonAccess,
   isLessonInTrack,
   DENIAL_MESSAGES,
+  canReadMediaAsset,
   type Entitlement,
 } from "./entitlement-policy";
 
@@ -145,5 +146,63 @@ describe("DENIAL_MESSAGES", () => {
       expect(DENIAL_MESSAGES[reason].errorAr.trim()).not.toBe("");
       expect(DENIAL_MESSAGES[reason].error.trim()).not.toBe("");
     }
+  });
+});
+
+describe("canReadMediaAsset — payment receipts are financial records", () => {
+  const STAFF = new Set(["admin", "content_manager", "content_reviewer"]);
+  const receipt = { ownerUserId: 7, purpose: "payment_receipt" };
+  const recording = { ownerUserId: 7, purpose: "lesson_activity" };
+
+  it("lets the student read their own receipt", () => {
+    expect(
+      canReadMediaAsset(receipt, { userId: 7, role: "student" }, STAFF),
+    ).toBe(true);
+  });
+
+  it("refuses another student's receipt", () => {
+    expect(
+      canReadMediaAsset(receipt, { userId: 8, role: "student" }, STAFF),
+    ).toBe(false);
+  });
+
+  it("lets an admin read a receipt — they review the payment", () => {
+    expect(
+      canReadMediaAsset(receipt, { userId: 99, role: "admin" }, STAFF),
+    ).toBe(true);
+  });
+
+  it("refuses a content_manager, who may still read a recording", () => {
+    // The distinction that matters: these roles review lesson content, so they
+    // keep access to coursework and lose it for bank transfers.
+    expect(
+      canReadMediaAsset(receipt, { userId: 99, role: "content_manager" }, STAFF),
+    ).toBe(false);
+    expect(
+      canReadMediaAsset(recording, { userId: 99, role: "content_manager" }, STAFF),
+    ).toBe(true);
+  });
+
+  it("refuses a content_reviewer a receipt", () => {
+    expect(
+      canReadMediaAsset(receipt, { userId: 99, role: "content_reviewer" }, STAFF),
+    ).toBe(false);
+  });
+
+  it("lets anyone signed in see an unowned asset, such as the ShamCash QR", () => {
+    // The QR must be visible to every student or nobody can pay.
+    expect(
+      canReadMediaAsset(
+        { ownerUserId: null, purpose: "payment_qr" },
+        { userId: 8, role: "student" },
+        STAFF,
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses a viewer with no role at all", () => {
+    expect(
+      canReadMediaAsset(receipt, { userId: 8, role: undefined }, STAFF),
+    ).toBe(false);
   });
 });

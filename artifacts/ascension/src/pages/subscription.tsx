@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useGetSubscriptionPlans, useGetSubscription, useCreateSubscription } from "@workspace/api-client-react";
+import { ShamCashPayment } from "@/components/sham-cash-payment";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,6 +25,13 @@ export default function Subscription() {
 
   const [selectedPlanCode, setSelectedPlanCode] = useState<SubscriptionInputPlanCode | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<SubscriptionInputPaymentMethod>(SubscriptionInputPaymentMethod.sham_cash);
+  /**
+   * Set once the subscription row exists, which switches the dialog from
+   * "choose how to pay" to "here is how to pay". Held here rather than derived
+   * from `subscription`, because the row we need is the pending one this
+   * dialog just created, not whatever is currently active.
+   */
+  const [pending, setPending] = useState<{ id: number; priceUsd: number } | null>(null);
 
   const isLoading = plansLoading || subLoading;
 
@@ -44,12 +52,14 @@ export default function Subscription() {
     createSub.mutate(
       { data: { planCode: selectedPlanCode, paymentMethod } },
       {
-        onSuccess: () => {
-          toast({
-            title: "تم استلام الطلب",
-            description: "طلب الاشتراك قيد المراجعة حالياً. سيتم تفعيل حسابك قريباً.",
+        onSuccess: (sub) => {
+          // The subscription is only a placeholder at pending_payment; it
+          // grants nothing until proof of payment is reviewed. So rather than
+          // closing here, move the dialog on to the paying step.
+          setPending({
+            id: sub.id,
+            priceUsd: plans?.find((p) => p.code === selectedPlanCode)?.priceUsd ?? 0,
           });
-          setSelectedPlanCode(null);
           refetch();
         },
         onError: () => {
@@ -151,51 +161,81 @@ export default function Subscription() {
         })}
       </div>
 
-      <Dialog open={!!selectedPlanCode} onOpenChange={(open) => !open && setSelectedPlanCode(null)}>
-        <DialogContent className="sm:max-w-md bg-card" dir="rtl">
+      <Dialog
+        open={!!selectedPlanCode}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedPlanCode(null);
+            setPending(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md bg-card max-h-[90vh] overflow-y-auto" dir="rtl">
           <DialogHeader>
-            <DialogTitle className="text-2xl font-bold">تأكيد الاشتراك</DialogTitle>
+            <DialogTitle className="text-2xl font-bold">
+              {pending ? "إتمام الدفع" : "تأكيد الاشتراك"}
+            </DialogTitle>
             <DialogDescription className="text-base text-muted-foreground mt-2">
-              اختر طريقة الدفع المناسبة لك.
+              {pending
+                ? "حوّل المبلغ ثم أرسل صورة الإشعار لمراجعتها."
+                : "اختر طريقة الدفع المناسبة لك."}
             </DialogDescription>
           </DialogHeader>
-          
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 my-4 flex gap-3 text-amber-800">
-            <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
-            <div className="text-sm leading-relaxed">
-              <strong>سيتم تفعيل الدفع الآلي قريباً.</strong><br/>
-              حالياً، يرجى اختيار طريقة الدفع وسيتم تسجيل طلبك كـ "قيد التفعيل". يمكنك البدء بالدراسة ريثما يتم تفعيل الحساب برمجياً.
-            </div>
-          </div>
 
-          <div className="py-4">
-            <Label className="text-base font-bold mb-4 block">طريقة الدفع (Payment Method)</Label>
-            <RadioGroup 
-              value={paymentMethod} 
-              onValueChange={(val) => setPaymentMethod(val as SubscriptionInputPaymentMethod)}
-              className="space-y-3"
-            >
-              {/* شام كاش, not Syriatel/MTN: those are different companies and
-                  the QR the admin uploads is a ShamCash account. The label used
-                  to name all three, which would have sent students to the wrong
-                  wallet. */}
-              <div className="flex items-center space-x-3 space-x-reverse border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
-                <RadioGroupItem value={SubscriptionInputPaymentMethod.sham_cash} id="r1" />
-                <Label htmlFor="r1" className="cursor-pointer font-medium flex-1">شام كاش (محلي)</Label>
+          {pending ? (
+            paymentMethod === SubscriptionInputPaymentMethod.sham_cash ? (
+              <ShamCashPayment
+                subscriptionId={pending.id}
+                priceUsd={pending.priceUsd}
+                onSubmitted={() => {
+                  setSelectedPlanCode(null);
+                  setPending(null);
+                  refetch();
+                }}
+              />
+            ) : (
+              /* Crypto is step 4. Saying so is better than a dead dialog. */
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 text-amber-800">
+                <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+                <div className="text-sm leading-relaxed">
+                  <strong>الدفع بالعملات الرقمية قيد التجهيز.</strong>
+                  <br />
+                  يرجى اختيار شام كاش في الوقت الحالي.
+                </div>
               </div>
-              <div className="flex items-center space-x-3 space-x-reverse border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
-                <RadioGroupItem value={SubscriptionInputPaymentMethod.crypto_usdt_bep20} id="r2" />
-                <Label htmlFor="r2" className="cursor-pointer font-medium flex-1">عملات رقمية — USDT (BEP-20)</Label>
+            )
+          ) : (
+            <>
+              <div className="py-4">
+                <Label className="text-base font-bold mb-4 block">طريقة الدفع (Payment Method)</Label>
+                <RadioGroup
+                  value={paymentMethod}
+                  onValueChange={(val) => setPaymentMethod(val as SubscriptionInputPaymentMethod)}
+                  className="space-y-3"
+                >
+                  {/* شام كاش, not Syriatel/MTN: those are different companies and
+                      the QR the admin uploads is a ShamCash account. The label used
+                      to name all three, which would have sent students to the wrong
+                      wallet. */}
+                  <div className="flex items-center space-x-3 space-x-reverse border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
+                    <RadioGroupItem value={SubscriptionInputPaymentMethod.sham_cash} id="r1" />
+                    <Label htmlFor="r1" className="cursor-pointer font-medium flex-1">شام كاش (محلي)</Label>
+                  </div>
+                  <div className="flex items-center space-x-3 space-x-reverse border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
+                    <RadioGroupItem value={SubscriptionInputPaymentMethod.crypto_usdt_bep20} id="r2" />
+                    <Label htmlFor="r2" className="cursor-pointer font-medium flex-1">عملات رقمية — USDT (BEP-20)</Label>
+                  </div>
+                </RadioGroup>
               </div>
-            </RadioGroup>
-          </div>
 
-          <div className="flex gap-3 pt-4 border-t border-border">
-            <Button variant="outline" className="flex-1" onClick={() => setSelectedPlanCode(null)}>إلغاء</Button>
-            <Button className="flex-1" onClick={handleSubscribe} disabled={createSub.isPending}>
-              {createSub.isPending ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : "تأكيد الطلب"}
-            </Button>
-          </div>
+              <div className="flex gap-3 pt-4 border-t border-border">
+                <Button variant="outline" className="flex-1" onClick={() => setSelectedPlanCode(null)}>إلغاء</Button>
+                <Button className="flex-1" onClick={handleSubscribe} disabled={createSub.isPending}>
+                  {createSub.isPending ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : "متابعة"}
+                </Button>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
