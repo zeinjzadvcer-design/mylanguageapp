@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startGradingSweeper } from "./services/grading-sweeper";
+import { startSubscriptionSweeper } from "./services/subscription-sweeper";
 import { ensureBootstrapAdmin } from "./services/bootstrap-admin";
 
 const rawPort = process.env["PORT"];
@@ -36,4 +37,5 @@ app.listen(port, (err) => {
   // grading, and doing that while the process is still coming up would compete
   // with the requests it is meant to be ready for.
   startGradingSweeper();
+  startSubscriptionSweeper();
 });

@@ -582,6 +582,27 @@ paths:
 
   # ─── Subscriptions ──────────────────────────────────────────────────────────
 
+  /subscription/payment-submissions:
+    get:
+      operationId: getPaymentSubmissions
+      tags: [subscriptions]
+      summary: The student's own payment submissions, newest first
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaymentSubmission"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /subscription-plans:
     get:
       operationId: getSubscriptionPlans
@@ -3028,8 +3049,40 @@ components:
           enum: [general_english, professional_english]
         paymentMethod:
           type: string
-          enum: [sham_cash, cryptocurrency, manual]
-        paymentReference:
+          enum: [sham_cash, crypto_usdt_bep20]
+
+    PaymentSubmission:
+      type: object
+      description: >-
+        A claimed payment awaiting verification. ShamCash submissions are
+        reviewed by an admin; crypto submissions are verified on-chain and fall
+        back to the same queue when that check is inconclusive.
+      properties:
+        id:
+          type: number
+        subscriptionId:
+          type: number
+        method:
+          type: string
+          enum: [sham_cash, crypto_usdt_bep20]
+        status:
+          type: string
+          enum: [pending, verifying, approved, rejected]
+        amountExpected:
+          type: string
+          description: >-
+            Plan price snapshotted at submission. A string because it is a SQL
+            numeric — parsing it as a float would lose precision on money.
+        txHash:
+          type: ["string", "null"]
+        studentNote:
+          type: ["string", "null"]
+        reviewNote:
+          type: ["string", "null"]
+          description: The admin's reason, shown to the student on a rejection.
+        createdAt:
+          type: string
+        reviewedAt:
           type: ["string", "null"]
 
     StudentSubscription:

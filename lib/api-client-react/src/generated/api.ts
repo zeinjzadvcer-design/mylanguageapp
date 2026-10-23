@@ -62,6 +62,7 @@ import type {
   MediaUploadResult,
   MediaUploadTicket,
   OkResponse,
+  PaymentSubmission,
   PlacementTest,
   PlacementTestResult,
   PlacementTestSubmission,
@@ -1703,6 +1704,83 @@ export function useGetVocabulary<TData = Awaited<ReturnType<typeof getVocabulary
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetVocabularyQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPaymentSubmissionsUrl = () => {
+
+
+
+
+  return `/api/subscription/payment-submissions`
+}
+
+/**
+ * @summary The student's own payment submissions, newest first
+ */
+export const getPaymentSubmissions = async ( options?: Parameters<typeof customFetch>[1]): Promise<PaymentSubmission[]> => {
+
+  return customFetch<PaymentSubmission[]>(getGetPaymentSubmissionsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPaymentSubmissionsQueryKey = () => {
+    return [
+    `/api/subscription/payment-submissions`
+    ] as const;
+    }
+
+
+export const getGetPaymentSubmissionsQueryOptions = <TData = Awaited<ReturnType<typeof getPaymentSubmissions>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPaymentSubmissionsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPaymentSubmissions>>> = ({ signal }) => getPaymentSubmissions({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPaymentSubmissionsQueryResult = NonNullable<Awaited<ReturnType<typeof getPaymentSubmissions>>>
+export type GetPaymentSubmissionsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary The student's own payment submissions, newest first
+ */
+
+export function useGetPaymentSubmissions<TData = Awaited<ReturnType<typeof getPaymentSubmissions>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPaymentSubmissionsQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

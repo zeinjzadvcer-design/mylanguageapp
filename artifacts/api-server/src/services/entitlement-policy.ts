@@ -80,3 +80,20 @@ export const DENIAL_MESSAGES: Record<LessonDenial, { error: string; errorAr: str
     errorAr: "لقد استخدمت درسك المجاني. اشترك للمتابعة.",
   },
 };
+
+/**
+ * Add one billing cycle to a start date.
+ *
+ * Month arithmetic deliberately, not 30 days: a student who subscribes on the
+ * 15th expects to be billed on the 15th. `setMonth` clamps 31 January + 1
+ * month to 28/29 February rather than overflowing into March.
+ */
+export function addBillingCycle(from: Date, cycle: string): Date {
+  const to = new Date(from.getTime());
+  if (cycle === "yearly") {
+    to.setFullYear(to.getFullYear() + 1);
+  } else {
+    to.setMonth(to.getMonth() + 1);
+  }
+  return to;
+}

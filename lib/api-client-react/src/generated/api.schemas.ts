@@ -863,15 +863,54 @@ export type SubscriptionInputPaymentMethod = typeof SubscriptionInputPaymentMeth
 
 export const SubscriptionInputPaymentMethod = {
   sham_cash: 'sham_cash',
-  cryptocurrency: 'cryptocurrency',
-  manual: 'manual',
+  crypto_usdt_bep20: 'crypto_usdt_bep20',
 } as const;
 
 export interface SubscriptionInput {
   planCode: SubscriptionInputPlanCode;
   paymentMethod: SubscriptionInputPaymentMethod;
+}
+
+export type PaymentSubmissionMethod = typeof PaymentSubmissionMethod[keyof typeof PaymentSubmissionMethod];
+
+
+export const PaymentSubmissionMethod = {
+  sham_cash: 'sham_cash',
+  crypto_usdt_bep20: 'crypto_usdt_bep20',
+} as const;
+
+export type PaymentSubmissionStatus = typeof PaymentSubmissionStatus[keyof typeof PaymentSubmissionStatus];
+
+
+export const PaymentSubmissionStatus = {
+  pending: 'pending',
+  verifying: 'verifying',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+/**
+ * A claimed payment awaiting verification. ShamCash submissions are reviewed by an admin; crypto submissions are verified on-chain and fall back to the same queue when that check is inconclusive.
+ */
+export interface PaymentSubmission {
+  id?: number;
+  subscriptionId?: number;
+  method?: PaymentSubmissionMethod;
+  status?: PaymentSubmissionStatus;
+  /** Plan price snapshotted at submission. A string because it is a SQL numeric — parsing it as a float would lose precision on money. */
+  amountExpected?: string;
   /** @nullable */
-  paymentReference?: string | null;
+  txHash?: string | null;
+  /** @nullable */
+  studentNote?: string | null;
+  /**
+     * The admin's reason, shown to the student on a rejection.
+     * @nullable
+     */
+  reviewNote?: string | null;
+  createdAt?: string;
+  /** @nullable */
+  reviewedAt?: string | null;
 }
 
 export type StudentSubscriptionStatus = typeof StudentSubscriptionStatus[keyof typeof StudentSubscriptionStatus];

@@ -175,13 +175,17 @@ export default function Subscription() {
               onValueChange={(val) => setPaymentMethod(val as SubscriptionInputPaymentMethod)}
               className="space-y-3"
             >
+              {/* شام كاش, not Syriatel/MTN: those are different companies and
+                  the QR the admin uploads is a ShamCash account. The label used
+                  to name all three, which would have sent students to the wrong
+                  wallet. */}
               <div className="flex items-center space-x-3 space-x-reverse border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
                 <RadioGroupItem value={SubscriptionInputPaymentMethod.sham_cash} id="r1" />
-                <Label htmlFor="r1" className="cursor-pointer font-medium flex-1">سيريتل كاش / إم تي إن كاش (محلي)</Label>
+                <Label htmlFor="r1" className="cursor-pointer font-medium flex-1">شام كاش (محلي)</Label>
               </div>
               <div className="flex items-center space-x-3 space-x-reverse border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
-                <RadioGroupItem value={SubscriptionInputPaymentMethod.cryptocurrency} id="r2" />
-                <Label htmlFor="r2" className="cursor-pointer font-medium flex-1">عملات رقمية (USDT)</Label>
+                <RadioGroupItem value={SubscriptionInputPaymentMethod.crypto_usdt_bep20} id="r2" />
+                <Label htmlFor="r2" className="cursor-pointer font-medium flex-1">عملات رقمية — USDT (BEP-20)</Label>
               </div>
             </RadioGroup>
           </div>
