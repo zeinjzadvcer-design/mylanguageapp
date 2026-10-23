@@ -201,6 +201,9 @@ interface LessonContentBundle {
     exampleAudio: string | null;
     audioUrl: string | null;
     referenceMediaId: number | null;
+    /** Optional illustration media. No grading meaning. */
+    imageMediaId: number | null;
+    audioMediaId: number | null;
   }>;
 }
 
@@ -326,6 +329,9 @@ async function loadLessonContent(lessonId: number): Promise<LessonContentBundle 
       // than presigned here — a lesson can hold many blocks, and signing every
       // one on every load would be wasted work for the ones never played.
       referenceMediaId: block.referenceMediaId ?? null,
+      // Resolved to a playable URL by the client, same as referenceMediaId.
+      imageMediaId: block.imageMediaId ?? null,
+      audioMediaId: block.audioMediaId ?? null,
     };
   });
 

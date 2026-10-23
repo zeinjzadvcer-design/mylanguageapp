@@ -107,6 +107,21 @@ export const contentBlocksTable = pgTable("content_blocks", {
   /** Uploaded reference recording for this block, when there is one. */
   referenceMediaId: integer("reference_media_id"),
   /**
+   * Optional illustration media, on any block type. Distinct from
+   * `referenceMediaId`, which is the model pronunciation a read-aloud block is
+   * scored against — these two carry no grading meaning at all. Either, both or
+   * neither may be set; the student is shown whatever is there.
+   */
+  imageMediaId: integer("image_media_id"),
+  audioMediaId: integer("audio_media_id"),
+  /**
+   * The storage key beside each id, the way `audioNote` pairs with
+   * `referenceMediaId`. The id is resolved to a signed URL for the student; the
+   * key is what the CMS picker shows the author and matches in the library.
+   */
+  imageMediaKey: text("image_media_key"),
+  audioMediaKey: text("audio_media_key"),
+  /**
    * True when the student is reading a set passage, so pronunciation can be
    * measured against `content`. False for open speaking, where only fluency
    * can be measured — there is nothing to align a transcript to.

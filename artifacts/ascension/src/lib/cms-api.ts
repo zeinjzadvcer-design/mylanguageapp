@@ -77,6 +77,14 @@ export interface CMSQuizBlock {
   /** Read-aloud: pronunciation can only be scored when there is a set passage. */
   expectsReferenceReading?: boolean;
   referenceMediaId?: number | null;
+  /**
+   * Optional illustration media, on any block type. The id is what the student
+   * resolves to a signed URL; the key is what the CMS picker displays.
+   */
+  imageMediaId?: number | null;
+  audioMediaId?: number | null;
+  imageMediaKey?: string | null;
+  audioMediaKey?: string | null;
   config?: QuizBlockConfig | null;
 }
 

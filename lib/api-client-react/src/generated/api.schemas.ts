@@ -611,6 +611,16 @@ export interface ContentBlock {
      * @nullable
      */
   referenceMediaId?: number | null;
+  /**
+     * Optional illustration shown to the student, resolved via GET /media/{id}/url. Carries no grading meaning, unlike referenceMediaId.
+     * @nullable
+     */
+  imageMediaId?: number | null;
+  /**
+     * Optional audio clip played to the student, resolved via GET /media/{id}/url. Carries no grading meaning.
+     * @nullable
+     */
+  audioMediaId?: number | null;
 }
 
 export type LessonDetailLessonType = typeof LessonDetailLessonType[keyof typeof LessonDetailLessonType];
@@ -1238,6 +1248,26 @@ export interface QuizBlock {
      * @nullable
      */
   referenceMediaId?: number | null;
+  /**
+     * Optional illustration for the student. No grading meaning.
+     * @nullable
+     */
+  imageMediaId?: number | null;
+  /**
+     * Optional audio clip for the student. No grading meaning.
+     * @nullable
+     */
+  audioMediaId?: number | null;
+  /**
+     * Storage key of imageMediaId, so the CMS picker can show what is attached.
+     * @nullable
+     */
+  imageMediaKey?: string | null;
+  /**
+     * Storage key of audioMediaId, so the CMS picker can show what is attached.
+     * @nullable
+     */
+  audioMediaKey?: string | null;
   /** True when the student reads a set passage, so pronunciation can be measured against it. */
   expectsReferenceReading?: boolean;
   isRequired: boolean;

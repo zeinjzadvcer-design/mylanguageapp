@@ -8,10 +8,19 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, Music, Image, Video, File, Upload, Play, Loader2 } from "lucide-react";
 
-function MimeIcon({ mimeType }: { mimeType: string }) {
-  if (mimeType.startsWith("audio/")) return <Music className="h-4 w-4 text-indigo-500" />;
-  if (mimeType.startsWith("image/")) return <Image className="h-4 w-4 text-emerald-500" />;
-  if (mimeType.startsWith("video/")) return <Video className="h-4 w-4 text-orange-500" />;
+/**
+ * Tolerates a missing type rather than throwing.
+ *
+ * An unguarded `mimeType.startsWith` took the whole page down with "Cannot read
+ * properties of undefined" the moment one row arrived without a type — which is
+ * exactly what a field-name mismatch produces. A missing icon is a cosmetic
+ * problem; a blank page is not.
+ */
+function MimeIcon({ mimeType }: { mimeType?: string | null }) {
+  const type = mimeType ?? "";
+  if (type.startsWith("audio/")) return <Music className="h-4 w-4 text-indigo-500" />;
+  if (type.startsWith("image/")) return <Image className="h-4 w-4 text-emerald-500" />;
+  if (type.startsWith("video/")) return <Video className="h-4 w-4 text-orange-500" />;
   return <File className="h-4 w-4 text-gray-400" />;
 }
 
@@ -192,13 +201,13 @@ export default function MediaPage() {
               <tbody className="divide-y divide-gray-100">
                 {(data?.items ?? []).map((m: any) => (
                   <tr key={m.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-2.5"><MimeIcon mimeType={m.mime_type} /></td>
+                    <td className="px-4 py-2.5"><MimeIcon mimeType={m.mimeType} /></td>
                     <td className="px-4 py-2.5 font-mono text-xs text-gray-600 max-w-xs truncate">{m.key}</td>
-                    <td className="px-4 py-2.5 hidden md:table-cell text-gray-400 text-xs">{m.mime_type}</td>
+                    <td className="px-4 py-2.5 hidden md:table-cell text-gray-400 text-xs">{m.mimeType ?? "—"}</td>
                     <td className="px-4 py-2.5 hidden lg:table-cell text-gray-400 text-xs">{m.language ?? "—"}</td>
-                    <td className="px-4 py-2.5 hidden lg:table-cell text-gray-400 text-xs">{new Date(m.created_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-2.5 hidden lg:table-cell text-gray-400 text-xs">{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "—"}</td>
                     <td className="px-4 py-2.5 text-right">
-                      {String(m.mime_type ?? "").startsWith("audio/") && (
+                      {String(m.mimeType ?? "").startsWith("audio/") && (
                         <button
                           onClick={() => previewMut.mutate(m.id)}
                           title="Listen"

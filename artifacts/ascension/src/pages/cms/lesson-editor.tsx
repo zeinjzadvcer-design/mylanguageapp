@@ -444,6 +444,8 @@ const EDITABLE_BLOCK_FIELDS = [
   "content", "contentAr", "audioNote", "prompt", "promptAr",
   "exampleAudio", "isRequired", "isActive", "estimatedMinutes", "config",
   "referenceMediaId", "expectsReferenceReading",
+  // Optional illustration media, offered on every block type.
+  "imageMediaId", "audioMediaId", "imageMediaKey", "audioMediaKey",
 ] as const;
 
 function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
@@ -524,9 +526,67 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
     </div>
   );
 
+  /**
+   * Optional illustration media, offered on EVERY block type.
+   *
+   * Separate from the per-type media fields below it: a pronunciation block's
+   * "Reference audio" is the model recording its score is measured against,
+   * whereas these two are simply shown to the student and carry no grading
+   * meaning. Keeping them apart stops an author attaching a picture and
+   * accidentally changing how the block is marked.
+   *
+   * The picker returns a storage key and an asset id; only the id is stored,
+   * because the key is not fetchable on its own — the server signs a URL per
+   * asset at playback time.
+   */
+  const illustrationFields = (
+    <details className="rounded-md border border-gray-200">
+      <summary className="cursor-pointer px-3 py-2 text-xs text-gray-600">
+        Image / audio for the student{" "}
+        {(localBlock.imageMediaKey || localBlock.audioMediaKey) && (
+          <span className="ml-1 text-emerald-600">• attached</span>
+        )}
+      </summary>
+      <div className="space-y-3 border-t border-gray-200 p-3">
+        <p className="text-xs text-gray-500">
+          Optional. Shown to the student when taking the lesson. Does not affect
+          grading.
+        </p>
+        <MediaPicker
+          label="Image"
+          accept="image"
+          allowRecording={false}
+          value={localBlock.imageMediaKey}
+          disabled={!isEditable}
+          onChange={(key, mediaId) =>
+            setLocalBlock((b: any) => ({
+              ...b,
+              imageMediaKey: key ?? "",
+              imageMediaId: mediaId,
+            }))
+          }
+        />
+        <MediaPicker
+          label="Audio"
+          accept="audio"
+          value={localBlock.audioMediaKey}
+          disabled={!isEditable}
+          onChange={(key, mediaId) =>
+            setLocalBlock((b: any) => ({
+              ...b,
+              audioMediaKey: key ?? "",
+              audioMediaId: mediaId,
+            }))
+          }
+        />
+      </div>
+    </details>
+  );
+
   return (
     <div className="space-y-3">
       {commonFields}
+      {illustrationFields}
 
       {(block.type === "text" || block.type === "explanation" || block.type === "review") && (
         <>
@@ -651,7 +711,21 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
       )}
 
       {block.type === "open_ended" && (
-        <OpenEndedEditor block={block} onSave={updateExercise} saving={saving} isEditable={isEditable} />
+        <OpenEndedEditor
+          block={block}
+          onSave={updateExercise}
+          // Carries the shared Required / Active checkboxes, which live on the
+          // block rather than on the exercise this editor saves.
+          onSaveBlock={(patch: Record<string, unknown>) =>
+            onUpdate({
+              isRequired: localBlock.isRequired,
+              isActive: localBlock.isActive,
+              ...patch,
+            })
+          }
+          saving={saving}
+          isEditable={isEditable}
+        />
       )}
 
       {block.type === "spelling" && (
@@ -667,7 +741,20 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
         </>
       )}
 
-      {isEditable && block.type !== "mcq" && block.type !== "speaking_prompt" && block.type !== "open_ended" && (
+      {/* Shown for EVERY block type.
+
+          This used to be hidden for mcq, speaking_prompt and open_ended, on the
+          reasoning that those types have their own Save button. But their own
+          button saves the EXERCISE, and the checkboxes above it — Required,
+          Active — and the illustration media live on the BLOCK. So on those
+          three types there was no way to persist them at all: a content manager
+          could untick "Required", press the only Save button on screen, and the
+          block stayed required with no error shown.
+
+          `save` only writes EDITABLE_BLOCK_FIELDS, and the reorder arrows manage
+          `order` separately, so an extra Save Block here cannot clobber
+          anything the per-type editors own. */}
+      {isEditable && (
         <div className="pt-1">
           <Button size="sm" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save Block"}</Button>
         </div>
@@ -875,16 +962,37 @@ function SpeakingEditor({ block, onSave, onSaveBlock, saving, isEditable }: any)
   );
 }
 
-function OpenEndedEditor({ block, onSave, saving, isEditable }: any) {
+function OpenEndedEditor({ block, onSave, onSaveBlock, saving, isEditable }: any) {
   const [question, setQuestion] = useState(block.exercise?.question ?? "");
   const [questionAr, setQuestionAr] = useState(block.exercise?.questionAr ?? "");
   const [modelAnswer, setModelAnswer] = useState(block.exercise?.modelAnswer ?? "");
   const [expectedConcepts, setExpectedConcepts] = useState(block.exercise?.expectedConcepts ?? "");
 
-  const submit = () => onSave({
-    exerciseType: "open_ended", question, questionAr,
-    modelAnswer, expectedConcepts, correctOptionId: "_open_",
-  });
+  // Adopt server state when the block changes underneath us, so the form does
+  // not keep showing a stale question after a refetch.
+  useEffect(() => {
+    setQuestion(block.exercise?.question ?? "");
+    setQuestionAr(block.exercise?.questionAr ?? "");
+    setModelAnswer(block.exercise?.modelAnswer ?? "");
+    setExpectedConcepts(block.exercise?.expectedConcepts ?? "");
+  }, [block.id, block.updatedAt]);
+
+  /**
+   * Block first, then the exercise.
+   *
+   * The question lives on the exercise, but Required/Active live on the block —
+   * and this button was the only one on screen for this type, so unticking
+   * "Required" and pressing Save did nothing at all. Saving the block first
+   * means a failure in the exercise write still persists the flags the author
+   * just changed.
+   */
+  const submit = async () => {
+    await onSaveBlock?.({});
+    await onSave({
+      exerciseType: "open_ended", question, questionAr,
+      modelAnswer, expectedConcepts, correctOptionId: "_open_",
+    });
+  };
 
   return (
     <div className="space-y-3">

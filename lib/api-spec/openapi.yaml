@@ -2712,6 +2712,17 @@ components:
         referenceMediaId:
           description: Uploaded reference recording, resolved via GET /media/{id}/url.
           type: ["number", "null"]
+        imageMediaId:
+          description: >-
+            Optional illustration shown to the student, resolved via
+            GET /media/{id}/url. Carries no grading meaning, unlike
+            referenceMediaId.
+          type: ["number", "null"]
+        audioMediaId:
+          description: >-
+            Optional audio clip played to the student, resolved via
+            GET /media/{id}/url. Carries no grading meaning.
+          type: ["number", "null"]
 
     LessonDetail:
       type: object
@@ -3491,6 +3502,18 @@ components:
         referenceMediaId:
           description: Reference recording, resolved via GET /media/{mediaId}/url.
           type: ["number", "null"]
+        imageMediaId:
+          description: Optional illustration for the student. No grading meaning.
+          type: ["number", "null"]
+        audioMediaId:
+          description: Optional audio clip for the student. No grading meaning.
+          type: ["number", "null"]
+        imageMediaKey:
+          description: Storage key of imageMediaId, so the CMS picker can show what is attached.
+          type: ["string", "null"]
+        audioMediaKey:
+          description: Storage key of audioMediaId, so the CMS picker can show what is attached.
+          type: ["string", "null"]
         expectsReferenceReading:
           description: True when the student reads a set passage, so pronunciation can be measured against it.
           type: boolean

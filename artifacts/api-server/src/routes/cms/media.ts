@@ -34,7 +34,30 @@ router.get("/cms/media", requireCMSAccess, async (req, res): Promise<void> => {
   ]);
 
   res.json({
-    items: rows.rows,
+    // Mapped to camelCase explicitly. This is a raw pool query, not Drizzle, so
+    // `SELECT *` hands back the column names as they are in Postgres —
+    // `mime_type`, `original_name`. Every client reads camelCase, so the media
+    // picker was filtering on `mimeType` and finding it undefined on every row:
+    // the library looked empty even with files in it, and the existing audio
+    // pickers were listing nothing either.
+    items: rows.rows.map((r) => ({
+      id: r.id,
+      key: r.key,
+      originalName: r.original_name,
+      mimeType: r.mime_type,
+      sizeBytes: r.size_bytes,
+      durationSec: r.duration_sec,
+      language: r.language,
+      speaker: r.speaker,
+      accent: r.accent,
+      transcript: r.transcript,
+      status: r.status,
+      purpose: r.purpose,
+      ownerUserId: r.owner_user_id,
+      createdBy: r.created_by,
+      createdAt: r.created_at,
+      uploadedAt: r.uploaded_at,
+    })),
     total: parseInt(countRes.rows[0].count, 10),
     page, limit,
   });
