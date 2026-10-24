@@ -20,8 +20,11 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { CheckCircle2, Crown, Loader2, AlertTriangle } from "lucide-react";
+import { CheckCircle2, Crown, Loader2, AlertTriangle, X } from "lucide-react";
 import { SubscriptionInputPlanCode, SubscriptionInputPaymentMethod } from "@workspace/api-client-react";
+
+/** localStorage key for rejection notices the student has closed. */
+const DISMISSED_KEY = "ascension:dismissed-payment-rejections";
 
 export default function Subscription() {
   const { data: plans, isLoading: plansLoading } = useGetSubscriptionPlans();
@@ -42,7 +45,67 @@ export default function Subscription() {
   const pendingSubmission = submissions?.find(
     (sub) => sub.status === "pending" || sub.status === "verifying",
   );
-  const lastRejected = submissions?.find((sub) => sub.status === "rejected");
+
+  /**
+   * Rejections the student has already read.
+   *
+   * Kept in localStorage, per submission id, because this is a notice rather
+   * than state the server owns: the rejection itself is a permanent audit
+   * record (an admin refused a payment and said why) and must not be mutated
+   * just because the student closed a banner. Per-viewer and per-device is the
+   * right scope for "I have seen this".
+   */
+  const [dismissed, setDismissed] = useState<number[]>(() => {
+    try {
+      const raw = localStorage.getItem(DISMISSED_KEY);
+      return raw ? (JSON.parse(raw) as number[]) : [];
+    } catch {
+      // A private window, cleared site data, or storage blocked outright.
+      // Showing the banner again is the harmless failure.
+      return [];
+    }
+  });
+
+  const dismiss = (id: number) => {
+    setDismissed((prev) => {
+      const next = [...prev, id];
+      try {
+        localStorage.setItem(DISMISSED_KEY, JSON.stringify(next));
+      } catch {
+        // Not worth surfacing — it reappears on the next visit at worst.
+      }
+      return next;
+    });
+  };
+
+  /**
+   * A rejection worth showing.
+   *
+   * Three conditions, and each removes a case where the banner was wrong:
+   *
+   *   - nothing newer is pending, so correcting a receipt does not leave both
+   *     banners up;
+   *   - the student has not dismissed it;
+   *   - its subscription is not already paid for. A rejection for a
+   *     subscription that was later approved — or an abandoned upgrade next to
+   *     a plan that is still active — is history, not something to act on. It
+   *     was showing "لم يتم قبول إثبات الدفع" above "اشتراكك الحالي: نشط",
+   *     which reads as a contradiction.
+   */
+  const settledSubscriptionIds = new Set(
+    (submissions ?? [])
+      .filter((sub) => sub.status === "approved")
+      .map((sub) => sub.subscriptionId),
+  );
+
+  const lastRejected = submissions?.find(
+    (sub) =>
+      sub.status === "rejected" &&
+      sub.id != null &&
+      !dismissed.includes(sub.id) &&
+      sub.subscriptionId != null &&
+      !settledSubscriptionIds.has(sub.subscriptionId),
+  );
 
   const [selectedPlanCode, setSelectedPlanCode] = useState<SubscriptionInputPlanCode | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<SubscriptionInputPaymentMethod>(SubscriptionInputPaymentMethod.sham_cash);
@@ -158,6 +221,15 @@ export default function Subscription() {
                 يمكنك اختيار الباقة وإرسال إثبات جديد.
               </p>
             </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0 -mt-2 -ml-2"
+              aria-label="إغلاق"
+              onClick={() => lastRejected.id != null && dismiss(lastRejected.id)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </CardContent>
         </Card>
       )}
