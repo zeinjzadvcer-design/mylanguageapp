@@ -42,6 +42,7 @@ import {
   Play,
   Square,
   AlertCircle,
+  Crown,
 } from "lucide-react";
 
 // ──────────────────────────────────────────────────────────────────────
@@ -921,6 +922,44 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
       <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-6 mt-10">
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-64 w-full rounded-2xl" />
+      </div>
+    );
+  }
+
+  // A 403 from the plan gate is not a failure to load — it is the paywall
+  // doing its job, and the student needs an upgrade prompt rather than
+  // "something went wrong". The server sends `reason` to say which case it is.
+  const denial = (() => {
+    const status = (error as { status?: number } | null)?.status;
+    if (status !== 403) return null;
+    const reason = (error as { data?: { reason?: string } } | null)?.data?.reason;
+    return reason === "quota_exhausted" || reason === "wrong_track" ? reason : null;
+  })();
+
+  if (denial) {
+    return (
+      <div className="p-8 text-center mt-20 max-w-md mx-auto">
+        <div className="h-16 w-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+          <Crown className="h-8 w-8 text-amber-500" />
+        </div>
+        <h2 className="text-xl font-bold mb-3">
+          {denial === "quota_exhausted"
+            ? "لقد استخدمت درسك المجاني"
+            : "هذا الدرس غير متضمن في خطتك"}
+        </h2>
+        <p className="text-muted-foreground mb-6 leading-relaxed">
+          {denial === "quota_exhausted"
+            ? "اشترك في إحدى الخطط لمتابعة جميع الدروس."
+            : "هذا الدرس يتبع مساراً آخر. راجع الخطط المتاحة."}
+        </p>
+        <div className="flex gap-3 justify-center">
+          <Link href="/subscription">
+            <Button className="bg-primary text-white">عرض الخطط</Button>
+          </Link>
+          <Link href="/learn">
+            <Button variant="outline">العودة للمنهج</Button>
+          </Link>
+        </div>
       </div>
     );
   }

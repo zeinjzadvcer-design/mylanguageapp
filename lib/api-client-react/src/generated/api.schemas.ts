@@ -1033,6 +1033,81 @@ export interface WeakAreaSummary {
   lessonType?: string;
 }
 
+export type AdminPaymentSubmissionMethod = typeof AdminPaymentSubmissionMethod[keyof typeof AdminPaymentSubmissionMethod];
+
+
+export const AdminPaymentSubmissionMethod = {
+  sham_cash: 'sham_cash',
+  crypto_usdt_bep20: 'crypto_usdt_bep20',
+} as const;
+
+export type AdminPaymentSubmissionStatus = typeof AdminPaymentSubmissionStatus[keyof typeof AdminPaymentSubmissionStatus];
+
+
+export const AdminPaymentSubmissionStatus = {
+  pending: 'pending',
+  verifying: 'verifying',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export interface AdminPaymentSubmission {
+  id?: number;
+  subscriptionId?: number;
+  userId?: number;
+  studentName?: string;
+  studentEmail?: string;
+  planCode?: string;
+  planNameAr?: string;
+  method?: AdminPaymentSubmissionMethod;
+  status?: AdminPaymentSubmissionStatus;
+  amountExpected?: string;
+  /**
+     * Short-lived signed URL for the receipt image.
+     * @nullable
+     */
+  receiptUrl?: string | null;
+  /** @nullable */
+  studentNote?: string | null;
+  /** @nullable */
+  txHash?: string | null;
+  /** @nullable */
+  amountObserved?: string | null;
+  /** @nullable */
+  senderAddress?: string | null;
+  /** What the automatic check saw, so an admin looking at a crypto submission is not guessing why it needs a human. */
+  verificationLog?: unknown;
+  /** @nullable */
+  reviewNote?: string | null;
+  createdAt?: string;
+  /** @nullable */
+  reviewedAt?: string | null;
+}
+
+export interface PaymentSettings {
+  /** @nullable */
+  shamCashQrMediaId?: number | null;
+  /** @nullable */
+  shamCashAccountName?: string | null;
+  /** @nullable */
+  shamCashAccountNumber?: string | null;
+  /** @nullable */
+  shamCashInstructionsAr?: string | null;
+  /** @nullable */
+  updatedAt?: string | null;
+}
+
+export interface PaymentSettingsUpdate {
+  /** @nullable */
+  shamCashQrMediaId?: number | null;
+  /** @nullable */
+  shamCashAccountName?: string | null;
+  /** @nullable */
+  shamCashAccountNumber?: string | null;
+  /** @nullable */
+  shamCashInstructionsAr?: string | null;
+}
+
 export interface AdminStats {
   totalStudents: number;
   activeSubscriptions: number;
@@ -2202,6 +2277,61 @@ limit?: number;
  * Show only students who named this acquisition channel.
  */
 referralSource?: string;
+};
+
+export type GetPaymentSubmissions1Params = {
+status?: GetPaymentSubmissions1Status;
+};
+
+export type GetPaymentSubmissions1Status = typeof GetPaymentSubmissions1Status[keyof typeof GetPaymentSubmissions1Status];
+
+
+export const GetPaymentSubmissions1Status = {
+  pending: 'pending',
+  verifying: 'verifying',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export type GetPaymentSubmissionCount200 = {
+  pending?: number;
+};
+
+export type ApprovePaymentSubmissionBody = {
+  /** @maxLength 1000 */
+  reviewNote?: string;
+};
+
+export type ApprovePaymentSubmission200 = {
+  subscriptionId?: number;
+  /** True when this approval was a no-op because the submission was already approved - two admins at once, or a retried request. */
+  alreadyActive?: boolean;
+};
+
+export type RejectPaymentSubmissionBody = {
+  /**
+     * @minLength 1
+     * @maxLength 1000
+     */
+  reviewNote: string;
+};
+
+export type RejectPaymentSubmission200 = {
+  ok?: boolean;
+};
+
+export type BeginPaymentQrUploadBody = {
+  contentType: string;
+  sizeBytes: number;
+  originalName?: string;
+};
+
+export type BeginPaymentQrUpload201Upload = { [key: string]: unknown };
+
+export type BeginPaymentQrUpload201 = {
+  mediaId?: number;
+  key?: string;
+  upload?: BeginPaymentQrUpload201Upload;
 };
 
 export type GetSkillReportParams = {

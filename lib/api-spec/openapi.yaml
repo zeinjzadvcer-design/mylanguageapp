@@ -907,6 +907,242 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /admin/payment-submissions:
+    get:
+      operationId: getPaymentSubmissions1
+      tags: [admin]
+      summary: The payment review queue, oldest first
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, verifying, approved, rejected]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminPaymentSubmission"
+        "403":
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-submissions/count:
+    get:
+      operationId: getPaymentSubmissionCount
+      tags: [admin]
+      summary: How many payments are waiting for review
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending:
+                    type: number
+        "403":
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-submissions/{id}/approve:
+    post:
+      operationId: approvePaymentSubmission
+      tags: [admin]
+      summary: Approve a payment and activate the subscription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reviewNote:
+                  type: string
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Activated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscriptionId:
+                    type: number
+                  alreadyActive:
+                    type: boolean
+                    description: >-
+                      True when this approval was a no-op because the
+                      submission was already approved - two admins at once, or
+                      a retried request.
+        "404":
+          description: Submission not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Already rejected, or the plan no longer exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-submissions/{id}/reject:
+    post:
+      operationId: rejectPaymentSubmission
+      tags: [admin]
+      summary: Reject a payment, with a reason the student will see
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reviewNote]
+              properties:
+                reviewNote:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "400":
+          description: A reason is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Submission not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-settings:
+    get:
+      operationId: getPaymentSettings
+      tags: [admin]
+      summary: The ShamCash receive details students are shown
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSettings"
+        "403":
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updatePaymentSettings
+      tags: [admin]
+      summary: Change the ShamCash receive details
+      description: >-
+        Partial: an admin reissuing the QR should not have to retype the account
+        number, and a typo in one field must not blank the others.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentSettingsUpdate"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSettings"
+        "400":
+          description: Invalid settings, or the media id is not a completed payment QR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/media/payment-qr:
+    post:
+      operationId: beginPaymentQrUpload
+      tags: [admin]
+      summary: Reserve a key and sign a PUT for the ShamCash receive QR
+      description: >-
+        Admin-only and separate from the student upload path: the QR has no
+        owner so every student can see it, and a QR students scan decides where
+        their money goes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contentType, sizeBytes]
+              properties:
+                contentType:
+                  type: string
+                sizeBytes:
+                  type: number
+                originalName:
+                  type: string
+      responses:
+        "201":
+          description: Presigned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mediaId:
+                    type: number
+                  key:
+                    type: string
+                  upload:
+                    type: object
+                    additionalProperties: true
+        "400":
+          description: Unsupported type or size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /admin/lessons:
     get:
       operationId: getAdminLessons
@@ -3375,6 +3611,79 @@ components:
           type: string
 
     # ─── Admin ─────────────────────────────────────────────────────────────────
+
+    AdminPaymentSubmission:
+      type: object
+      properties:
+        id:
+          type: number
+        subscriptionId:
+          type: number
+        userId:
+          type: number
+        studentName:
+          type: string
+        studentEmail:
+          type: string
+        planCode:
+          type: string
+        planNameAr:
+          type: string
+        method:
+          type: string
+          enum: [sham_cash, crypto_usdt_bep20]
+        status:
+          type: string
+          enum: [pending, verifying, approved, rejected]
+        amountExpected:
+          type: string
+        receiptUrl:
+          type: ["string", "null"]
+          description: Short-lived signed URL for the receipt image.
+        studentNote:
+          type: ["string", "null"]
+        txHash:
+          type: ["string", "null"]
+        amountObserved:
+          type: ["string", "null"]
+        senderAddress:
+          type: ["string", "null"]
+        verificationLog:
+          description: >-
+            What the automatic check saw, so an admin looking at a crypto
+            submission is not guessing why it needs a human.
+        reviewNote:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        reviewedAt:
+          type: ["string", "null"]
+
+    PaymentSettings:
+      type: object
+      properties:
+        shamCashQrMediaId:
+          type: ["number", "null"]
+        shamCashAccountName:
+          type: ["string", "null"]
+        shamCashAccountNumber:
+          type: ["string", "null"]
+        shamCashInstructionsAr:
+          type: ["string", "null"]
+        updatedAt:
+          type: ["string", "null"]
+
+    PaymentSettingsUpdate:
+      type: object
+      properties:
+        shamCashQrMediaId:
+          type: ["number", "null"]
+        shamCashAccountName:
+          type: ["string", "null"]
+        shamCashAccountNumber:
+          type: ["string", "null"]
+        shamCashInstructionsAr:
+          type: ["string", "null"]
 
     AdminStats:
       type: object

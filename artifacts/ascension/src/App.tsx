@@ -27,6 +27,7 @@ import AdminDashboard from '@/pages/admin/dashboard';
 import AdminStudents from '@/pages/admin/students';
 import AdminLessons from '@/pages/admin/lessons';
 import AdminAiSettings from '@/pages/admin/ai-settings';
+import AdminPayments from '@/pages/admin/payments';
 
 // CMS pages
 import CMSDashboard from '@/pages/cms/index';
@@ -84,6 +85,7 @@ function Router() {
         <ProtectedRoute path="/admin/students" component={AdminStudents} requireAdmin />
         <ProtectedRoute path="/admin/lessons" component={AdminLessons} requireAdmin />
         <ProtectedRoute path="/admin/ai" component={AdminAiSettings} requireAdmin />
+        <ProtectedRoute path="/admin/payments" component={AdminPayments} requireAdmin />
 
         {/* CMS routes — accessible to admin | content_manager | content_reviewer */}
         <ProtectedRoute path="/cms" component={CMSDashboard} requireCMS />
