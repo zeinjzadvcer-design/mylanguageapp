@@ -112,6 +112,7 @@ export default function Subscription() {
         {plans?.map((plan) => {
           const isFree = plan.code === "free";
           const isPro = plan.code === "professional_english";
+          const isCurrentPlan = subscription?.planCode === plan.code;
           
           return (
             <Card key={plan.id} className={`flex flex-col relative transition-transform duration-300 hover:-translate-y-2 ${
@@ -146,9 +147,31 @@ export default function Subscription() {
                     }`}
                     variant={isPro ? "default" : "outline"}
                     onClick={() => setSelectedPlanCode(plan.code as SubscriptionInputPlanCode)}
-                    disabled={subscription?.status === "active" || subscription?.status === "pending_payment"}
+                    /**
+                     * Only the plan already held is disabled, and only while a
+                     * payment for it is under review.
+                     *
+                     * Blocking every plan whenever one was active meant nobody
+                     * could ever switch — and general and professional are
+                     * mutually exclusive tracks, not tiers, so a student who
+                     * picked the wrong one was stuck with it permanently.
+                     * Activation supersedes the previous subscription inside
+                     * its own transaction, so changing plan is safe here: the
+                     * current one keeps working until the new one is paid for.
+                     */
+                    disabled={
+                      isCurrentPlan &&
+                      (subscription?.status === "active" ||
+                        subscription?.status === "pending_payment")
+                    }
                   >
-                    اختيار الباقة
+                    {isCurrentPlan && subscription?.status === "active"
+                      ? "باقتك الحالية"
+                      : isCurrentPlan && subscription?.status === "pending_payment"
+                        ? "قيد التفعيل"
+                        : subscription?.status === "active"
+                          ? "التغيير إلى هذه الباقة"
+                          : "اختيار الباقة"}
                   </Button>
                 )}
                 {isFree && (
