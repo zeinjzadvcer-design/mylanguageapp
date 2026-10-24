@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { useGetSubscriptionPlans, useGetSubscription, useCreateSubscription } from "@workspace/api-client-react";
+import {
+  useGetSubscriptionPlans,
+  useGetSubscription,
+  useCreateSubscription,
+  useGetPaymentSubmissions,
+} from "@workspace/api-client-react";
 import { ShamCashPayment } from "@/components/sham-cash-payment";
 import { CryptoPayment } from "@/components/crypto-payment";
 import { Button } from "@/components/ui/button";
@@ -15,7 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { CheckCircle2, Crown, Loader2 } from "lucide-react";
+import { CheckCircle2, Crown, Loader2, AlertTriangle } from "lucide-react";
 import { SubscriptionInputPlanCode, SubscriptionInputPaymentMethod } from "@workspace/api-client-react";
 
 export default function Subscription() {
@@ -23,6 +28,21 @@ export default function Subscription() {
   const { data: subscription, isLoading: subLoading, refetch } = useGetSubscription();
   const createSub = useCreateSubscription();
   const { toast } = useToast();
+
+  /**
+   * The student's payment submissions.
+   *
+   * Needed because GET /subscription only returns the ACTIVE subscription and,
+   * finding none, synthesises a free plan with status "active" — so a student
+   * waiting on a payment review looks identical to one who never paid. The
+   * submission list is the only place the pending state is visible.
+   */
+  const { data: submissions, refetch: refetchSubmissions } = useGetPaymentSubmissions();
+
+  const pendingSubmission = submissions?.find(
+    (sub) => sub.status === "pending" || sub.status === "verifying",
+  );
+  const lastRejected = submissions?.find((sub) => sub.status === "rejected");
 
   const [selectedPlanCode, setSelectedPlanCode] = useState<SubscriptionInputPlanCode | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<SubscriptionInputPaymentMethod>(SubscriptionInputPaymentMethod.sham_cash);
@@ -62,6 +82,7 @@ export default function Subscription() {
             priceUsd: plans?.find((p) => p.code === selectedPlanCode)?.priceUsd ?? 0,
           });
           refetch();
+          void refetchSubmissions();
         },
         onError: () => {
           toast({
@@ -86,22 +107,79 @@ export default function Subscription() {
         </p>
       </div>
 
-      {subscription && subscription.status !== "cancelled" && subscription.status !== "expired" && (
-        <Card className={`mb-12 border-2 ${
-          subscription.status === "active" ? "border-emerald-500 bg-emerald-50/50" : "border-amber-500 bg-amber-50/50"
-        }`}>
+      {/* Under review. Its own banner because GET /subscription cannot express
+          this state: it returns only the active subscription, and synthesises
+          a free one when there is none. */}
+      {pendingSubmission && (
+        <Card className="mb-6 border-2 border-amber-500 bg-amber-50/50">
+          <CardContent className="p-6 flex items-start gap-4">
+            <div className="p-3 rounded-full bg-amber-100 text-amber-600 shrink-0">
+              <Loader2 className="h-6 w-6 animate-spin" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-bold text-lg">طلب الدفع قيد المراجعة</h3>
+              <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                {pendingSubmission.method === "sham_cash"
+                  ? "استلمنا إثبات الدفع وسيقوم الفريق بمراجعته وتفعيل اشتراكك قريباً."
+                  : "جارٍ التحقق من العملية على الشبكة. سيتم التفعيل تلقائياً عند التأكيد."}
+              </p>
+              <div className="flex flex-wrap gap-3 mt-3 text-xs text-muted-foreground">
+                <span dir="ltr">${pendingSubmission.amountExpected}</span>
+                <span>
+                  {pendingSubmission.method === "sham_cash" ? "شام كاش" : "USDT (BEP-20)"}
+                </span>
+                {pendingSubmission.createdAt && (
+                  <span dir="ltr">
+                    {new Date(pendingSubmission.createdAt).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* A rejection the student can act on. Shown only when nothing newer is
+          pending, so correcting a receipt does not leave both banners up. */}
+      {!pendingSubmission && lastRejected && (
+        <Card className="mb-6 border-2 border-destructive/50 bg-destructive/5">
+          <CardContent className="p-6 flex items-start gap-4">
+            <div className="p-3 rounded-full bg-destructive/10 text-destructive shrink-0">
+              <AlertTriangle className="h-6 w-6" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-bold text-lg">لم يتم قبول إثبات الدفع</h3>
+              {lastRejected.reviewNote && (
+                <p className="text-sm mt-1 leading-relaxed">
+                  <strong>السبب:</strong> {lastRejected.reviewNote}
+                </p>
+              )}
+              <p className="text-sm text-muted-foreground mt-2">
+                يمكنك اختيار الباقة وإرسال إثبات جديد.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* The plan in force. GET /subscription returns only an ACTIVE row and
+          synthesises the free plan when there is none, so this is always one
+          or the other — a payment awaiting review is the banner above, not a
+          state of this one. */}
+      {subscription && (
+        <Card className="mb-12 border-2 border-emerald-500 bg-emerald-50/50">
           <CardContent className="p-6 flex items-center gap-4">
-            <div className={`p-3 rounded-full ${
-              subscription.status === "active" ? "bg-emerald-100 text-emerald-600" : "bg-amber-100 text-amber-600"
-            }`}>
-              {subscription.status === "active" ? <CheckCircle2 className="h-6 w-6" /> : <Loader2 className="h-6 w-6 animate-spin" />}
+            <div className="p-3 rounded-full bg-emerald-100 text-emerald-600 shrink-0">
+              <CheckCircle2 className="h-6 w-6" />
             </div>
             <div>
               <h3 className="font-bold text-lg">
                 اشتراكك الحالي: {subscription.planNameAr}
               </h3>
               <p className="text-sm text-muted-foreground mt-1">
-                الحالة: {subscription.status === "active" ? "نشط" : "قيد التفعيل (بانتظار تأكيد الدفع)"}
+                {subscription.expiresAt
+                  ? `ساري حتى ${new Date(subscription.expiresAt).toLocaleDateString("ar")}`
+                  : "الخطة الأساسية — درس مجاني واحد بعد اختبار تحديد المستوى"}
               </p>
             </div>
           </CardContent>
@@ -159,16 +237,22 @@ export default function Subscription() {
                      * its own transaction, so changing plan is safe here: the
                      * current one keeps working until the new one is paid for.
                      */
+                    /**
+                     * Disabled for the plan already held, and for EVERY plan
+                     * while a payment is under review — submitting a second
+                     * payment before the first is decided gives the admin two
+                     * rows to reconcile for one student, and the server
+                     * refuses it with a 409 anyway. Better not to offer it.
+                     */
                     disabled={
-                      isCurrentPlan &&
-                      (subscription?.status === "active" ||
-                        subscription?.status === "pending_payment")
+                      Boolean(pendingSubmission) ||
+                      (isCurrentPlan && subscription?.status === "active")
                     }
                   >
-                    {isCurrentPlan && subscription?.status === "active"
-                      ? "باقتك الحالية"
-                      : isCurrentPlan && subscription?.status === "pending_payment"
-                        ? "قيد التفعيل"
+                    {pendingSubmission
+                      ? "بانتظار مراجعة الدفع"
+                      : isCurrentPlan && subscription?.status === "active"
+                        ? "باقتك الحالية"
                         : subscription?.status === "active"
                           ? "التغيير إلى هذه الباقة"
                           : "اختيار الباقة"}
@@ -215,6 +299,7 @@ export default function Subscription() {
                   setSelectedPlanCode(null);
                   setPending(null);
                   refetch();
+                  void refetchSubmissions();
                 }}
               />
             ) : (
@@ -225,6 +310,7 @@ export default function Subscription() {
                   setSelectedPlanCode(null);
                   setPending(null);
                   refetch();
+                  void refetchSubmissions();
                 }}
               />
             )
