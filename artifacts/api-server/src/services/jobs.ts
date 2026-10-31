@@ -130,6 +130,19 @@ class FireAndForgetQueue implements JobQueue {
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
+/**
+ * Shut the backend down cleanly, if it has anything to shut down.
+ *
+ * Set by the BullMQ backend; a no-op for the in-process one, which has nothing
+ * to drain. Called from the server's SIGTERM handler.
+ */
+let closeBackend: (() => Promise<void>) | null = null;
+
+export async function closeJobQueue(): Promise<void> {
+  await closeBackend?.();
+  closeBackend = null;
+}
+
 function createJobQueue(): JobQueue {
   const backend = process.env.JOB_QUEUE ?? "memory";
 
@@ -137,11 +150,32 @@ function createJobQueue(): JobQueue {
     case "memory":
       return new FireAndForgetQueue();
 
-    // case "bullmq":
-    //   return new BullMQQueue({ redisUrl: process.env.REDIS_URL! });
+    case "bullmq": {
+      const redisUrl = process.env.REDIS_URL;
+      if (!redisUrl) {
+        // Falling back silently would be worse: the deployment asked for a
+        // durable queue and would get an in-process one, losing jobs on every
+        // restart with nothing to say so.
+        throw new Error('JOB_QUEUE="bullmq" requires REDIS_URL to be set.');
+      }
+
+      // Required lazily, and the module is loaded here rather than imported at
+      // the top, so that a deployment on the in-process backend never pulls
+      // BullMQ or its Redis connection into the process at all.
+      //
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { createBullMQQueue } = require("./jobs-bullmq") as typeof import("./jobs-bullmq");
+
+      // Handlers are looked up at RUN time, not wired in now: registration
+      // happens in a side-effect import that may not have run yet when this
+      // module is first evaluated.
+      const handles = createBullMQQueue(redisUrl, (name) => handlers.get(name));
+      closeBackend = () => handles.close();
+      return handles.queue;
+    }
 
     default:
-      throw new Error(`Unknown JOB_QUEUE: "${backend}". Supported: memory, bullmq (coming)`);
+      throw new Error(`Unknown JOB_QUEUE: "${backend}". Supported: memory, bullmq`);
   }
 }
 

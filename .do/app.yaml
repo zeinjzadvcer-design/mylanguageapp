@@ -29,12 +29,19 @@ services:
 
     http_port: 8080
 
-    # One instance, deliberately. JOB_QUEUE=memory means jobs run in-process
-    # (services/jobs.ts), so a second instance would not share them and the
-    # grading sweeper would run on both, duplicating work.
+    # Two is now CORRECT but costs another $12/month, so this stays at 1 until
+    # that is a decision someone makes.
     #
-    # Implement the BullMQ backend FIRST, then raise this to 2. The slider
-    # needs no code change and no redeploy of the repo.
+    # It used to be 1 because it had to be: JOB_QUEUE=memory ran jobs
+    # in-process, so a second instance shared none of them. With the BullMQ
+    # backend jobs are claimed once cluster-wide, and raising this is the thing
+    # that makes a deploy cause no gap in service — currently every deploy is a
+    # short outage, because there is one container to replace.
+    #
+    # Raising it is a slider, not a code change. Two things to know when you
+    # do: DB_POOL_MAX is per process, so the database sees double the
+    # connections; and both instances run the grading sweeper, which is safe —
+    # it claims rows with conditional UPDATEs — but duplicated.
     instance_count: 1
     instance_size_slug: professional-xs
 
@@ -117,11 +124,35 @@ services:
         value: ""
 
       # ── Jobs ────────────────────────────────────────────────────────────────
-      # 'memory' until the BullMQ backend exists (jobs.ts throws on 'bullmq'
-      # today). While this is 'memory', the grading sweeper below is the only
-      # recovery path for a job lost to a restart.
+      # 'bullmq' puts jobs in Valkey instead of this process's memory. Two
+      # things follow: a job survives a restart — which matters because
+      # deploy_on_push means every push restarts the container mid-grading —
+      # and more than one instance becomes correct, because jobs are claimed
+      # once cluster-wide rather than per process.
+      #
+      # Requires REDIS_URL, and the Valkey eviction policy must be
+      # `noeviction` (DO's default) or queued jobs can be evicted under memory
+      # pressure with no error.
       - key: JOB_QUEUE
-        value: memory
+        value: bullmq
+
+      # Deliberately small. A job mostly WAITS — on a speech recogniser, on a
+      # model — but holds a database connection while it waits, and
+      # DB_POOL_MAX is 10 per process. Too many starves the HTTP requests
+      # sharing that pool, which is the opposite of the point.
+      - key: JOB_CONCURRENCY
+        value: "4"
+
+      # Low on purpose: the grading sweeper is already a recovery path with its
+      # own attempt limit, and retrying hard here as well multiplies paid AI
+      # calls against a provider having a bad day.
+      - key: JOB_ATTEMPTS
+        value: "2"
+
+      # Seconds to finish in-flight jobs when the platform sends SIGTERM on a
+      # deploy, before exiting regardless.
+      - key: SHUTDOWN_TIMEOUT_MS
+        value: "15000"
 
       # ── Connection pool ─────────────────────────────────────────────────────
       # Per process, so it multiplies when instance_count rises. Check the

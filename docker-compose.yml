@@ -95,7 +95,11 @@ services:
       PORT: '8080'
       LOG_LEVEL: info
       TRUST_PROXY: '1'
-      JOB_QUEUE: memory
+      JOB_QUEUE: ${JOB_QUEUE:-memory}
+      JOB_CONCURRENCY: ${JOB_CONCURRENCY:-4}
+      JOB_ATTEMPTS: ${JOB_ATTEMPTS:-2}
+      JOB_WORKER: ${JOB_WORKER:-}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-15000}
       REDIS_URL: redis://redis:6379
       # Encrypts API keys stored by the AI settings panel. Dev-only value —
       # generate a real one for any deployment: openssl rand -hex 32
