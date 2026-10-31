@@ -39,7 +39,30 @@ const REQUEST_TIMEOUT_MS = parseInt(process.env.AI_ASR_TIMEOUT_MS ?? "60000", 10
  * attempt pending on failure, so a timeout costs a retry, not a lost recording.
  */
 const POLL_TIMEOUT_MS = parseInt(process.env.AI_ASR_POLL_TIMEOUT_MS ?? "180000", 10);
-const POLL_INTERVAL_MS = 2000;
+
+/**
+ * How long to wait between asking whether the transcript is ready.
+ *
+ * A flat 2000 ms meant up to two seconds of every job was spent not knowing an
+ * answer that already existed, in front of a student watching a spinner.
+ *
+ * A fast start then a flat 1500 ms, which measures as a worst case of 1.25 s
+ * against the old 1.75 s for a transcript landing anywhere in the first twelve
+ * seconds. The cap stays BELOW the old interval deliberately: a schedule that
+ * backs off past 2000 ms is worse than what it replaced for any job slower
+ * than its ramp, which is the mistake the first attempt at this made.
+ *
+ * Modest — about half a second — and the client's own poll schedule was the
+ * larger share of the delay. The cost is ~122 requests across the three-minute
+ * timeout rather than 90, and almost no job runs that long.
+ */
+const POLL_SCHEDULE_MS = [500, 500, 750, 1000];
+const POLL_INTERVAL_MAX_MS = 1500;
+
+/** Wait before poll number `n` (zero-based). */
+function pollDelay(n: number): number {
+  return POLL_SCHEDULE_MS[n] ?? POLL_INTERVAL_MAX_MS;
+}
 
 interface AssemblyWord {
   text?: string;
@@ -207,6 +230,7 @@ async function pollTranscript(
   id: string,
 ): Promise<AssemblyTranscript> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
+  let attempt = 0;
 
   for (;;) {
     const response = await withTimeout(
@@ -244,7 +268,8 @@ async function pollTranscript(
       );
     }
 
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    await new Promise((resolve) => setTimeout(resolve, pollDelay(attempt)));
+    attempt += 1;
   }
 }
 
