@@ -38,7 +38,13 @@ import {
   vocabularyTable,
   type AITask,
 } from "@workspace/db";
-import { resolveTaskConfig, computeCostUsd, AIUnavailableError, getPlanAllowance } from "./ai-config";
+import {
+  resolveTaskConfig,
+  computeCostUsd,
+  computeAudioCostUsd,
+  AIUnavailableError,
+  getPlanAllowance,
+} from "./ai-config";
 import { chat, AIProviderError, type ChatMessage } from "./ai-providers";
 import { transcribe } from "./ai-providers";
 import { storage } from "./storage";
@@ -184,8 +190,47 @@ async function loadLessonContext(
  * a model told to keep it to two sentences and ask one question keeps the
  * student talking, which is what section 4D asks for.
  */
-export function buildSystemPrompt(context: LessonContext): string {
+export function buildSystemPrompt(
+  context: LessonContext,
+  options: { brief?: boolean } = {},
+): string {
   const vocab = context.vocabulary.map((v) => v.word).join(", ");
+
+  /**
+   * After the opening turn, the lesson passage stops being resent.
+   *
+   * It was going out in full on every single turn, which is the largest
+   * avoidable part of the prompt: a 500-word passage is several hundred tokens
+   * paid for again on each reply, and prompt size is what time-to-first-token
+   * scales with. Trimming it is both cheaper and faster.
+   *
+   * What replaces it is not nothing. The title, the objectives, the question
+   * the student was asked and the target vocabulary all stay — they are the
+   * topic in compressed form — and the conversation history carries continuity
+   * from there. The model does not need the passage reread to it to know what
+   * is being discussed, because the discussion is in front of it.
+   *
+   * THE SCRIPT IS NOT TRIMMED. A dialogue block's script is the sequence the
+   * tutor is told to follow, in order, step by step; dropping it mid-conversation
+   * would leave the model improvising the activity rather than running it. The
+   * passage is background the student already read. The script is the
+   * instruction set.
+   *
+   * Prompt caching is NOT the alternative here: Haiku 4.5 requires a
+   * 4,096-token minimum cacheable prefix, and this prompt is well under half
+   * that, so the marker is silently ignored. See docs/ai-cost-model.md.
+   *
+   * To revert, pass `brief: false` at the call site — the conversation path is
+   * the only caller that sets it.
+   *
+   * ONLY WORTH IT FOR A PASSAGE LONG ENOUGH TO MATTER. The note that replaces
+   * it is itself about 130 characters, so below that threshold trimming makes
+   * the prompt LONGER — a test caught exactly that against a one-sentence
+   * fixture. A short passage is cheap; it stays.
+   */
+  const PASSAGE_TRIM_FLOOR = 400;
+  const includePassage =
+    !options.brief || !context.text || context.text.length < PASSAGE_TRIM_FLOOR;
 
   return [
     `You are a friendly English conversation tutor for an Arabic-speaking student.`,
@@ -197,7 +242,12 @@ export function buildSystemPrompt(context: LessonContext): string {
     context.objectives.length ? `Its learning objectives: ${context.objectives.join("; ")}` : "",
     context.prompt ? `The student was asked: ${context.prompt}` : "",
     vocab ? `Target vocabulary to work into the conversation naturally: ${vocab}` : "",
-    context.text ? `\nThe lesson text they read:\n${context.text}` : "",
+    context.text && includePassage ? `\nThe lesson text they read:\n${context.text}` : "",
+    // Once the passage is no longer resent, say that it exists — otherwise a
+    // reference to "the text" by either side has no antecedent at all.
+    context.text && !includePassage
+      ? `\nThe student has read a short passage on this topic. You discussed it from the first message onward; do not ask them to repeat it back.`
+      : "",
     context.script
       ? `\nTHE DIALOGUE TO WORK THROUGH — the script authored for this activity:\n${context.script}`
       : "",
@@ -493,7 +543,12 @@ export async function takeTurn(
   const recent = history.slice(-HISTORY_WINDOW);
 
   const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt(context) },
+    // `brief` once there is history: the opening greeting was built with the
+    // full passage, and from the second message onward the conversation itself
+    // carries the topic, so resending the passage every turn pays for the same
+    // several hundred tokens repeatedly — in money and in time-to-first-token.
+    // The dialogue script is never trimmed; see buildSystemPrompt.
+    { role: "system", content: buildSystemPrompt(context, { brief: recent.length > 0 }) },
     ...recent.map(
       (t): ChatMessage => ({
         role: t.role === "tutor" ? "assistant" : "user",
@@ -685,6 +740,9 @@ export async function transcribeSpokenTurn(
 
   const started = Date.now();
   let succeeded = false;
+  // Recorded in the `finally` below, so a failure part-way through still logs
+  // whatever audio the provider had already billed for.
+  let audioCostUsd: number | null = null;
 
   try {
     const audio = await storage.download(mediaKey);
@@ -694,6 +752,10 @@ export async function transcribeSpokenTurn(
       languageHint: "en",
     });
     succeeded = true;
+    audioCostUsd = computeAudioCostUsd(config, {
+      durationSeconds: result.durationSeconds,
+      channels: result.billedChannels,
+    });
 
     const text = result.text.trim();
     if (!text) {
@@ -723,6 +785,7 @@ export async function transcribeSpokenTurn(
       provider: config.providerLabel,
       modelId: config.modelId,
       tokensUsed: 0,
+      costUsd: audioCostUsd ?? undefined,
       succeeded,
       latencyMs: Date.now() - started,
     });

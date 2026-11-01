@@ -26,7 +26,12 @@
  * task and its own per-plan allowance instead of sharing `feedback`.
  */
 
-import { resolveTaskConfig, computeCostUsd, AIUnavailableError } from "../ai-config";
+import {
+  resolveTaskConfig,
+  computeCostUsd,
+  computeAudioCostUsd,
+  AIUnavailableError,
+} from "../ai-config";
 import { transcribe, chatJson, AIProviderError } from "../ai-providers";
 import type { TranscriptUtterance } from "../ai-providers";
 import { checkAndIncrement, recordUsage, refundQuota } from "../ai-quota";
@@ -304,9 +309,18 @@ export async function analysePeerCall(
       feature: "peer_call_analysis",
       provider: asrConfig.providerLabel,
       modelId: asrConfig.modelId,
-      // Billed per minute of audio, not per token. Recorded as zero rather
-      // than invented — see the note on ASR pricing in ai-quota.
+      // Billed per minute of audio, not per token, so the token count is
+      // genuinely zero and the cost comes from the duration instead.
       tokensUsed: 0,
+      // This is the dominant cost of an evaluated call — roughly 90% of it —
+      // and it used to record nothing at all, which left the monthly budget
+      // ceiling unable to see peer-call spend. `billedChannels` is what keeps a
+      // stereo call from being costed as if it were mono.
+      costUsd:
+        computeAudioCostUsd(asrConfig, {
+          durationSeconds: asr?.durationSeconds ?? 0,
+          channels: asr?.billedChannels ?? 1,
+        }) ?? undefined,
       succeeded: asrSucceeded,
       latencyMs: Date.now() - asrStarted,
     });

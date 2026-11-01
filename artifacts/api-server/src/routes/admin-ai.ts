@@ -153,6 +153,12 @@ const providerCreateSchema = z.object({
   /** Per million tokens. Null clears a price back to "unknown". */
   inputPricePerMtok: z.number().min(0).nullable().optional(),
   outputPricePerMtok: z.number().min(0).nullable().optional(),
+  /**
+   * Per minute of audio, for a speech provider — transcription is not sold by
+   * the token. Null clears it back to "unknown", and an unknown price records
+   * a null cost rather than a guessed one.
+   */
+  pricePerMinute: z.number().min(0).nullable().optional(),
 });
 
 const providerUpdateSchema = providerCreateSchema.partial();
@@ -185,8 +191,16 @@ router.post("/admin/ai/providers", requireAdmin, async (req, res): Promise<void>
     res.status(400).json({ error: "Validation failed", details: parsed.error.errors });
     return;
   }
-  const { label, role, baseUrl, apiKey, isActive, inputPricePerMtok, outputPricePerMtok } =
-    parsed.data;
+  const {
+    label,
+    role,
+    baseUrl,
+    apiKey,
+    isActive,
+    inputPricePerMtok,
+    outputPricePerMtok,
+    pricePerMinute,
+  } = parsed.data;
 
   try {
     const created = await db.transaction(async (tx) => {
@@ -200,6 +214,7 @@ router.post("/admin/ai/providers", requireAdmin, async (req, res): Promise<void>
           apiKeyHint: apiKey ? keyHint(apiKey) : null,
           inputPricePerMtok: inputPricePerMtok ?? null,
           outputPricePerMtok: outputPricePerMtok ?? null,
+          pricePerMinute: pricePerMinute ?? null,
           createdBy: req.session.userId!,
         })
         .returning();
@@ -218,6 +233,7 @@ router.post("/admin/ai/providers", requireAdmin, async (req, res): Promise<void>
       hasApiKey: Boolean(created.apiKeyEncrypted),
       inputPricePerMtok: created.inputPricePerMtok,
       outputPricePerMtok: created.outputPricePerMtok,
+      pricePerMinute: created.pricePerMinute,
       isActive: isActive ?? false,
     });
   } catch (err) {
@@ -248,7 +264,16 @@ router.patch("/admin/ai/providers/:id", requireAdmin, async (req, res): Promise<
     return;
   }
 
-  const { label, baseUrl, apiKey, isActive, role, inputPricePerMtok, outputPricePerMtok } =
+  const {
+    label,
+    baseUrl,
+    apiKey,
+    isActive,
+    role,
+    inputPricePerMtok,
+    outputPricePerMtok,
+    pricePerMinute,
+  } =
     parsed.data;
   const patch: Record<string, unknown> = {};
   if (label !== undefined) patch.label = label;
@@ -256,6 +281,7 @@ router.patch("/admin/ai/providers/:id", requireAdmin, async (req, res): Promise<
   if (role !== undefined) patch.role = role;
   if (inputPricePerMtok !== undefined) patch.inputPricePerMtok = inputPricePerMtok;
   if (outputPricePerMtok !== undefined) patch.outputPricePerMtok = outputPricePerMtok;
+  if (pricePerMinute !== undefined) patch.pricePerMinute = pricePerMinute;
 
   // An absent apiKey means "leave the stored one alone" — the panel cannot
   // send back a key it was never given, so absence must not clear it.
@@ -304,6 +330,7 @@ router.patch("/admin/ai/providers/:id", requireAdmin, async (req, res): Promise<
       hasApiKey: Boolean(updated.apiKeyEncrypted),
       inputPricePerMtok: updated.inputPricePerMtok,
       outputPricePerMtok: updated.outputPricePerMtok,
+      pricePerMinute: updated.pricePerMinute,
       isActive: updated.isActive,
     });
   } catch (err) {

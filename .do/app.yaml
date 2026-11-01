@@ -1,0 +1,389 @@
+# DigitalOcean App Platform spec — API + static frontend in one app.
+#
+# Create: DO → Apps → Create App → GitHub repo, then "Edit your app spec" and
+# paste this. Or: doctl apps create --spec .do/app.yaml
+#
+# Values marked SET-ME are per-deployment and must be filled in. Everything
+# marked type: SECRET is encrypted by DO once saved; it will not read back.
+#
+# The walkthrough, and why each variable is here rather than left to a code
+# default, is in docs/DEPLOY-DIGITALOCEAN.md.
+#
+# The frontend and API are ONE app on purpose: the `/api` ingress rule routes
+# to the API component, so the browser stays on a single origin. Session
+# cookies then stay first-party and no CORS or sameSite=none is needed.
+
+name: ascension
+region: fra
+
+services:
+  - name: api
+    dockerfile_path: Dockerfile
+    # The Dockerfile is multi-stage; this is the production API stage.
+    build_command: ""
+    source_dir: /
+    github:
+      repo: SET-ME/SET-ME
+      branch: main
+      deploy_on_push: true
+
+    http_port: 8080
+
+    # Two is now CORRECT but costs another $12/month, so this stays at 1 until
+    # that is a decision someone makes.
+    #
+    # It used to be 1 because it had to be: JOB_QUEUE=memory ran jobs
+    # in-process, so a second instance shared none of them. With the BullMQ
+    # backend jobs are claimed once cluster-wide, and raising this is the thing
+    # that makes a deploy cause no gap in service — currently every deploy is a
+    # short outage, because there is one container to replace.
+    #
+    # Raising it is a slider, not a code change. Two things to know when you
+    # do: DB_POOL_MAX is per process, so the database sees double the
+    # connections; and both instances run the grading sweeper, which is safe —
+    # it claims rows with conditional UPDATEs — but duplicated.
+    instance_count: 1
+    instance_size_slug: professional-xs
+
+    health_check:
+      http_path: /api/healthz
+      # /healthz is exempt from the rate limiter: a probe answering 429 reads
+      # as "the server is down" to everything that calls it.
+
+    envs:
+      # ── Core ────────────────────────────────────────────────────────────────
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "8080"
+      - key: LOG_LEVEL
+        value: info
+
+      # App Platform's load balancer is one hop. This is what makes req.ip
+      # meaningful, which the rate limiter depends on: it keys by user rather
+      # than IP precisely because a school or mobile carrier is a single
+      # address for hundreds of students.
+      - key: TRUST_PROXY
+        value: "1"
+
+      # Managed Postgres. Use the PRIVATE network URI from the DO database
+      # page — it keeps query traffic off the public internet.
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+
+      # Managed Valkey. MUST be rediss:// — managed Valkey requires TLS.
+      #
+      # Not optional: ai-quota.ts uses withRedisCritical, so every AI feature
+      # fails CLOSED when Redis is unreachable. That is deliberate — a cache
+      # outage must not hand out unlimited paid AI.
+      - key: REDIS_URL
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+
+      # openssl rand -hex 64
+      - key: SESSION_SECRET
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+
+      # openssl rand -hex 32
+      #
+      # NEVER ROTATE THIS. It encrypts the AI provider API keys stored by the
+      # admin panel; changing it makes every stored key undecryptable and they
+      # must all be re-entered by hand.
+      - key: AI_CONFIG_SECRET
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+
+      # Both are the deployed frontend URL. APP_BASE_URL is what password-reset
+      # links are built from, so a stale value sends students to localhost.
+      - key: ALLOWED_ORIGIN
+        value: SET-ME
+      - key: APP_BASE_URL
+        value: SET-ME
+
+      # The first administrator, created on start only if no administrator
+      # exists. CHANGE BOTH: the documented fallback is admin@example.com /
+      # admin@1234, on a public URL. Password needs 8+ chars with a letter and
+      # a number, or none is created and a warning is logged.
+      - key: ADMIN_EMAIL
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+      - key: ADMIN_PASSWORD
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+
+      # Swagger UI stays off in production. Explicit rather than merely absent.
+      - key: API_DOCS_ENABLED
+        value: ""
+
+      # ── Jobs ────────────────────────────────────────────────────────────────
+      # 'bullmq' puts jobs in Valkey instead of this process's memory. Two
+      # things follow: a job survives a restart — which matters because
+      # deploy_on_push means every push restarts the container mid-grading —
+      # and more than one instance becomes correct, because jobs are claimed
+      # once cluster-wide rather than per process.
+      #
+      # Requires REDIS_URL, and the Valkey eviction policy must be
+      # `noeviction` (DO's default) or queued jobs can be evicted under memory
+      # pressure with no error.
+      - key: JOB_QUEUE
+        value: bullmq
+
+      # Deliberately small. A job mostly WAITS — on a speech recogniser, on a
+      # model — but holds a database connection while it waits, and
+      # DB_POOL_MAX is 10 per process. Too many starves the HTTP requests
+      # sharing that pool, which is the opposite of the point.
+      - key: JOB_CONCURRENCY
+        value: "4"
+
+      # Low on purpose: the grading sweeper is already a recovery path with its
+      # own attempt limit, and retrying hard here as well multiplies paid AI
+      # calls against a provider having a bad day.
+      - key: JOB_ATTEMPTS
+        value: "2"
+
+      # Seconds to finish in-flight jobs when the platform sends SIGTERM on a
+      # deploy, before exiting regardless.
+      - key: SHUTDOWN_TIMEOUT_MS
+        value: "15000"
+
+      # ── Connection pool ─────────────────────────────────────────────────────
+      # Per process, so it multiplies when instance_count rises. Check the
+      # total against the managed tier's connection limit before scaling.
+      #
+      # NOT the render.yaml values (min 0 / max 5): those existed only to let a
+      # scale-to-zero free database go to sleep.
+      - key: DB_POOL_MIN
+        value: "2"
+      - key: DB_POOL_MAX
+        value: "10"
+
+      # ── Storage (DO Spaces) ─────────────────────────────────────────────────
+      # Spaces speaks S3, so the app needs an endpoint and a key pair.
+      #
+      # STORAGE_PUBLIC_ENDPOINT is what browser-facing presigned URLs are
+      # signed against. SigV4 signs the Host header, so a URL cannot be
+      # rewritten after signing — this has to be right at signing time or every
+      # upload fails. On Spaces it is the same host as the internal endpoint.
+      - key: STORAGE_ENDPOINT
+        value: https://fra1.digitaloceanspaces.com
+      - key: STORAGE_PUBLIC_ENDPOINT
+        value: https://fra1.digitaloceanspaces.com
+      - key: STORAGE_REGION
+        value: fra1
+      - key: STORAGE_BUCKET
+        value: SET-ME
+      # Spaces serves buckets as subdomains, so path-style must be off.
+      - key: STORAGE_FORCE_PATH_STYLE
+        value: "false"
+      - key: STORAGE_ACCESS_KEY_ID
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+      - key: STORAGE_SECRET_ACCESS_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+
+      # Shared daily counter for lesson recordings and call recordings alike.
+      - key: MEDIA_DAILY_UPLOAD_LIMIT
+        value: "200"
+
+      # Attempts allowed per block per lesson. Without a cap the only ceiling
+      # was the per-plan AI quota, so a student could spend a whole day's
+      # allowance retrying one pronunciation block and then be unable to start
+      # a lesson at all. Passive blocks are exempt.
+      - key: MAX_BLOCK_ATTEMPTS
+        value: "3"
+
+      # ── TURN / STUN ─────────────────────────────────────────────────────────
+      # Cloudflare Realtime TURN: 1,000 GB/month free, then $0.05/GB. A relayed
+      # call leg is roughly 20-30 MB.
+      #
+      # Without a relay, calls on symmetric NAT, mobile CGNAT and school
+      # firewalls fail outright — roughly 10-20% of them. The failure is honest
+      # (a 30s deadline, then an Arabic explanation) but it is still a failure.
+      #
+      # Include the turns: (TLS, 443) form as well as turn:. That is the
+      # variant that gets through firewalls blocking UDP, which is a large
+      # share of the students this feature exists for.
+      - key: PRACTICE_TURN_URLS
+        value: SET-ME
+      - key: PRACTICE_TURN_USERNAME
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+      - key: PRACTICE_TURN_CREDENTIAL
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+      # Empty keeps the code's Google STUN defaults.
+      - key: PRACTICE_STUN_URLS
+        value: ""
+
+      # ── Call bounds ─────────────────────────────────────────────────────────
+      # 15, not 30: a call recording is capped at 960s (16 min) by the media
+      # pipeline, so a longer call could never be evaluated. 15 minutes also
+      # costs ~$0.086 per evaluated call against $0.111 at 20, which buys four
+      # evaluated calls from a 60-minute monthly allowance instead of three.
+      - key: PRACTICE_MAX_CALL_MINUTES
+        value: "15"
+      - key: PRACTICE_DAILY_CALL_LIMIT
+        value: "20"
+      - key: PRACTICE_RING_TIMEOUT_MS
+        value: "45000"
+      - key: PRACTICE_CONNECT_TIMEOUT_MS
+        value: "30000"
+
+      # ── Rate limits ─────────────────────────────────────────────────────────
+      # A call polls two endpoints every second, so the poll budget is separate
+      # and generous. Passed through so they can be raised without a rebuild.
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "900000"
+      - key: RATE_LIMIT_API
+        value: "1000"
+      - key: RATE_LIMIT_AUTH
+        value: "20"
+      - key: RATE_LIMIT_PRACTICE_POLL
+        value: "2400"
+
+      # ── AI timeouts ─────────────────────────────────────────────────────────
+      # AI_ASR_POLL_TIMEOUT_MS is the one that matters: the code default of
+      # 180000 (3 min) was sized for a 30-second read-aloud. A 15-minute
+      # multichannel call is two channels plus queue time, so it can exceed
+      # that and fail after the student asked for feedback.
+      - key: AI_REQUEST_TIMEOUT_MS
+        value: "30000"
+      - key: AI_MAX_ATTEMPTS
+        value: "3"
+      - key: AI_ASR_TIMEOUT_MS
+        value: "60000"
+      - key: AI_ASR_POLL_TIMEOUT_MS
+        value: "600000"
+
+      # ── Grading sweeper ─────────────────────────────────────────────────────
+      # The only recovery path for work lost to a restart while
+      # JOB_QUEUE=memory. 10 minutes, NOT the 3600000 in render.yaml — that
+      # existed only to let a scale-to-zero free database sleep.
+      - key: GRADING_SWEEP_ENABLED
+        value: "true"
+      - key: GRADING_SWEEP_INTERVAL_MS
+        value: "600000"
+      - key: GRADING_SWEEP_STALE_MS
+        value: "300000"
+      - key: GRADING_SWEEP_MAX_ATTEMPTS
+        value: "3"
+      - key: GRADING_SWEEP_BATCH
+        value: "20"
+
+      # ── Email ───────────────────────────────────────────────────────────────
+      # Password-reset delivery. Until a provider is configured,
+      # services/mailer.ts writes the message to the log and the reset
+      # endpoint returns the link IN THE RESPONSE — fine in development, a
+      # vulnerability on a public URL.
+      - key: MAIL_PROVIDER
+        value: SET-ME
+      - key: MAIL_FROM
+        value: SET-ME
+      - key: MAIL_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+
+static_sites:
+  - name: web
+    source_dir: /
+    github:
+      repo: SET-ME/SET-ME
+      branch: main
+      deploy_on_push: true
+
+    # npx rather than a bare `pnpm`: the static-site buildpack is Node + npm,
+    # and pnpm is not on its PATH. A fallback to npm does not work either —
+    # the root package.json has a preinstall guard that exits 1 for any
+    # non-pnpm install manager, so the build fails with "Use pnpm instead".
+    #
+    # --prod=false because NODE_ENV=production would otherwise skip
+    # devDependencies, and Vite is one of them.
+    #
+    # render.yaml solves the same problem the same way.
+    build_command: npx --yes pnpm@10.5.2 install --frozen-lockfile --prod=false && npx --yes pnpm@10.5.2 --filter @workspace/ascension run build
+    output_dir: artifacts/ascension/dist/public
+
+    # Single-page app: every unmatched path serves index.html so client-side
+    # routing works on a hard refresh.
+    catchall_document: index.html
+
+ingress:
+  rules:
+    # /api FIRST — the frontend calls relative /api paths, and routing them to
+    # the API component is what keeps the browser on one origin.
+    - match:
+        path:
+          prefix: /api
+      component:
+        name: api
+        # App Platform STRIPS the matched prefix before forwarding, so without
+        # this the API receives /healthz rather than /api/healthz — and every
+        # route is mounted under /api (`app.use("/api", router)`), so every
+        # request 404s with "Cannot GET /healthz".
+        preserve_path_prefix: true
+    - match:
+        path:
+          prefix: /
+      component:
+        name: web
+
+# ── Alerts ────────────────────────────────────────────────────────────────────
+# If this app is handed over, these are what make "no downtime" mean anything:
+# without them, nobody learns about an outage. Point them at an address someone
+# actually reads.
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+
+  # Resource alerts on the API container. 70/80 rather than something tighter
+  # because a load test at far above launch volume left the app itself at 17%
+  # of both — so these are a real signal, not noise.
+  #
+  # FIVE_MINUTES so a momentary spike during a deploy does not page anyone.
+  - rule: CPU_UTILIZATION
+    operator: GREATER_THAN
+    value: 70
+    window: FIVE_MINUTES
+  - rule: MEM_UTILIZATION
+    operator: GREATER_THAN
+    value: 80
+    window: FIVE_MINUTES
+  - rule: RESTART_COUNT
+    operator: GREATER_THAN
+    value: 3
+    window: FIVE_MINUTES
+
+# ── Database alerts are NOT here ──────────────────────────────────────────────
+#
+# Postgres and Valkey alerts are account-level policies attached to clusters by
+# name, so they exist only in the DO dashboard (Monitoring → Alert policies) and
+# cannot be expressed in an app spec. They matter more than the app's own:
+# measured under load the app sat at 17% CPU while Postgres peaked at 40-49%,
+# so the database saturates first and the app's metrics look healthy while it
+# does.
+#
+# What should exist there, all at a five-minute window:
+#
+#   Postgres (db-pgsql-…)   Memory      > 85%   ← the binding constraint
+#                           CPU         > 70%
+#                           Disk        > 80%
+#   Valkey   (db-vk-…)      Memory      > 85%   ← sessions live here now, so a
+#                                               full Valkey logs everyone out
+#
+# Memory is listed first for Postgres deliberately. It sat at 72-75% through
+# every load test while CPU had headroom, and unlike CPU it degrades sharply
+# rather than gradually once the working set stops fitting in cache.

@@ -86,6 +86,21 @@ export const aiProvidersTable = pgTable(
     inputPricePerMtok: real("input_price_per_mtok"),
     outputPricePerMtok: real("output_price_per_mtok"),
 
+    /**
+     * Price per minute of audio, for `role = 'speech'`.
+     *
+     * Transcription is not sold by the token and cannot be costed as if it
+     * were: the token fields stay null on a speech provider, so every
+     * transcription recorded a null cost and the monthly budget could not see
+     * it. That is not a rounding error — multichannel ASR is roughly 90% of
+     * what an evaluated peer call costs.
+     *
+     * Multichannel is billed PER CHANNEL, so a stereo recording costs twice
+     * this rate per minute. The adapter reports how many channels it billed
+     * rather than leaving the caller to assume.
+     */
+    pricePerMinute: real("price_per_minute"),
+
     createdBy: integer("created_by").references(() => usersTable.id, {
       onDelete: "set null",
     }),

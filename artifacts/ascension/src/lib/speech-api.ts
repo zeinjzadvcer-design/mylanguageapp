@@ -58,7 +58,25 @@ export async function pollAttemptVerdict(
   attemptId: number,
   opts: { signal?: AbortSignal } = {},
 ): Promise<AttemptVerdict | null> {
-  const delays = [1500, 2000, 3000, 4000, 6000, 8000];
+  /**
+   * What matters is the worst wait after the verdict is ready, not the delays.
+   *
+   * The old schedule — 1500, 2000, 3000, 4000, 6000, 8000 — checked at 1.5s,
+   * 3.5s, 6.5s, then 10.5s. Its gaps grew fastest exactly where the answer was
+   * most likely to arrive, so a verdict ready at 8s sat unseen for 2.5s and one
+   * ready at 12s for 4.5s. Measured across a verdict landing anywhere from 2 to
+   * 14 seconds, the worst wait was 5.5s.
+   *
+   * A BACKING-OFF schedule is the wrong shape here. Transcription lands in a
+   * fairly predictable window, so the interval should be flat across it and
+   * back off only afterwards. Near-constant at one second through 12.7s brings
+   * the worst wait in that range to 1.7s and the typical one to 0.7s.
+   *
+   * The cost is more requests — seventeen rather than six, though only while an
+   * assessment is actually running. Each is a cheap read, and sessions no
+   * longer touch PostgreSQL, so the polling itself is close to free.
+   */
+  const delays = [700, ...Array(12).fill(1000), 2000, 3000, 4000, 5000];
 
   for (const delay of delays) {
     await new Promise((resolve) => setTimeout(resolve, delay));

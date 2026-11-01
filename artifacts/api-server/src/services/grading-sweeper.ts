@@ -184,6 +184,11 @@ export async function sweepStalePending(): Promise<SweepResult> {
     // A call whose polls stopped — crashed tab, closed laptop, rate-limited
     // client — is never closed by the polling path, and the one-live-per-person
     // index then locks both students out of every future call.
+    //
+    // This also runs on its own 15-second timer, which is what actually makes
+    // it timely. Kept here too because it is idempotent and costs one indexed
+    // query: if the fast timer is ever disabled or dies, the slow sweep still
+    // eventually frees the pair.
     callsClosed = await closeAbandonedSessions();
   } catch (err) {
     logger.error({ err }, "Sweep: closing abandoned calls failed");
@@ -257,6 +262,24 @@ export async function countPendingWork(): Promise<{
 // ─── Timer ────────────────────────────────────────────────────────────────────
 
 let timer: NodeJS.Timeout | null = null;
+let callTimer: NodeJS.Timeout | null = null;
+
+/**
+ * How often to look for calls both participants have walked away from.
+ *
+ * Separate from, and much faster than, the grading interval. Grading is minutes
+ * of model work and is deliberately unhurried; closing an abandoned call is one
+ * indexed query, and every second it is late is a second both students are
+ * locked out of starting another call by the one-live-per-person index.
+ *
+ * Presence is recorded on a once-per-second poll and a call is abandoned after
+ * 30 s of silence from both sides, so sweeping every 15 s detects a departure
+ * within about 45 s.
+ */
+const CALL_SWEEP_INTERVAL_MS = parseInt(
+  process.env.PRACTICE_SWEEP_INTERVAL_MS ?? "15000",
+  10,
+);
 
 /**
  * Start sweeping on an interval.
@@ -279,15 +302,33 @@ export function startGradingSweeper(): void {
     });
   }, INTERVAL_MS);
 
-  // Do not hold the process open for the timer alone.
-  timer.unref?.();
+  // Abandoned calls get their own, much faster timer: the work is one indexed
+  // query, and the cost of being late is two students unable to practise.
+  callTimer = setInterval(() => {
+    void closeAbandonedSessions().catch((err) => {
+      logger.error({ err }, "Abandoned-call sweep failed");
+    });
+  }, CALL_SWEEP_INTERVAL_MS);
 
-  logger.info({ intervalMs: INTERVAL_MS, staleAfterMs: STALE_AFTER_MS }, "Grading sweeper started");
+  // Do not hold the process open for the timers alone.
+  timer.unref?.();
+  callTimer.unref?.();
+
+  logger.info(
+    {
+      intervalMs: INTERVAL_MS,
+      staleAfterMs: STALE_AFTER_MS,
+      callSweepIntervalMs: CALL_SWEEP_INTERVAL_MS,
+    },
+    "Grading sweeper started",
+  );
 }
 
 export function stopGradingSweeper(): void {
   if (timer) clearInterval(timer);
   timer = null;
+  if (callTimer) clearInterval(callTimer);
+  callTimer = null;
 }
 
 export { MAX_ATTEMPTS, STALE_AFTER_MS };

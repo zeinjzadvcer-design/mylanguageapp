@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 023: ShamCash payment settings
+-- Migration 024: ShamCash payment settings
 --
 -- What a student needs on screen to pay: the receive QR an admin uploads, the
 -- account number to check it against, and whatever instructions the admin

@@ -330,6 +330,7 @@ export async function testConnection(
       // and is never recorded against the monthly budget.
       inputPricePerMtok: null,
       outputPricePerMtok: null,
+      pricePerMinute: null,
     },
     [{ role: "user", content: "Reply with the single word: ready" }],
   );

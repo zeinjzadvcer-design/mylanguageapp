@@ -544,6 +544,7 @@ function ProviderCard({
     isActive?: boolean;
     inputPricePerMtok?: number | null;
     outputPricePerMtok?: number | null;
+    pricePerMinute?: number | null;
   }) => void;
   onDelete: () => void;
 }) {
@@ -556,16 +557,28 @@ function ProviderCard({
   const [outPrice, setOutPrice] = useState(
     provider.outputPricePerMtok == null ? "" : String(provider.outputPricePerMtok),
   );
+  const [minutePrice, setMinutePrice] = useState(
+    provider.pricePerMinute == null ? "" : String(provider.pricePerMinute),
+  );
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const asPrice = (t: string) => (t.trim() === "" ? null : Number(t));
+
+  /**
+   * Speech is sold per minute of audio, chat per million tokens. Showing both
+   * sets to both roles is how AssemblyAI ended up with two fields that could
+   * never apply to it and no field that could.
+   */
+  const isSpeech = provider.role === "speech";
 
   const dirty =
     label !== provider.label ||
     baseUrl !== provider.baseUrl ||
     apiKey.trim().length > 0 ||
-    asPrice(inPrice) !== provider.inputPricePerMtok ||
-    asPrice(outPrice) !== provider.outputPricePerMtok;
+    (isSpeech
+      ? asPrice(minutePrice) !== provider.pricePerMinute
+      : asPrice(inPrice) !== provider.inputPricePerMtok ||
+        asPrice(outPrice) !== provider.outputPricePerMtok);
 
   return (
     <Card className={`border-2 ${provider.isActive ? "border-emerald-300" : ""}`}>
@@ -581,7 +594,9 @@ function ProviderCard({
               </Badge>
             )}
             {!provider.hasApiKey && <Badge variant="destructive">no key</Badge>}
-            {provider.inputPricePerMtok == null && provider.outputPricePerMtok == null && (
+            {(isSpeech
+              ? provider.pricePerMinute == null
+              : provider.inputPricePerMtok == null && provider.outputPricePerMtok == null) && (
               <Badge variant="outline" title="Cost is not recorded, so the monthly budget cannot act on this provider">
                 no prices
               </Badge>
@@ -631,38 +646,60 @@ function ProviderCard({
           />
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        {isSpeech ? (
           <div>
             <Label className="text-xs text-muted-foreground">
-              Input price, USD per 1M tokens
+              Price, USD per minute of audio
             </Label>
             <Input
               type="number"
               min={0}
-              step="0.01"
-              value={inPrice}
+              step="0.0001"
+              value={minutePrice}
               placeholder="unknown — cost not recorded"
-              onChange={(e) => setInPrice(e.target.value)}
+              onChange={(e) => setMinutePrice(e.target.value)}
               className="rounded-xl mt-1"
             />
+            <p className="text-xs text-muted-foreground mt-2">
+              Transcription is billed per minute, not per token. Multichannel is billed
+              per channel, so a stereo peer-call recording costs this rate twice over —
+              the server counts the channels, so enter the single-channel rate.
+            </p>
           </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">
-              Output price, USD per 1M tokens
-            </Label>
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              value={outPrice}
-              placeholder="unknown — cost not recorded"
-              onChange={(e) => setOutPrice(e.target.value)}
-              className="rounded-xl mt-1"
-            />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label className="text-xs text-muted-foreground">
+                Input price, USD per 1M tokens
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={inPrice}
+                placeholder="unknown — cost not recorded"
+                onChange={(e) => setInPrice(e.target.value)}
+                className="rounded-xl mt-1"
+              />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">
+                Output price, USD per 1M tokens
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={outPrice}
+                placeholder="unknown — cost not recorded"
+                onChange={(e) => setOutPrice(e.target.value)}
+                className="rounded-xl mt-1"
+              />
+            </div>
           </div>
-        </div>
+        )}
         <p className="text-xs text-muted-foreground">
-          Without prices, calls record no cost and the monthly ceiling can never trigger.
+          Without a price, calls record no cost and the monthly ceiling can never trigger.
         </p>
 
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -672,8 +709,12 @@ function ProviderCard({
               onSave({
                 label,
                 baseUrl,
-                inputPricePerMtok: asPrice(inPrice),
-                outputPricePerMtok: asPrice(outPrice),
+                ...(isSpeech
+                  ? { pricePerMinute: asPrice(minutePrice) }
+                  : {
+                      inputPricePerMtok: asPrice(inPrice),
+                      outputPricePerMtok: asPrice(outPrice),
+                    }),
                 ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
               });
               setApiKey("");

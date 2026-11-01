@@ -127,6 +127,11 @@ export interface ResolvedTaskConfig {
   /** Per million tokens. Null when the price has not been entered. */
   inputPricePerMtok: number | null;
   outputPricePerMtok: number | null;
+  /**
+   * Per minute of audio, for speech providers. Null on a chat provider, and
+   * null on a speech provider whose price has not been entered.
+   */
+  pricePerMinute: number | null;
 }
 
 /**
@@ -146,6 +151,30 @@ export function computeCostUsd(
   const input = (usage.promptTokens / 1_000_000) * (inPrice ?? 0);
   const output = (usage.completionTokens / 1_000_000) * (outPrice ?? 0);
   return input + output;
+}
+
+/**
+ * What one transcription cost, or null when the rate is not known.
+ *
+ * Separate from `computeCostUsd` because speech is a different purchase, sold
+ * by the minute rather than the token. Costing it with the token function
+ * returned null on every call, which left ASR — roughly 90% of an evaluated
+ * peer call — invisible to the monthly budget ceiling.
+ *
+ * `channels` is not a detail: multichannel transcription is billed per
+ * channel, so the stereo recording that gives peer calls exact speaker
+ * attribution costs twice the mono rate. Defaults to 1 so a caller that does
+ * not know cannot silently halve the bill.
+ */
+export function computeAudioCostUsd(
+  config: Pick<ResolvedTaskConfig, "pricePerMinute">,
+  usage: { durationSeconds: number; channels?: number },
+): number | null {
+  const rate = config.pricePerMinute;
+  if (rate == null) return null;
+  if (!Number.isFinite(usage.durationSeconds) || usage.durationSeconds <= 0) return 0;
+  const channels = Math.max(1, usage.channels ?? 1);
+  return (usage.durationSeconds / 60) * rate * channels;
 }
 
 /** Why a task cannot run. Each maps to something an admin can go and fix. */
@@ -233,6 +262,7 @@ export async function resolveTaskConfig(task: AITask): Promise<ResolvedTaskConfi
     providerLabel: row.provider.label,
     inputPricePerMtok: row.provider.inputPricePerMtok,
     outputPricePerMtok: row.provider.outputPricePerMtok,
+    pricePerMinute: row.provider.pricePerMinute,
   };
 }
 
@@ -345,6 +375,7 @@ export async function getAdminConfig() {
       hasApiKey: sql<boolean>`${aiProvidersTable.apiKeyEncrypted} IS NOT NULL`,
       inputPricePerMtok: aiProvidersTable.inputPricePerMtok,
       outputPricePerMtok: aiProvidersTable.outputPricePerMtok,
+      pricePerMinute: aiProvidersTable.pricePerMinute,
       isActive: aiProvidersTable.isActive,
       updatedAt: aiProvidersTable.updatedAt,
     })

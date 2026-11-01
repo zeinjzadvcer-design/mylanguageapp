@@ -68,6 +68,12 @@ export interface AiProvider {
   /** Per million tokens. Null means the price is unknown and cost is not recorded. */
   inputPricePerMtok: number | null;
   outputPricePerMtok: number | null;
+  /**
+   * Per minute of audio, for a speech provider. Transcription is not sold by
+   * the token, so the two fields above stay null on it and this is the only
+   * price that records a cost.
+   */
+  pricePerMinute: number | null;
   updatedAt?: string;
 }
 
@@ -180,6 +186,7 @@ export const updateProvider = (
     isActive?: boolean;
     inputPricePerMtok?: number | null;
     outputPricePerMtok?: number | null;
+    pricePerMinute?: number | null;
   },
 ) => request<AiProvider>("PATCH", `/admin/ai/providers/${id}`, patch);
 

@@ -31,7 +31,7 @@
  * nothing is harmed by waiting.
  */
 
-import { eq, and, or, ne, gte, lt, sql, desc, inArray, asc } from "drizzle-orm";
+import { eq, and, or, ne, gte, lt, sql, desc, inArray, asc, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
   db,
@@ -65,6 +65,21 @@ const MAX_CALL_MINUTES = parseInt(process.env.PRACTICE_MAX_CALL_MINUTES ?? "30",
 
 /** How long a proposed pairing rings before it is given up on. */
 const RING_TIMEOUT_MS = parseInt(process.env.PRACTICE_RING_TIMEOUT_MS ?? "45000", 10);
+
+/**
+ * How long BOTH sides must be silent before a live call is treated as
+ * abandoned.
+ *
+ * Both browsers poll once a second during a call, so ten missed polls is a
+ * clear departure rather than a slow network. The alternative — waiting for
+ * `MAX_CALL_MINUTES + 2` — left both students locked out of voice practice for
+ * up to seventeen minutes after one of them closed a laptop, because the
+ * one-live-per-person index refuses anyone already in a call.
+ */
+const ABANDONED_AFTER_MS = parseInt(
+  process.env.PRACTICE_ABANDONED_AFTER_MS ?? "30000",
+  10,
+);
 
 /**
  * How long two browsers get to complete the WebRTC handshake before the call is
@@ -360,6 +375,30 @@ async function expireIfDue(session: PracticeSession): Promise<PracticeSession> {
   return session;
 }
 
+/**
+ * Note that one participant is still watching this call.
+ *
+ * Fire-and-forget by intent: this runs on a once-per-second poll, and a failed
+ * presence write must never turn a working call into an error. The cost of
+ * losing one is that the sweeper's view of this side is one second staler.
+ */
+async function touchSessionPresence(
+  session: PracticeSession,
+  userId: number,
+): Promise<void> {
+  const column =
+    session.requesterId === userId ? "requesterSeenAt" : "partnerSeenAt";
+
+  try {
+    await db
+      .update(practiceSessionsTable)
+      .set({ [column]: new Date() })
+      .where(eq(practiceSessionsTable.id, session.id));
+  } catch (err) {
+    logger.debug({ err, sessionId: session.id, userId }, "Presence write failed");
+  }
+}
+
 async function closeSession(
   session: PracticeSession,
   reason: NonNullable<PracticeSession["endReason"]>,
@@ -436,6 +475,11 @@ export async function closeAbandonedSessions(): Promise<number> {
   // under that, not the primary mechanism.
   const activeCutoff = new Date(now - (MAX_CALL_MINUTES + 2) * 60_000);
   const waitingCutoff = new Date(now - RING_TIMEOUT_MS * 4);
+  // Both sides quiet for this long means nobody is in the call any more. Ten
+  // times the one-second poll interval: long enough that a brief network stall
+  // or a rate-limited poll is not mistaken for a departure, short enough that
+  // a crashed tab frees both students in seconds rather than minutes.
+  const presenceCutoff = new Date(now - ABANDONED_AFTER_MS);
 
   const stale = await db
     .select()
@@ -445,6 +489,17 @@ export async function closeAbandonedSessions(): Promise<number> {
         and(
           eq(practiceSessionsTable.status, "active"),
           lt(practiceSessionsTable.startedAt, activeCutoff),
+        ),
+        // Both participants have gone quiet. Each side's presence must be
+        // KNOWN to be stale: a null means that side has not polled since the
+        // column existed, so a call in flight when this shipped is left to the
+        // `activeCutoff` rule above rather than closed on no evidence.
+        and(
+          eq(practiceSessionsTable.status, "active"),
+          isNotNull(practiceSessionsTable.requesterSeenAt),
+          isNotNull(practiceSessionsTable.partnerSeenAt),
+          lt(practiceSessionsTable.requesterSeenAt, presenceCutoff),
+          lt(practiceSessionsTable.partnerSeenAt, presenceCutoff),
         ),
         and(
           eq(practiceSessionsTable.status, "waiting"),
@@ -639,6 +694,12 @@ export async function pollStatus(userId: number): Promise<PracticeStatus> {
   const existing = await liveSessionFor(userId);
   if (existing) {
     const session = await expireIfDue(existing);
+    // Record that this side is still here, but only while the call is live and
+    // not after `expireIfDue` has just closed it — writing presence onto an
+    // ended call would be noise, and the row is no longer polled anyway.
+    if (session.status === "active") {
+      await touchSessionPresence(session, userId);
+    }
     return {
       session: await viewFor(session, userId),
       queued: false,

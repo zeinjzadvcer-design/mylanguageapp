@@ -84,6 +84,22 @@ export const MAX_RECORDING_BYTES = 15 * 1024 * 1024;
 export const MAX_CMS_BYTES = 100 * 1024 * 1024;
 /** Ten minutes. Longer than any single speaking activity the spec describes. */
 export const MAX_RECORDING_SECONDS = 600;
+/**
+ * Sixteen minutes, for a peer-call recording only.
+ *
+ * A call recording is legitimately twenty times longer than a read-aloud
+ * answer, so one shared limit cannot serve both: at 600s every call over ten
+ * minutes was refused at upload and could never be evaluated.
+ *
+ * 960s is a 15-minute call (`PRACTICE_MAX_CALL_MINUTES`) plus a minute of
+ * headroom for a recording that slightly overruns the call. The 15MB byte cap
+ * is deliberately left alone — 15 minutes of 96kbps stereo is about 10.3MB, so
+ * it still has room, and it stays the backstop if the bitrate is ever raised.
+ *
+ * Raising the call cap to 30 minutes would need the byte limit raised too
+ * (~20.6MB), so the two belong together.
+ */
+export const MAX_CALL_RECORDING_SECONDS = 960;
 
 /** How long a presigned upload URL stays valid. */
 const UPLOAD_TTL_SECONDS = 300;

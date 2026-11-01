@@ -18,6 +18,7 @@ import docsRouter from "./routes/docs";
 import { logger } from "./lib/logger";
 import { pool } from "@workspace/db";
 import { redis } from "./services/redis";
+import { createRedisSessionStore } from "./services/session-store";
 // Side-effect import: registers the handlers the background queue dispatches to.
 import "./services/job-handlers";
 
@@ -89,25 +90,76 @@ if (!process.env.SESSION_SECRET) {
   logger.warn("SESSION_SECRET not set — using insecure default (development only)");
 }
 
+/**
+ * Sessions live in Redis when it is configured, PostgreSQL otherwise.
+ *
+ * Measured under load, the PostgreSQL store was just under half of all
+ * database time — two queries on every request from every user, one to read
+ * the session and one to push its expiry out for `rolling` below. In Redis
+ * those are a GET and an EXPIRE, both in memory.
+ *
+ * The trade is that Redis becomes load-bearing for authentication rather than
+ * only for the AI quota and the cache; see services/session-store.ts.
+ */
 const PgSession = connectPgSimple(session);
+const redisSessionStore = createRedisSessionStore();
+if (redisSessionStore) {
+  logger.info("Sessions stored in Redis");
+} else {
+  logger.info("Sessions stored in PostgreSQL (REDIS_URL not set)");
+}
+
 app.use(
   session({
-    store: new PgSession({
-      pool,
-      tableName: "session",
-      createTableIfMissing: true,
-      // Seconds between expired-session cleanups. The 15-minute default wakes a
-      // scale-to-zero database (Neon free tier) around the clock; raise it there.
-      pruneSessionInterval: parseInt(process.env.SESSION_PRUNE_INTERVAL_S ?? "900", 10),
-    }),
+    store:
+      redisSessionStore ??
+      new PgSession({
+        pool,
+        tableName: "session",
+        createTableIfMissing: true,
+        // Seconds between expired-session cleanups. The 15-minute default wakes
+        // a scale-to-zero database (Neon free tier) around the clock; raise it
+        // there. Unused when Redis holds the sessions: it expires its own keys.
+        pruneSessionInterval: parseInt(process.env.SESSION_PRUNE_INTERVAL_S ?? "900", 10),
+      }),
     secret: process.env.SESSION_SECRET ?? "ascension-dev-secret",
     resave: false,
     saveUninitialized: false,
+    /**
+     * Re-send the cookie on every response, so its 30 days are counted from
+     * the student's last visit rather than from the day they logged in.
+     *
+     * Without this the two halves of a session expire on different clocks:
+     * `connect-pg-simple` implements `touch`, so express-session keeps pushing
+     * the DATABASE row's expiry forward on each request, while the BROWSER
+     * cookie keeps the fixed `maxAge` it was given at login. A student using
+     * the app daily was still logged out 30 days after signing in, mid-use and
+     * for no reason they could see — the server-side session was alive and
+     * well; the cookie carrying its id had simply expired.
+     *
+     * The cost is a `Set-Cookie` header on every response, which is a few dozen
+     * bytes and no extra query: the store is touched either way.
+     */
+    rolling: true,
     cookie: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
       maxAge: 30 * 24 * 60 * 60 * 1000,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      /**
+       * `lax` in both, not `none` in production.
+       *
+       * The frontend is served from the same origin as the API — the platform
+       * routes `/api` to this service, which is the whole reason that routing
+       * exists — so the cookie is first-party and `lax` applies cleanly.
+       *
+       * `none` was wrong in two ways. It needs `secure`, so any environment
+       * serving plain HTTP dropped the cookie entirely and the student was
+       * logged out on the next request. And it tells the browser the cookie is
+       * for cross-site use, which modern privacy settings and tracking
+       * protection are increasingly willing to discard — intermittently, and
+       * per-browser, which is exactly what an unexplained logout looks like.
+       */
+      sameSite: "lax",
     },
   }),
 );

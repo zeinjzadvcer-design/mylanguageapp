@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 022: Payment submissions and the activation pipeline
+-- Migration 023: Payment submissions and the activation pipeline
 --
 -- WHAT WAS MISSING
 -- ────────────────

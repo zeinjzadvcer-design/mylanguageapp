@@ -82,6 +82,12 @@ interface BlockState {
   /** Filled in once the background speech assessment reports back. */
   speechVerdict?: AttemptVerdict;
   awaitingVerdict?: boolean;
+  /**
+   * Set when the server refused a submission because the block's attempts are
+   * used up. Distinct from `submitted`: there is no verdict to show, and the
+   * only thing left for the student to do is continue.
+   */
+  attemptsExhausted?: boolean;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -626,8 +632,29 @@ function SpeakingBlock({
         <p className="text-xs text-center text-emerald-600">تم حفظ التسجيل.</p>
       )}
 
+      {/* Assessment takes seconds: the recording is uploaded, transcribed by a
+          speech recogniser, then scored. A single line of static grey text for
+          all of that reads as frozen — the student has no way to tell a working
+          request from a stuck one, and nothing to do but stare at it.
+
+          So: visible motion, a stated expectation, and the one fact that
+          actually helps — they do not have to wait here. متابعة stays enabled
+          throughout. */}
       {state.awaitingVerdict && (
-        <p className="text-xs text-center text-muted-foreground">جارٍ تقييم نطقك…</p>
+        <div className="flex flex-col items-center gap-1.5 rounded-lg border border-border bg-secondary/50 p-3">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="text-xs text-foreground">جارٍ تقييم نطقك…</span>
+          </div>
+          {/* Says what is certainly true and nothing more. The lesson summary
+              does collect verdicts that arrive while the student is still in
+              the lesson, which is the common case — but one that lands after
+              they leave it is not retrievable anywhere, so promising a place
+              to find it would be wrong some of the time. */}
+          <p className="text-[11px] text-muted-foreground text-center leading-relaxed">
+            يستغرق التقييم عادةً أقل من دقيقة، ويمكنك المتابعة أثناءه.
+          </p>
+        </div>
       )}
 
       {state.speechVerdict && <SpeechVerdictCard verdict={state.speechVerdict} />}
@@ -1001,6 +1028,31 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
   };
 
   // ── Submit a single block via API ──────────────────────────────────
+  /**
+   * Blocks that must NOT advance on their own once submitted.
+   *
+   * For these, "submit" and "continue" are two different intentions: the first
+   * click sends the answer, a verdict appears, and the second click leaves once
+   * the student has read it. Every other block type is something to read or
+   * listen to — submitting only records that it was seen — so stopping there
+   * asks for the same click twice with nothing happening in between.
+   *
+   * `dialogue` is here for a different reason: it shows no verdict, but
+   * submitting it OPENS THE AI TUTOR. Advancing past it automatically would
+   * skip the conversation the block exists for.
+   *
+   * Related to but not the same as SKIPPABLE_TYPES below, which also contains
+   * `dialogue` — a student may decline an optional conversation, but may not be
+   * carried past one they did start.
+   */
+  const AUTO_ADVANCE_EXEMPT = [
+    "mcq",
+    "open_ended",
+    "speaking_prompt",
+    "pronunciation_guide",
+    "dialogue",
+  ];
+
   const doSubmitBlock = (block: ContentBlock, extraPatch?: Partial<BlockState>) => {
     const st = { ...getBlockState(block.id), ...(extraPatch ?? {}) };
     setBlockField(block.id, { submitting: true });
@@ -1042,6 +1094,12 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     }
     // passive blocks: just clientSubmissionId
 
+    // A block the student answered shows them a verdict, so the first click
+    // submits and a second one moves on. A passive block has no verdict to
+    // show — marking it read IS the whole interaction — so stopping there just
+    // asks for the same click twice with nothing happening in between.
+    const advancesImmediately = !AUTO_ADVANCE_EXEMPT.includes(block.type);
+
     submitActivity.mutate(
       { lessonId, blockId: block.id, data: payload },
       {
@@ -1062,9 +1120,33 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
               });
             });
           }
+
+          // Nothing to read here, so go. Interactive blocks stay put: their
+          // verdict is the reason the second click exists.
+          if (advancesImmediately) moveNext();
         },
-        onError: () => {
+        onError: (err: unknown) => {
           setBlockField(block.id, { submitting: false });
+
+          // Running out of attempts is not an error the student should be told
+          // to retry — "حاول مجدداً" is exactly the wrong advice when the
+          // reason is that there are no attempts left. Say so, and let them
+          // move on rather than leaving them stuck on a block that will keep
+          // refusing.
+          const apiError = err as {
+            status?: number;
+            data?: { code?: string; maxAttempts?: number };
+          };
+          if (apiError?.data?.code === "ATTEMPT_LIMIT_REACHED") {
+            const max = apiError.data.maxAttempts ?? 3;
+            setBlockField(block.id, { submitted: true, attemptsExhausted: true });
+            toast({
+              title: "انتهت المحاولات",
+              description: `استخدمت ${max} محاولات لهذا التمرين. يمكنك المتابعة.`,
+            });
+            return;
+          }
+
           toast({
             variant: "destructive",
             title: "خطأ",
@@ -1194,6 +1276,25 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     const passed = finishResult.passed;
     const xpEarned = finishResult.xpEarned;
 
+    /**
+     * Speech verdicts collected here, because the student was told they could
+     * carry on rather than watch a spinner.
+     *
+     * Assessment is asynchronous by design — upload, speech recogniser, score —
+     * and the waiting panel on a speaking block says متابعة is safe and the
+     * result will appear in this summary. That sentence has to be true, so the
+     * summary is where every verdict ends up: the ones that arrived while the
+     * student kept working, and the ones still in flight.
+     *
+     * Read from block state rather than refetched: `pollAttemptVerdict` writes
+     * each result into the block it belongs to as it lands, and that continues
+     * while the student moves through the lesson.
+     */
+    const speechBlocks = blocks
+      .filter((b) => b.type === "speaking_prompt" || b.type === "pronunciation_guide")
+      .map((b) => ({ block: b, state: getBlockState(b.id) }))
+      .filter((x) => x.state.speechVerdict || x.state.awaitingVerdict);
+
     return (
       <div dir="rtl" className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
         <Card className="max-w-lg w-full text-center shadow-xl border-t-8 border-t-primary">
@@ -1221,6 +1322,39 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
                 <div className="text-sm text-muted-foreground">XP</div>
               </div>
             </div>
+
+            {/* Pronunciation feedback, including anything that finished after
+                the student moved on. This is the promise the waiting panel
+                makes, kept. */}
+            {speechBlocks.length > 0 && (
+              <div className="space-y-3 border-t pt-5 text-right">
+                <h3 className="text-sm font-bold text-foreground">تقييم النطق</h3>
+                {speechBlocks.map(({ block, state }) => (
+                  <div key={block.id} className="space-y-1.5">
+                    {(block.titleAr || block.title) && (
+                      <p className="text-xs text-muted-foreground">
+                        {block.titleAr || block.title}
+                      </p>
+                    )}
+                    {state.speechVerdict ? (
+                      <SpeechVerdictCard verdict={state.speechVerdict} />
+                    ) : (
+                      // Deliberately promises no viewing location. A verdict
+                      // that lands after the student leaves this screen is not
+                      // retrievable anywhere today — the data is in
+                      // `learning_activity_attempts`, but nothing reads it back
+                      // — so saying "check your progress page" would be untrue.
+                      <div className="flex items-center justify-center gap-2 rounded-lg border border-border bg-secondary/50 p-3">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                        <span className="text-xs text-muted-foreground">
+                          ما زال التقييم جارياً. تسجيلك محفوظ وسيُقيَّم.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
               <Button
@@ -1277,6 +1411,9 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
    * attempt: it carries the AI tutor, so an optional conversation a student does
    * not want to have was a dead end — the only button on screen submitted the
    * block and started the tutor.
+   *
+   * Deliberately NOT the same list as AUTO_ADVANCE_EXEMPT above: `dialogue` is
+   * skippable but must not auto-advance, because submitting it opens the tutor.
    */
   const SKIPPABLE_TYPES = [
     "mcq",

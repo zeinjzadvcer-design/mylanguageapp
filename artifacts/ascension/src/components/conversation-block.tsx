@@ -56,6 +56,16 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  /**
+   * Which part of the wait the student is in.
+   *
+   * A typed turn waits on one model call. A SPOKEN turn waits on an upload,
+   * then a transcription, then the model — and until now all of that was one
+   * undifferentiated spinner, so ten seconds looked identical to a hang. The
+   * wait is not shortened by naming its stages, but it stops being a mystery,
+   * and "جارٍ الاستماع" tells the student their recording arrived.
+   */
+  const [stage, setStage] = useState<"idle" | "uploading" | "listening" | "thinking">("idle");
   const [starting, setStarting] = useState(false);
   const [ended, setEnded] = useState(false);
   const [turnsRemaining, setTurnsRemaining] = useState<number | null>(null);
@@ -127,6 +137,7 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
   const submit = async (message: string) => {
     if (!sessionId || !message.trim()) return;
     setBusy(true);
+    setStage("thinking");
     setTurns((t) => [...t, { role: "student", content: message }]);
     setDraft("");
 
@@ -150,6 +161,7 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
       }
     } finally {
       setBusy(false);
+      setStage("idle");
       mic.reset();
     }
   };
@@ -161,10 +173,14 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
 
     let cancelled = false;
     setBusy(true);
+    setStage("uploading");
 
     uploadRecording(mic.blob, "lesson_activity", mic.durationSec)
       .then((r) => {
         if (cancelled) return;
+        // Uploaded. What remains is transcription and then the reply — the
+        // longest stretch of a spoken turn, and the part worth labelling.
+        setStage("listening");
         // The server transcribes the recording and uses that as the turn — the
         // client has no way to know what was said until it comes back.
         return sendTurn(sessionId, { mediaId: r.mediaId });
@@ -199,6 +215,7 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
       .finally(() => {
         if (!cancelled) {
           setBusy(false);
+          setStage("idle");
           mic.reset();
         }
       });
@@ -298,8 +315,30 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
           ))}
           {busy && (
             <div className="flex justify-end">
-              <div className="bg-secondary rounded-2xl px-3 py-2">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              <div className="bg-secondary rounded-2xl px-3 py-2 flex items-center gap-2">
+                {/* Three pulsing dots rather than a spinner. A spinner says
+                    "loading"; dots in a chat bubble say "composing a reply",
+                    which is what is actually happening and reads as shorter
+                    even when it is not. */}
+                <span className="flex gap-1" aria-hidden="true">
+                  {[0, 150, 300].map((delay) => (
+                    <span
+                      key={delay}
+                      className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-pulse"
+                      style={{ animationDelay: `${delay}ms` }}
+                    />
+                  ))}
+                </span>
+                {/* Named stages, because a spoken turn waits on an upload, a
+                    transcription and then the model — and one unlabelled
+                    spinner for all three made ten seconds look like a hang. */}
+                <span className="text-xs text-muted-foreground" dir="rtl">
+                  {stage === "uploading"
+                    ? "جارٍ إرسال التسجيل…"
+                    : stage === "listening"
+                      ? "جارٍ الاستماع…"
+                      : "يكتب…"}
+                </span>
               </div>
             </div>
           )}

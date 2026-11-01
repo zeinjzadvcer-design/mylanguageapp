@@ -3,7 +3,7 @@
  *
  * ShamCash details are admin-editable and live in the database; the crypto
  * wallet address is deploy-time configuration and lives in env. That asymmetry
- * is deliberate and is explained in migration 023: ShamCash has a human
+ * is deliberate and is explained in migration 024: ShamCash has a human
  * reviewing every receipt, so a swapped QR is caught; the crypto path verifies
  * without a human, which makes its address a trust anchor.
  */

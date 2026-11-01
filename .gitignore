@@ -50,6 +50,15 @@ Thumbs.db
 
 # Local env
 .env
+# Backups made while editing .env hold the same secrets the file does.
+.env.bak*
+.env.local
+.env.*.local
+
+# Per-machine compose overrides. The file in this repo says so itself: it
+# carries local networking workarounds (DNS resolvers, IPv4-first, a substitute
+# image) that would be wrong on anyone else's machine and on every deployment.
+docker-compose.override.yml
 
 # Backups made while editing .env hold the same secrets the file does.
 .env.bak*

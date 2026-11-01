@@ -43,6 +43,19 @@ import { jobs } from "../services/jobs";
 
 const router: IRouter = Router();
 
+/**
+ * How many times one block may be answered in a lesson.
+ *
+ * Three is enough for the retry the spec's 75% pass gate assumes a student
+ * will make, and the cost model's 1.4x retry factor already prices. Beyond
+ * that it stops being practice: the student is guessing at a grader, and every
+ * guess is an AI call against an allowance they will want later.
+ *
+ * Environment-tunable because the right number is a teaching judgement, not a
+ * technical one, and it should not need a deploy to change.
+ */
+const MAX_BLOCK_ATTEMPTS = parseInt(process.env.MAX_BLOCK_ATTEMPTS ?? "3", 10);
+
 // ─── GET /lessons ─────────────────────────────────────────────────────────────
 // Returns lessons in the caller's curriculum with authoritative state values.
 //
@@ -827,6 +840,47 @@ router.post(
     if (!block) {
       res.status(404).json({ error: "Block not found in this lesson" });
       return;
+    }
+
+    // A block may be answered a limited number of times.
+    //
+    // Nothing used to bound this. The only ceiling was the per-plan AI quota,
+    // which meant a student could retry one pronunciation block until their
+    // whole day's allowance was gone and then be unable to start a lesson at
+    // all — an accidental rule rather than a designed one, and a bad trade for
+    // them as well as for the AI bill.
+    //
+    // Counted from attempts rather than stored on a counter column so it
+    // cannot drift from the attempts actually recorded, and so it is right for
+    // rows that already exist.
+    //
+    // Passive blocks are exempt: re-reading a passage costs nothing and marking
+    // one as seen twice is not a retry. The cap applies per block per lesson,
+    // so retaking the lesson later is a separate matter — `maxAttempts` bounds
+    // one sitting, `ai_plan_policies` bounds the month.
+    if (block.type !== "text" && block.type !== "explanation" && block.type !== "review") {
+      const [{ used }] = await db
+        .select({ used: sql<number>`count(*)::int` })
+        .from(learningActivityAttemptsTable)
+        .where(
+          and(
+            eq(learningActivityAttemptsTable.userId, userId),
+            eq(learningActivityAttemptsTable.lessonId, lessonId),
+            eq(learningActivityAttemptsTable.blockId, blockId),
+          ),
+        );
+
+      if (used >= MAX_BLOCK_ATTEMPTS) {
+        // 409, not 403: the request is well formed and the student is allowed
+        // here — the block's state is simply done with being answered.
+        res.status(409).json({
+          error: `You have used all ${MAX_BLOCK_ATTEMPTS} attempts for this block.`,
+          code: "ATTEMPT_LIMIT_REACHED",
+          attemptsUsed: used,
+          maxAttempts: MAX_BLOCK_ATTEMPTS,
+        });
+        return;
+      }
     }
 
     // Enforce curriculum access

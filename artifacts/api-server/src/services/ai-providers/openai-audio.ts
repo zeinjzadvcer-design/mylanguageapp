@@ -55,6 +55,15 @@ export interface TranscriptionResult {
   modelId: string;
   /** Per-speaker turns. Empty unless diarization was requested and supported. */
   utterances?: TranscriptUtterance[];
+  /**
+   * How many audio channels the provider billed for.
+   *
+   * Reported rather than inferred because ASR is sold by the minute PER
+   * CHANNEL: the stereo recording that gives peer calls exact speaker
+   * attribution costs twice a mono one. A caller that had to guess would
+   * silently halve the recorded cost of every evaluated call.
+   */
+  billedChannels: number;
 }
 
 interface VerboseTranscription {
@@ -190,5 +199,7 @@ export async function transcribe(
     words,
     hasWordTimings: words.length > 0,
     modelId: config.modelId,
+    // This API has no multichannel mode: it mixes down and bills once.
+    billedChannels: 1,
   };
 }

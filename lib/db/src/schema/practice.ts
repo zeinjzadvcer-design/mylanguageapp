@@ -118,6 +118,21 @@ export const practiceSessionsTable = pgTable(
     endedAt: timestamp("ended_at", { withTimezone: true }),
     durationSeconds: integer("duration_seconds"),
 
+    /**
+     * When each side was last heard from, refreshed by their own poll.
+     *
+     * Two columns rather than one because the two browsers fail independently:
+     * one student's tab crashing is the common case, and a single "last seen"
+     * would be kept alive by the other side still polling, which is exactly the
+     * situation this is meant to detect.
+     *
+     * Null until the call goes `active`. A ringing call is already bounded by
+     * `RING_TIMEOUT_MS`, so presence only becomes interesting once a call is
+     * live and expected to be polled every second.
+     */
+    requesterSeenAt: timestamp("requester_seen_at", { withTimezone: true }),
+    partnerSeenAt: timestamp("partner_seen_at", { withTimezone: true }),
+
     endReason: text("end_reason", {
       enum: [
         "ended_by_user",

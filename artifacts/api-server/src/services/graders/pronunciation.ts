@@ -27,7 +27,12 @@
 
 import { z } from "zod";
 import type { AITask } from "@workspace/db";
-import { resolveTaskConfig, computeCostUsd, AIUnavailableError } from "../ai-config";
+import {
+  resolveTaskConfig,
+  computeCostUsd,
+  computeAudioCostUsd,
+  AIUnavailableError,
+} from "../ai-config";
 import { transcribe } from "../ai-providers";
 import { chatJson, AIProviderError } from "../ai-providers";
 import { checkAndIncrement, recordUsage } from "../ai-quota";
@@ -162,6 +167,9 @@ export async function assessSpeech(
   const started = Date.now();
   let succeeded = false;
   let tokensUsed = 0;
+  // Captured here so the `finally` can record it even when scoring throws
+  // after the provider has already billed for the audio.
+  let audioCostUsd: number | null = null;
 
   try {
     const asr = await transcribe(asrConfig, audio, {
@@ -172,6 +180,10 @@ export async function assessSpeech(
       languageHint: "en",
     });
     succeeded = true;
+    audioCostUsd = computeAudioCostUsd(asrConfig, {
+      durationSeconds: asr.durationSeconds,
+      channels: asr.billedChannels,
+    });
 
     const alignment = input.referenceText
       ? alignTranscript(input.referenceText, asr.text)
@@ -223,9 +235,10 @@ export async function assessSpeech(
       feature: "pronunciation_evaluation",
       provider: asrConfig.providerLabel,
       modelId: asrConfig.modelId,
-      // Transcription is billed by audio length, not tokens. Recorded as zero
-      // rather than invented; per-minute pricing would need its own field.
+      // Transcription is billed by audio length, not tokens, so the token
+      // count stays zero and the cost is computed from the duration.
       tokensUsed,
+      costUsd: audioCostUsd ?? undefined,
       succeeded,
       latencyMs: Date.now() - started,
     });

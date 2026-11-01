@@ -189,21 +189,29 @@ router.post("/auth/forgot-password", async (req, res): Promise<void> => {
   const base = (process.env.APP_BASE_URL ?? "").replace(/\/$/, "");
   const link = `${base}/reset-password?token=${token}`;
 
-  await mailer.send({
-    to: user.email,
-    subject: "إعادة تعيين كلمة المرور",
-    text:
-      `مرحباً ${user.name}،
+  // A provider outage must not turn into a 500: the token is already written,
+  // and this endpoint deliberately answers the same way whether or not the
+  // address exists, so leaking a failure here would also leak which addresses
+  // are registered. Logged for the operator, invisible to the caller.
+  await mailer
+    .send({
+      to: user.email,
+      subject: "إعادة تعيين كلمة المرور",
+      text:
+        `مرحباً ${user.name}،
 
 ` +
-      `لإعادة تعيين كلمة المرور، افتح الرابط التالي:
+        `لإعادة تعيين كلمة المرور، افتح الرابط التالي:
 ${link}
 
 ` +
-      `الرابط صالح لمدة ساعة واحدة ويُستخدم مرة واحدة فقط.
+        `الرابط صالح لمدة ساعة واحدة ويُستخدم مرة واحدة فقط.
 ` +
-      `إذا لم تطلب هذا، تجاهل هذه الرسالة.`,
-  });
+        `إذا لم تطلب هذا، تجاهل هذه الرسالة.`,
+    })
+    .catch((err) => {
+      logger.error({ err, userId: user.id }, "Password-reset email could not be sent");
+    });
 
   // With no mail provider the message only reached the log, so a developer
   // would otherwise have no way to continue. Never returned once mail is real.

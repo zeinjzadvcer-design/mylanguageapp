@@ -100,7 +100,11 @@ services:
       PORT: '8080'
       LOG_LEVEL: info
       TRUST_PROXY: '1'
-      JOB_QUEUE: memory
+      JOB_QUEUE: ${JOB_QUEUE:-memory}
+      JOB_CONCURRENCY: ${JOB_CONCURRENCY:-4}
+      JOB_ATTEMPTS: ${JOB_ATTEMPTS:-2}
+      JOB_WORKER: ${JOB_WORKER:-}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-15000}
       REDIS_URL: redis://redis:6379
       # Encrypts API keys stored by the AI settings panel. Dev-only value —
       # generate a real one for any deployment: openssl rand -hex 32
@@ -126,6 +130,77 @@ services:
       STORAGE_PUBLIC_ENDPOINT: ${STORAGE_PUBLIC_ENDPOINT:-http://localhost:9000}
       # Where a password-reset link should point: the address students use.
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
+
+      # ── Everything below is passed through from .env ──────────────────────
+      # This block is an ALLOWLIST: a variable absent here is ignored however
+      # carefully it is set in .env, and nothing reports that. Each group below
+      # was previously unreachable, which pinned it to its code default —
+      # silently, because the defaults happened to match .env.
+      # See docs/features/peer-calls-deployment-checklist.md #1.
+
+      # TURN/STUN. Without these a relay cannot be switched on at all, and
+      # roughly 10-20% of calls (symmetric NAT, mobile CGNAT, school
+      # firewalls) cannot connect at all.
+      PRACTICE_STUN_URLS: ${PRACTICE_STUN_URLS:-}
+      PRACTICE_TURN_URLS: ${PRACTICE_TURN_URLS:-}
+      PRACTICE_TURN_USERNAME: ${PRACTICE_TURN_USERNAME:-}
+      PRACTICE_TURN_CREDENTIAL: ${PRACTICE_TURN_CREDENTIAL:-}
+
+      # Call bounds. MAX_CALL_MINUTES is a cost lever, not just a courtesy:
+      # it decides ASR minutes per evaluated call.
+      PRACTICE_MAX_CALL_MINUTES: ${PRACTICE_MAX_CALL_MINUTES:-15}
+      PRACTICE_DAILY_CALL_LIMIT: ${PRACTICE_DAILY_CALL_LIMIT:-20}
+      PRACTICE_RING_TIMEOUT_MS: ${PRACTICE_RING_TIMEOUT_MS:-45000}
+      PRACTICE_CONNECT_TIMEOUT_MS: ${PRACTICE_CONNECT_TIMEOUT_MS:-30000}
+      # How long both sides must be silent before a live call is abandoned, and
+      # how often to look. A crashed tab otherwise locks both students out.
+      PRACTICE_ABANDONED_AFTER_MS: ${PRACTICE_ABANDONED_AFTER_MS:-30000}
+      PRACTICE_SWEEP_INTERVAL_MS: ${PRACTICE_SWEEP_INTERVAL_MS:-15000}
+
+      # Rate limits. A call polls two endpoints every second, so these have to
+      # be raisable without a rebuild.
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      RATE_LIMIT_API: ${RATE_LIMIT_API:-1000}
+      RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-20}
+      RATE_LIMIT_PRACTICE_POLL: ${RATE_LIMIT_PRACTICE_POLL:-2400}
+
+      # AI timeouts and retries. AI_ASR_POLL_TIMEOUT_MS matters most: the code
+      # default of 3 minutes was sized for a 30-second read-aloud, not a
+      # 15-minute multichannel call.
+      AI_REQUEST_TIMEOUT_MS: ${AI_REQUEST_TIMEOUT_MS:-30000}
+      AI_MAX_ATTEMPTS: ${AI_MAX_ATTEMPTS:-3}
+      AI_ASR_TIMEOUT_MS: ${AI_ASR_TIMEOUT_MS:-60000}
+      AI_ASR_POLL_TIMEOUT_MS: ${AI_ASR_POLL_TIMEOUT_MS:-600000}
+
+      # Grading sweeper. While JOB_QUEUE=memory this is the ONLY recovery path
+      # for a job lost to a restart, so the interval is not a free knob.
+      GRADING_SWEEP_ENABLED: ${GRADING_SWEEP_ENABLED:-true}
+      GRADING_SWEEP_INTERVAL_MS: ${GRADING_SWEEP_INTERVAL_MS:-600000}
+      GRADING_SWEEP_STALE_MS: ${GRADING_SWEEP_STALE_MS:-300000}
+      GRADING_SWEEP_MAX_ATTEMPTS: ${GRADING_SWEEP_MAX_ATTEMPTS:-3}
+      GRADING_SWEEP_BATCH: ${GRADING_SWEEP_BATCH:-20}
+
+      # Shared counter for lesson recordings and call recordings alike.
+      MEDIA_DAILY_UPLOAD_LIMIT: ${MEDIA_DAILY_UPLOAD_LIMIT:-200}
+      # Attempts allowed per block per lesson. Passive blocks are exempt.
+      MAX_BLOCK_ATTEMPTS: ${MAX_BLOCK_ATTEMPTS:-3}
+
+      # Swagger UI. Off unless set — explicit rather than merely absent.
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-}
+
+      # Connection pool. Sized per process, so it multiplies by instance count
+      # on a platform that runs more than one.
+      DB_POOL_MIN: ${DB_POOL_MIN:-2}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+
+      # Password-reset delivery. Unset means nothing is sent: the message goes
+      # to the log, and outside production the reset endpoint also returns the
+      # link so development can continue.
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_API_KEY: ${MAIL_API_KEY:-}
+      MAIL_TIMEOUT_MS: ${MAIL_TIMEOUT_MS:-10000}
+
       # USDT (BEP-20) payments. Off unless the root .env switches them on —
       # see .env.example for what each value does and why the wallet address
       # is deploy configuration rather than an admin setting.

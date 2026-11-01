@@ -29,6 +29,7 @@ import {
   MAX_RECORDING_BYTES,
   MAX_CMS_BYTES,
   MAX_RECORDING_SECONDS,
+  MAX_CALL_RECORDING_SECONDS,
   type PresignedUpload,
 } from "./storage";
 import { logger } from "../lib/logger";
@@ -158,15 +159,20 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
     );
   }
 
+  // A peer-call recording gets its own, longer limit: it is a whole call, not a
+  // single answer. Every other purpose keeps the ten-minute cap.
+  const maxSeconds =
+    purpose === "practice_call" ? MAX_CALL_RECORDING_SECONDS : MAX_RECORDING_SECONDS;
+
   if (
     !isCurriculum &&
     !isPaymentImage &&
     durationSec != null &&
-    (!Number.isFinite(durationSec) || durationSec > MAX_RECORDING_SECONDS)
+    (!Number.isFinite(durationSec) || durationSec > maxSeconds)
   ) {
     throw new MediaValidationError(
       "TOO_LONG",
-      `Recording is longer than the ${MAX_RECORDING_SECONDS / 60} minute limit`,
+      `Recording is longer than the ${maxSeconds / 60} minute limit`,
     );
   }
 

@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 021: Plan access model — content track + free lesson quota
+-- Migration 022: Plan access model — content track + free lesson quota
 --
 -- WHAT THE PRODUCT ACTUALLY SELLS
 -- ───────────────────────────────

@@ -47,6 +47,17 @@ export function useVoiceCall() {
   const [muted, setMuted] = useState(false);
   /** True when the server has no TURN relay configured — shown if a call fails. */
   const [turnAvailable, setTurnAvailable] = useState(true);
+  /**
+   * What the microphone actually does, as reported by the track rather than as
+   * requested. `echoCancellation: false` means this device will send the other
+   * student's voice back to them, and the screen can say so while there is
+   * still something the student can do about it.
+   */
+  const [audioProcessing, setAudioProcessing] = useState<{
+    echoCancellation?: boolean;
+    noiseSuppression?: boolean;
+    autoGainControl?: boolean;
+  } | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -183,7 +194,14 @@ export function useVoiceCall() {
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            // The third of the standard trio, and it was missing. Without it a
+            // student who speaks quietly, or sits back from the microphone,
+            // simply arrives quiet at the other end.
+            autoGainControl: true,
+          },
         });
       } catch {
         // Denied, or no microphone. Either way there is no call to be had, and
@@ -192,6 +210,38 @@ export function useVoiceCall() {
         return;
       }
       localStreamRef.current = stream;
+
+      /**
+       * Did the browser actually apply the processing we asked for?
+       *
+       * A constraint passed as a plain value is a REQUEST, not a requirement:
+       * a device that ignores it reports success and hands back an unprocessed
+       * track. That is indistinguishable from a working one here, which is why
+       * "the other person has an echo" could not be answered from logs — the
+       * usual cause is a speaker feeding back into a microphone on the far
+       * side, and the next suspect is echo cancellation silently not running.
+       *
+       * Logged rather than enforced. Demanding it with `{ exact: true }` would
+       * fail the call outright on a device that cannot comply, and a call with
+       * an echo beats no call at all.
+       */
+      const settings = stream.getAudioTracks()[0]?.getSettings?.() ?? {};
+      const audioProcessing = {
+        echoCancellation: settings.echoCancellation,
+        noiseSuppression: settings.noiseSuppression,
+        autoGainControl: settings.autoGainControl,
+      };
+      if (settings.echoCancellation === false) {
+        console.warn(
+          "[practice] Echo cancellation is NOT active on this microphone — " +
+            "this device will send the other student's voice back to them. " +
+            "Headphones are the fix.",
+          audioProcessing,
+        );
+      } else {
+        console.info("[practice] Microphone audio processing", audioProcessing);
+      }
+      setAudioProcessing(audioProcessing);
 
       let pc: RTCPeerConnection;
       let connectTimeoutMs = 30_000;
@@ -445,6 +495,7 @@ export function useVoiceCall() {
     phase,
     muted,
     turnAvailable,
+    audioProcessing,
     audioRef,
     start,
     hangUp,
