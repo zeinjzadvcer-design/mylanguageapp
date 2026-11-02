@@ -29,6 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { uploadRecording, MediaUploadError } from "@/lib/media-api";
 import { pollAttemptVerdict, type AttemptVerdict } from "@/lib/speech-api";
 import { ConversationBlock } from "@/components/conversation-block";
+import { useI18n } from "@/lib/i18n";
 import { useMicRecorder } from "@/hooks/use-mic-recorder";
 import {
   ArrowRight,
@@ -93,8 +94,9 @@ interface BlockState {
 // Block header (title, instructions, required badge, duration)
 // ──────────────────────────────────────────────────────────────────────
 function BlockHeader({ block }: { block: ContentBlock }) {
-  const title = block.titleAr || block.title;
-  const instructions = block.instructionsAr || block.instructions;
+  const { t, pick } = useI18n();
+  const title = pick(block.titleAr, block.title);
+  const instructions = pick(block.instructionsAr, block.instructions);
   return (
     <div className="space-y-2 mb-6">
       {title && (
@@ -102,12 +104,12 @@ function BlockHeader({ block }: { block: ContentBlock }) {
       )}
       <div className="flex items-center gap-2 flex-wrap">
         {block.isRequired ? (
-          <Badge variant="default" className="text-xs">مطلوب</Badge>
+          <Badge variant="default" className="text-xs">{t.lesson.required}</Badge>
         ) : (
-          <Badge variant="secondary" className="text-xs">اختياري</Badge>
+          <Badge variant="secondary" className="text-xs">{t.lesson.optional}</Badge>
         )}
         {block.estimatedMinutes && (
-          <span className="text-xs text-muted-foreground">{block.estimatedMinutes} دقيقة</span>
+          <span className="text-xs text-muted-foreground">{t.common.minutes(block.estimatedMinutes)}</span>
         )}
       </div>
       {instructions && (
@@ -179,6 +181,8 @@ function McqBlock({
   onSelect: (optionId: string) => void;
   questionIndex?: number;
 }) {
+  const { t, pick } = useI18n();
+  const ls = t.lesson;
   const result = state.result;
   // A block may hold several questions; fall back to the singular fields for
   // content authored before that was possible.
@@ -194,7 +198,7 @@ function McqBlock({
 
       {questions.length > 1 && (
         <p className="text-center text-sm text-muted-foreground">
-          سؤال {questionIndex + 1} من {questions.length}
+          {ls.questionOf(questionIndex + 1, questions.length)}
         </p>
       )}
 
@@ -247,13 +251,13 @@ function McqBlock({
       </div>
 
       {result && (result.explanationAr || result.explanation) && (
-        <div className={`p-4 rounded-xl border ${result.correct ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200"}`}>
+        <div className={`p-4 rounded-xl border ${result.correct ? "bg-mint-soft border-mint/40" : "bg-rose-50 border-rose-200"}`}>
           <p className="text-sm font-medium">
-            {result.correct ? "✅ إجابة صحيحة" : "❌ إجابة خاطئة"}
+            {result.correct ? `✅ ${ls.correct}` : `❌ ${ls.wrong}`}
           </p>
           {(result.explanationAr || result.explanation) && (
             <p className="text-sm mt-1 text-muted-foreground">
-              {result.explanationAr || result.explanation}
+              {pick(result.explanationAr, result.explanation)}
             </p>
           )}
         </div>
@@ -283,6 +287,9 @@ function OpenEndedBlock({
   }) => void;
 }) {
   const mic = useMicRecorder();
+  const { t } = useI18n();
+  const ls = t.lesson;
+  const sp = t.speaking;
 
   // Spec 4C allows either. Writing and speaking are different skills, and a
   // student who can say it but not spell it should still be able to answer.
@@ -308,8 +315,8 @@ function OpenEndedBlock({
           uploading: false,
           uploadError:
             err instanceof MediaUploadError && err.status === 503
-              ? "خدمة تخزين الصوت غير مفعّلة حالياً."
-              : "تعذّر رفع التسجيل. أعد المحاولة.",
+              ? sp.storageOff
+              : sp.uploadFailed,
         });
       });
 
@@ -351,7 +358,7 @@ function OpenEndedBlock({
             className="flex-1 rounded-xl"
             onClick={() => setMode("text")}
           >
-            كتابة
+            {ls.writing}
           </Button>
           <Button
             type="button"
@@ -361,7 +368,7 @@ function OpenEndedBlock({
             onClick={() => setMode("voice")}
           >
             <Mic className="h-4 w-4" />
-            تسجيل صوتي
+            {ls.voice}
           </Button>
         </div>
       )}
@@ -372,11 +379,11 @@ function OpenEndedBlock({
           the block looking as though it had reset. A voice answer keeps its
           recorder panel, which reports the saved recording. */}
       {state.submitted && mode === "voice" && !state.responseText ? (
-        <p className="text-xs text-center text-emerald-600">تم إرسال تسجيلك الصوتي.</p>
+        <p className="text-xs text-center text-mint-foreground">{ls.voiceSent}</p>
       ) : mode === "text" || state.submitted ? (
         <textarea
           className="w-full border rounded-xl p-4 text-foreground bg-background resize-none min-h-[120px] focus:outline-none focus:ring-2 focus:ring-primary/40"
-          placeholder="اكتب إجابتك هنا..."
+          placeholder={ls.writeAnswer}
           value={state.responseText ?? ""}
           disabled={state.submitted}
           onChange={(e) => onChange(e.target.value)}
@@ -385,13 +392,13 @@ function OpenEndedBlock({
       ) : (
         <div className="space-y-3">
           {state.uploading && (
-            <p className="text-xs text-center text-muted-foreground">جارٍ رفع التسجيل…</p>
+            <p className="text-xs text-center text-muted-foreground">{sp.uploading}</p>
           )}
           {state.uploadError && (
             <p className="text-xs text-center text-destructive">{state.uploadError}</p>
           )}
           {state.mediaId !== undefined && !state.uploading && (
-            <p className="text-xs text-center text-emerald-600">تم حفظ التسجيل.</p>
+            <p className="text-xs text-center text-mint-foreground">{sp.saved}</p>
           )}
 
           <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-border rounded-3xl bg-secondary/20 gap-4">
@@ -403,7 +410,7 @@ function OpenEndedBlock({
                 >
                   <Mic className="h-10 w-10" />
                 </button>
-                <p className="text-lg font-medium text-foreground">انقر للتحدث</p>
+                <p className="text-lg font-medium text-foreground">{sp.tapToSpeak}</p>
               </>
             )}
             {mic.status === "recording" && (
@@ -418,23 +425,23 @@ function OpenEndedBlock({
               <div className="w-full space-y-3">
                 <audio controls className="w-full rounded-lg" src={mic.playbackUrl ?? undefined} />
                 <p className="text-sm text-muted-foreground text-center">
-                  مدة التسجيل: {mic.durationSec} ثانية
+                  {sp.duration(mic.durationSec)}
                 </p>
                 <Button variant="outline" size="sm" onClick={mic.reset} className="w-full">
-                  إعادة التسجيل
+                  {sp.reRecord}
                 </Button>
               </div>
             )}
             {mic.status === "unsupported" && (
               <div className="flex items-center gap-2 text-muted-foreground text-sm">
                 <AlertCircle className="h-5 w-5 text-amber-500" />
-                <span>التسجيل الصوتي غير مدعوم في هذا المتصفح.</span>
+                <span>{sp.unsupported}</span>
               </div>
             )}
             {mic.status === "denied" && (
               <div className="flex items-center gap-2 text-muted-foreground text-sm">
                 <AlertCircle className="h-5 w-5 text-rose-500" />
-                <span>لم يتم السماح بالوصول للميكروفون. يرجى السماح من إعدادات المتصفح.</span>
+                <span>{sp.denied}</span>
               </div>
             )}
           </div>
@@ -454,15 +461,17 @@ function OpenEndedBlock({
  * teacher will look at it), or just the teacher's prepared explanation.
  */
 function OpenEndedVerdict({ result }: { result: LessonActivityResult }) {
-  const feedback = result.feedbackAr || result.feedback;
-  const explanation = result.explanationAr || result.explanation;
+  const { t, pick } = useI18n();
+  const ls = t.lesson;
+  const feedback = pick(result.feedbackAr, result.feedback);
+  const explanation = pick(result.explanationAr, result.explanation);
   const dims = result.dimensions;
 
   if (result.evaluationStatus === "pending") {
     return (
       <div className="p-4 rounded-xl border bg-blue-50 border-blue-200">
         <p className="text-sm text-blue-900">
-          تم استلام إجابتك وسيتم تقييمها لاحقاً.
+          {ls.answerReceived}
         </p>
       </div>
     );
@@ -497,11 +506,11 @@ function OpenEndedVerdict({ result }: { result: LessonActivityResult }) {
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1 border-t border-black/5">
           {(
             [
-              ["الصلة", dims.relevance],
-              ["القواعد", dims.grammar],
-              ["المفردات", dims.vocabulary],
-              ["الوضوح", dims.clarity],
-              ["المستوى", dims.levelAppropriate],
+              [ls.dimRelevance, dims.relevance],
+              [ls.dimGrammar, dims.grammar],
+              [ls.dimVocabulary, dims.vocabulary],
+              [ls.dimClarity, dims.clarity],
+              [ls.dimLevel, dims.levelAppropriate],
             ] as const
           ).map(([label, value]) => (
             <div key={label} className="text-center">
@@ -542,6 +551,9 @@ function SpeakingBlock({
   }) => void;
 }) {
   const mic = useMicRecorder();
+  const { t } = useI18n();
+  const ls = t.lesson;
+  const sp = t.speaking;
 
   // Upload as soon as the recording stops, rather than on submit: the student
   // is reviewing their playback anyway, so the transfer happens in time they
@@ -563,8 +575,8 @@ function SpeakingBlock({
           uploading: false,
           uploadError:
             err instanceof MediaUploadError && err.status === 503
-              ? "خدمة تخزين الصوت غير مفعّلة حالياً."
-              : "تعذّر رفع التسجيل. أعد المحاولة.",
+              ? sp.storageOff
+              : sp.uploadFailed,
         });
       });
 
@@ -600,7 +612,7 @@ function SpeakingBlock({
       <BlockIllustration block={block} />
 
       {isUsableUrl(block.exampleAudio) && (
-        <AudioWidget url={block.exampleAudio!} label="استمع للمثال الصوتي" />
+        <AudioWidget url={block.exampleAudio!} label={ls.listenExample} />
       )}
       {isUsableUrl(block.audioUrl) && !isUsableUrl(block.exampleAudio) && (
         <AudioWidget url={block.audioUrl!} label={block.audioNote ?? undefined} />
@@ -618,17 +630,17 @@ function SpeakingBlock({
           promise a score, it says the recording is kept and assessed when it
           can be. The actual outcome is reported below by SpeechVerdictCard. */}
       <div className="text-xs text-muted-foreground bg-secondary/50 border border-border rounded-lg p-3 leading-relaxed">
-        ملاحظة: يُحفظ تسجيلك ويُقيَّم تلقائياً بعد الإرسال. إذا تعذّر التقييم التلقائي، يبقى تسجيلك محفوظاً ليراجعه معلّم.
+        {ls.speakingNote}
       </div>
 
       {state.uploading && (
-        <p className="text-xs text-center text-muted-foreground">جارٍ رفع التسجيل…</p>
+        <p className="text-xs text-center text-muted-foreground">{sp.uploading}</p>
       )}
       {state.uploadError && (
         <p className="text-xs text-center text-destructive">{state.uploadError}</p>
       )}
       {state.mediaId !== undefined && !state.uploading && !state.speechVerdict && (
-        <p className="text-xs text-center text-emerald-600">تم حفظ التسجيل.</p>
+        <p className="text-xs text-center text-mint-foreground">{sp.saved}</p>
       )}
 
       {/* Assessment takes seconds: the recording is uploaded, transcribed by a
@@ -637,13 +649,13 @@ function SpeakingBlock({
           request from a stuck one, and nothing to do but stare at it.
 
           So: visible motion, a stated expectation, and the one fact that
-          actually helps — they do not have to wait here. متابعة stays enabled
+          actually helps — they do not have to wait here. Continue stays enabled
           throughout. */}
       {state.awaitingVerdict && (
         <div className="flex flex-col items-center gap-1.5 rounded-lg border border-border bg-secondary/50 p-3">
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            <span className="text-xs text-foreground">جارٍ تقييم نطقك…</span>
+            <span className="text-xs text-foreground">{ls.assessing}</span>
           </div>
           {/* Says what is certainly true and nothing more. The lesson summary
               does collect verdicts that arrive while the student is still in
@@ -651,7 +663,7 @@ function SpeakingBlock({
               they leave it is not retrievable anywhere, so promising a place
               to find it would be wrong some of the time. */}
           <p className="text-[11px] text-muted-foreground text-center leading-relaxed">
-            يستغرق التقييم عادةً أقل من دقيقة، ويمكنك المتابعة أثناءه.
+            {ls.assessingNote}
           </p>
         </div>
       )}
@@ -680,11 +692,11 @@ function SpeakingBlock({
           <div className="w-full space-y-3">
             <audio controls className="w-full rounded-lg" src={mic.playbackUrl ?? undefined} />
             <p className="text-sm text-muted-foreground text-center">
-              مدة التسجيل: {mic.durationSec} ثانية
+              {sp.duration(mic.durationSec)}
             </p>
             {!state.submitted && (
               <Button variant="outline" size="sm" onClick={mic.reset} className="w-full">
-                إعادة التسجيل
+                {sp.reRecord}
               </Button>
             )}
           </div>
@@ -692,18 +704,18 @@ function SpeakingBlock({
         {mic.status === "unsupported" && (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <AlertCircle className="h-5 w-5 text-amber-500" />
-            <span>التسجيل الصوتي غير مدعوم في هذا المتصفح.</span>
+            <span>{sp.unsupported}</span>
           </div>
         )}
         {mic.status === "denied" && (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <AlertCircle className="h-5 w-5 text-rose-500" />
-            <span>لم يتم السماح بالوصول للميكروفون. يرجى السماح من إعدادات المتصفح.</span>
+            <span>{sp.denied}</span>
           </div>
         )}
 
         {mic.status === "idle" && (
-          <p className="text-lg font-medium text-foreground">انقر للتحدث</p>
+          <p className="text-lg font-medium text-foreground">{sp.tapToSpeak}</p>
         )}
       </div>
     </div>
@@ -719,11 +731,13 @@ function SpeakingBlock({
  * advice and "72%" is not.
  */
 function SpeechVerdictCard({ verdict }: { verdict: AttemptVerdict }) {
+  const { t, pick } = useI18n();
+  const ls = t.lesson;
   if (verdict.evaluationStatus === "pending") {
     return (
       <div className="p-4 rounded-xl border bg-blue-50 border-blue-200">
         <p className="text-sm text-blue-900">
-          تم استلام تسجيلك وسيتم تقييمه قريباً.
+          {ls.recordingReceived}
         </p>
       </div>
     );
@@ -736,7 +750,7 @@ function SpeechVerdictCard({ verdict }: { verdict: AttemptVerdict }) {
   return (
     <div
       className={`p-4 rounded-xl border space-y-3 ${
-        passed ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"
+        passed ? "bg-mint-soft border-mint/40" : "bg-amber-50 border-amber-200"
       }`}
     >
       <div className="flex items-center justify-around gap-2 text-center">
@@ -745,7 +759,7 @@ function SpeechVerdictCard({ verdict }: { verdict: AttemptVerdict }) {
             <div className="text-2xl font-bold tabular-nums">
               {Math.round(verdict.pronunciationScore)}%
             </div>
-            <div className="text-[11px] text-muted-foreground">النطق</div>
+            <div className="text-[11px] text-muted-foreground">{t.skills.pronunciation}</div>
           </div>
         )}
         {!metrics?.fluencyUnavailable && verdict.fluencyScore !== null && (
@@ -753,7 +767,7 @@ function SpeechVerdictCard({ verdict }: { verdict: AttemptVerdict }) {
             <div className="text-2xl font-bold tabular-nums">
               {Math.round(verdict.fluencyScore)}%
             </div>
-            <div className="text-[11px] text-muted-foreground">الطلاقة</div>
+            <div className="text-[11px] text-muted-foreground">{t.skills.fluency}</div>
           </div>
         )}
         {metrics?.speechRate !== undefined && (
@@ -761,20 +775,20 @@ function SpeechVerdictCard({ verdict }: { verdict: AttemptVerdict }) {
             <div className="text-2xl font-bold tabular-nums">
               {Math.round(metrics.speechRate)}
             </div>
-            <div className="text-[11px] text-muted-foreground">كلمة/دقيقة</div>
+            <div className="text-[11px] text-muted-foreground">{ls.wpm}</div>
           </div>
         )}
       </div>
 
-      {verdict.feedbackAr && (
+      {pick(verdict.feedbackAr, verdict.feedback) && (
         <p className="text-sm font-medium border-t border-black/5 pt-2">
-          {verdict.feedbackAr}
+          {pick(verdict.feedbackAr, verdict.feedback)}
         </p>
       )}
 
       {problems.length > 0 && (
         <div className="border-t border-black/5 pt-2">
-          <p className="text-xs text-muted-foreground mb-1">تدرّب على هذه الكلمات:</p>
+          <p className="text-xs text-muted-foreground mb-1">{ls.practiseWords}</p>
           <div className="flex flex-wrap gap-1.5" dir="ltr">
             {problems.slice(0, 8).map((w) => (
               <span
@@ -791,7 +805,7 @@ function SpeechVerdictCard({ verdict }: { verdict: AttemptVerdict }) {
       {verdict.transcript && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground">
-            ما سمعناه
+            {ls.whatWeHeard}
           </summary>
           <p className="mt-1 text-muted-foreground" dir="ltr">
             {verdict.transcript}
@@ -806,23 +820,24 @@ function SpeechVerdictCard({ verdict }: { verdict: AttemptVerdict }) {
 // Vocabulary block
 // ──────────────────────────────────────────────────────────────────────
 function VocabularyBlock({ block }: { block: ContentBlock }) {
+  const { t } = useI18n();
   return (
     <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
       <BlockHeader block={block} />
       <BlockIllustration block={block} />
       {(!block.vocabularyItems || block.vocabularyItems.length === 0) && (
-        <p className="text-muted-foreground text-sm">لا توجد مفردات.</p>
+        <p className="text-muted-foreground text-sm">{t.lesson.noVocab}</p>
       )}
       {(block.vocabularyItems ?? []).map((vocab) => (
         <Card key={vocab.id} className="overflow-hidden border-2 border-border hover:border-primary/30 transition-colors">
           <CardContent className="p-0 flex items-stretch">
-            <div className="w-16 bg-primary/5 flex items-center justify-center border-r border-border">
+            <div className="w-16 bg-primary/5 flex items-center justify-center border-s border-border">
               <Volume2 className="h-6 w-6 text-primary" />
             </div>
             <div className="p-4 flex-1">
               <div className="flex justify-between items-start mb-2">
                 <div className="text-xl font-bold text-foreground" dir="ltr">{vocab.word}</div>
-                <div className="text-lg font-bold text-primary">{vocab.translation}</div>
+                <div className="text-lg font-bold text-primary" dir="rtl">{vocab.translation}</div>
               </div>
               {vocab.pronunciation && (
                 <div className="text-sm text-muted-foreground mb-3 font-mono" dir="ltr">/{vocab.pronunciation}/</div>
@@ -834,7 +849,7 @@ function VocabularyBlock({ block }: { block: ContentBlock }) {
                 <div className="mt-4 pt-4 border-t border-border/50 text-left space-y-1" dir="ltr">
                   <p className="text-sm italic text-foreground">{vocab.exampleSentence}</p>
                   {vocab.exampleSentenceAr && (
-                    <p className="text-sm text-muted-foreground text-right" dir="rtl">{vocab.exampleSentenceAr}</p>
+                    <p className="text-sm text-muted-foreground text-start" dir="rtl">{vocab.exampleSentenceAr}</p>
                   )}
                 </div>
               )}
@@ -855,7 +870,7 @@ function TextBlock({ block }: { block: ContentBlock }) {
       <BlockHeader block={block} />
       <BlockIllustration block={block} />
       {block.contentAr && (
-        <p className="text-lg md:text-xl leading-relaxed text-foreground text-right" dir="rtl">
+        <p className="text-lg md:text-xl leading-relaxed text-foreground text-start" dir="rtl">
           {block.contentAr}
         </p>
       )}
@@ -881,12 +896,13 @@ function TextBlock({ block }: { block: ContentBlock }) {
 // Audio placeholder block
 // ──────────────────────────────────────────────────────────────────────
 function AudioPlaceholderBlock({ block }: { block: ContentBlock }) {
+  const { t } = useI18n();
   return (
     <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
       <BlockHeader block={block} />
       <BlockIllustration block={block} />
       {isUsableUrl(block.audioUrl) ? (
-        <AudioWidget url={block.audioUrl!} label={block.audioNote ?? "استمع للمقطع الصوتي"} />
+        <AudioWidget url={block.audioUrl!} label={block.audioNote ?? t.lesson.listenClip} />
       ) : block.referenceMediaId ? (
         /* Uploaded through the CMS picker: playable only via a signed URL. */
         <BlockMedia mediaId={block.referenceMediaId} kind="audio" />
@@ -894,7 +910,7 @@ function AudioPlaceholderBlock({ block }: { block: ContentBlock }) {
         <Card className="border-border">
           <CardContent className="p-8 flex flex-col items-center justify-center text-center">
             <PlayCircle className="h-16 w-16 text-primary mb-4" />
-            <h3 className="text-xl font-bold mb-2">استمع للمقطع الصوتي</h3>
+            <h3 className="text-xl font-bold mb-2">{t.lesson.listenClip}</h3>
             {block.audioNote && (
               <p className="text-sm text-muted-foreground mt-2">{block.audioNote}</p>
             )}
@@ -923,6 +939,8 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { t, lang, pick } = useI18n();
+  const ls = t.lesson;
 
   // All hooks must be unconditional
   const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
@@ -955,9 +973,9 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
   if (error || !lesson) {
     return (
       <div className="p-8 text-center mt-20">
-        <h2 className="text-xl font-bold text-destructive mb-4">حدث خطأ في تحميل الدرس</h2>
+        <h2 className="text-xl font-bold text-destructive mb-4">{ls.loadError}</h2>
         <Link href="/learn">
-          <Button>العودة للمنهج</Button>
+          <Button>{t.level.backToCurriculum}</Button>
         </Link>
       </div>
     );
@@ -1090,7 +1108,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           setBlockField(block.id, { submitting: false });
 
           // Running out of attempts is not an error the student should be told
-          // to retry — "حاول مجدداً" is exactly the wrong advice when the
+          // to retry — "try again" is exactly the wrong advice when the
           // reason is that there are no attempts left. Say so, and let them
           // move on rather than leaving them stuck on a block that will keep
           // refusing.
@@ -1102,16 +1120,16 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
             const max = apiError.data.maxAttempts ?? 3;
             setBlockField(block.id, { submitted: true, attemptsExhausted: true });
             toast({
-              title: "انتهت المحاولات",
-              description: `استخدمت ${max} محاولات لهذا التمرين. يمكنك المتابعة.`,
+              title: ls.attemptsUsedTitle,
+              description: ls.attemptsUsedBody(max),
             });
             return;
           }
 
           toast({
             variant: "destructive",
-            title: "خطأ",
-            description: "تعذّر إرسال إجابتك، حاول مجدداً.",
+            title: ls.error,
+            description: ls.submitFailed,
           });
         },
       }
@@ -1136,7 +1154,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     // Validate required fields before submitting
     if (currentBlock.isRequired) {
       if (currentBlock.type === "mcq" && !st.selectedOptionId) {
-        toast({ variant: "destructive", title: "الرجاء اختيار إجابة أولاً" });
+        toast({ variant: "destructive", title: ls.chooseFirst });
         return;
       }
       if (currentBlock.type === "open_ended") {
@@ -1144,7 +1162,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
         // answer a typed one would have been.
         const typed = (st.responseText ?? "").trim() !== "";
         if (!typed && !st.hasRecording) {
-          toast({ variant: "destructive", title: "الرجاء كتابة إجابة أو تسجيلها أولاً" });
+          toast({ variant: "destructive", title: ls.answerFirst });
           return;
         }
       }
@@ -1152,7 +1170,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
         (currentBlock.type === "speaking_prompt" || currentBlock.type === "pronunciation_guide") &&
         !st.hasRecording
       ) {
-        toast({ variant: "destructive", title: "الرجاء تسجيل إجابة صوتية أولاً" });
+        toast({ variant: "destructive", title: ls.recordFirst });
         return;
       }
     }
@@ -1210,11 +1228,13 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           if (apiError?.status === 422 && apiError?.data?.missingRequiredBlockIds) {
             const ids = apiError.data.missingRequiredBlockIds;
             const missing = blocks.filter(b => ids.includes(b.id));
-            const names = missing.map(b => b.titleAr || b.title || `بلوك #${b.id}`).join("، ");
+            const names = missing
+              .map(b => pick(b.titleAr, b.title) || ls.blockN(b.id))
+              .join(lang === "ar" ? "، " : ", ");
             toast({
               variant: "destructive",
-              title: "الدرس غير مكتمل",
-              description: `يجب إكمال: ${names}`,
+              title: ls.incomplete,
+              description: ls.mustComplete(names),
             });
             // Navigate to first missing block
             const firstMissingIdx = blocks.findIndex(b => ids.includes(b.id));
@@ -1222,8 +1242,8 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           } else {
             toast({
               variant: "destructive",
-              title: "خطأ",
-              description: "لم نتمكن من حفظ نتيجتك. تأكد من اتصالك بالإنترنت.",
+              title: ls.error,
+              description: ls.saveFailed,
             });
           }
         },
@@ -1242,7 +1262,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
      * carry on rather than watch a spinner.
      *
      * Assessment is asynchronous by design — upload, speech recogniser, score —
-     * and the waiting panel on a speaking block says متابعة is safe and the
+     * and the waiting panel on a speaking block says Continue is safe and the
      * result will appear in this summary. That sentence has to be true, so the
      * summary is where every verdict ends up: the ones that arrived while the
      * student kept working, and the ones still in flight.
@@ -1257,29 +1277,29 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
       .filter((x) => x.state.speechVerdict || x.state.awaitingVerdict);
 
     return (
-      <div dir="rtl" className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
+      <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
         <Card className="max-w-lg w-full text-center shadow-xl border-t-8 border-t-primary">
           <CardContent className="pt-10 pb-8 px-6 space-y-6">
-            <div className={`h-24 w-24 rounded-full flex items-center justify-center mx-auto mb-4 ${passed ? 'bg-emerald-100' : 'bg-rose-100'}`}>
+            <div className={`h-24 w-24 rounded-full flex items-center justify-center mx-auto mb-4 ${passed ? 'bg-mint-soft' : 'bg-rose-100'}`}>
               {passed ? (
-                <CheckCircle2 className="h-12 w-12 text-emerald-500" />
+                <CheckCircle2 className="h-12 w-12 text-mint-foreground" />
               ) : (
                 <XCircle className="h-12 w-12 text-rose-500" />
               )}
             </div>
 
             <h2 className="text-3xl font-bold text-foreground">
-              {passed ? "أحسنت العمل!" : "حاول مرة أخرى"}
+              {passed ? ls.wellDone : ls.tryAgain}
             </h2>
 
             <div className="flex justify-center gap-8 py-6">
               <div className="text-center">
                 <div className="text-4xl font-bold text-foreground mb-1" dir="ltr">{score}%</div>
-                <div className="text-sm text-muted-foreground">النتيجة</div>
+                <div className="text-sm text-muted-foreground">{ls.score}</div>
               </div>
               <div className="w-px bg-border"></div>
               <div className="text-center">
-                <div className="text-4xl font-bold text-amber-500 mb-1" dir="ltr">+{xpEarned}</div>
+                <div className="text-4xl font-bold text-mint-foreground mb-1" dir="ltr">+{xpEarned}</div>
                 <div className="text-sm text-muted-foreground">XP</div>
               </div>
             </div>
@@ -1288,13 +1308,13 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
                 the student moved on. This is the promise the waiting panel
                 makes, kept. */}
             {speechBlocks.length > 0 && (
-              <div className="space-y-3 border-t pt-5 text-right">
-                <h3 className="text-sm font-bold text-foreground">تقييم النطق</h3>
+              <div className="space-y-3 border-t pt-5 text-start">
+                <h3 className="text-sm font-bold text-foreground">{ls.pronunciationReview}</h3>
                 {speechBlocks.map(({ block, state }) => (
                   <div key={block.id} className="space-y-1.5">
                     {(block.titleAr || block.title) && (
                       <p className="text-xs text-muted-foreground">
-                        {block.titleAr || block.title}
+                        {pick(block.titleAr, block.title)}
                       </p>
                     )}
                     {state.speechVerdict ? (
@@ -1308,7 +1328,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
                       <div className="flex items-center justify-center gap-2 rounded-lg border border-border bg-secondary/50 p-3">
                         <Loader2 className="h-4 w-4 animate-spin text-primary" />
                         <span className="text-xs text-muted-foreground">
-                          ما زال التقييم جارياً. تسجيلك محفوظ وسيُقيَّم.
+                          {ls.stillAssessing}
                         </span>
                       </div>
                     )}
@@ -1322,7 +1342,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
                 onClick={() => setLocation(`/learn/${lesson.levelId}`)}
                 className="flex-1 h-14 text-lg rounded-xl"
               >
-                الاستمرار
+                {t.common.continue}
               </Button>
               {lesson.isCompleted && (
                 <Button
@@ -1333,7 +1353,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
                   }}
                   className="flex-1 h-14 text-lg rounded-xl"
                 >
-                  مراجعة الدرس
+                  {ls.reviewLesson}
                 </Button>
               )}
             </div>
@@ -1365,7 +1385,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
   /**
    * Blocks that ask the student to DO something, so an optional one needs a way
    * past it. Truly passive blocks — a reading passage, a vocabulary list — are
-   * left out because their "متابعة" already advances and a second button
+   * left out because their "Continue" already advances and a second button
    * offering to skip reading would be noise.
    *
    * `dialogue` belongs here even though the server records it as a passive
@@ -1398,8 +1418,8 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     // otherwise it offers to finish the lesson mid-way through the questions.
     const totalQuestions = currentBlock?.questions?.length ?? 0;
     const moreQuestionsHere = totalQuestions > 1 && questionIndex < totalQuestions - 1;
-    if (isLastBlock && !moreQuestionsHere) return "إنهاء الدرس";
-    return "متابعة";
+    if (isLastBlock && !moreQuestionsHere) return ls.finish;
+    return t.common.continue;
   };
 
   const handleContinueBtn = () => {
@@ -1530,7 +1550,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           <div className="space-y-4">
             <BlockHeader block={currentBlock} />
             <BlockIllustration block={currentBlock} />
-            <p className="text-muted-foreground text-sm">نوع المحتوى: {currentBlock.type}</p>
+            <p className="text-muted-foreground text-sm">{ls.contentType(currentBlock.type)}</p>
           </div>
         );
     }
@@ -1538,12 +1558,12 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
 
   // ── Layout ─────────────────────────────────────────────────────────
   return (
-    <div dir="rtl" className="min-h-[100dvh] flex flex-col bg-background">
+    <div className="min-h-[100dvh] flex flex-col bg-background">
       {/* Top Bar */}
       <header className="h-16 border-b border-border flex items-center px-4 md:px-8 shrink-0">
         <Link href={`/learn/${lesson.levelId}`}>
           <Button variant="ghost" size="icon" className="shrink-0">
-            <ArrowRight className="h-5 w-5" />
+            <ArrowRight className="h-5 w-5 ltr:-scale-x-100" />
           </Button>
         </Link>
         <div className="flex-1 mx-4">
@@ -1560,7 +1580,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
             nav underneath them too, or the last option cannot be scrolled to. */}
         <div className="max-w-2xl mx-auto w-full p-4 md:p-8 pb-56 md:pb-40">
           {blocks.length === 0 ? (
-            <div className="text-center py-20 text-muted-foreground">لا يوجد محتوى في هذا الدرس بعد.</div>
+            <div className="text-center py-20 text-muted-foreground">{ls.empty}</div>
           ) : (
             renderBlock()
           )}
@@ -1568,10 +1588,10 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
       </main>
 
       {/* Bottom Bar */}
-      {/* The sidebar is on the RIGHT (the UI is RTL), so the bar must be inset
-          from the right on desktop — md:left-64 pushed it under the sidebar.
+      {/* The sidebar sits on the inline-start side (right in Arabic, left in
+          English), so the bar is inset from that side on desktop.
           On mobile it sits above the 16-unit bottom nav rather than beneath it. */}
-      <div className="fixed bottom-16 md:bottom-0 left-0 right-0 md:right-64 p-4 border-t border-border bg-card/80 backdrop-blur-md shrink-0 z-10">
+      <div className="fixed bottom-16 md:bottom-0 end-0 start-0 md:start-64 p-4 border-t border-border bg-card/80 backdrop-blur-md shrink-0 z-10">
         <div className="max-w-2xl mx-auto w-full flex justify-between items-center gap-4">
           <Button
             variant="ghost"
@@ -1579,7 +1599,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
             disabled={currentBlockIndex === 0 || isSubmitting}
             className="text-muted-foreground"
           >
-            السابق
+            {t.quiz.prev}
           </Button>
 
           {/* Without this an unanswered optional activity is a dead end. */}
@@ -1591,7 +1611,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
               disabled={isSubmitting || completeLesson.isPending}
               className="h-14 rounded-xl"
             >
-              تخطي
+              {ls.skip}
             </Button>
           )}
 
