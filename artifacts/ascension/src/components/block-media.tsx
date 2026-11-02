@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { getPlaybackUrl } from "@/lib/media-api";
 import { Loader2 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 export function BlockMedia({
   mediaId,
@@ -23,6 +24,7 @@ export function BlockMedia({
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const { t } = useI18n();
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +44,7 @@ export function BlockMedia({
   if (failed) {
     return (
       <p className={`text-sm bg-muted/60 rounded-xl p-3 text-muted-foreground ${className}`}>
-        تعذّر تحميل الملف المرفق.
+        {t.media.failed}
       </p>
     );
   }
@@ -50,7 +52,7 @@ export function BlockMedia({
   if (!url) {
     return (
       <div className={`flex items-center gap-2 text-sm text-muted-foreground ${className}`}>
-        <Loader2 className="h-4 w-4 animate-spin" /> جارٍ التحميل…
+        <Loader2 className="h-4 w-4 animate-spin" /> {t.common.loading}
       </div>
     );
   }
