@@ -59,14 +59,3 @@ export async function getSkillReport(withAdvice = false): Promise<SkillReport> {
   if (!r.ok) throw new Error(`skills → ${r.status}`);
   return r.json();
 }
-
-/** Arabic labels. The student's UI language. */
-export const SKILL_LABELS: Record<Skill, string> = {
-  pronunciation: "النطق",
-  fluency: "الطلاقة",
-  vocabulary: "المفردات",
-  grammar: "القواعد",
-  comprehension: "الاستيعاب",
-  writing: "الكتابة",
-  speaking: "التحدث",
-};

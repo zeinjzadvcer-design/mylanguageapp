@@ -24,7 +24,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import {
   getSkillReport,
-  SKILL_LABELS,
   type SkillSummary,
   type Recommendation,
 } from "@/lib/skills-api";
@@ -38,16 +37,17 @@ import {
   BookOpen,
   Loader2,
 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 function TrendIcon({ trend }: { trend: SkillSummary["trend"] }) {
-  if (trend === "improving") return <TrendingUp className="h-3.5 w-3.5 text-emerald-600" />;
+  if (trend === "improving") return <TrendingUp className="h-3.5 w-3.5 text-mint-foreground" />;
   if (trend === "declining") return <TrendingDown className="h-3.5 w-3.5 text-rose-500" />;
   if (trend === "steady") return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
   return null;
 }
 
 function barColour(score: number): string {
-  if (score >= 82) return "[&>div]:bg-emerald-500";
+  if (score >= 82) return "[&>div]:bg-mint";
   if (score <= 65) return "[&>div]:bg-amber-500";
   return "[&>div]:bg-primary";
 }
@@ -63,6 +63,8 @@ function RecommendationIcon({ kind }: { kind: Recommendation["kind"] }) {
 export function SkillProfileCard() {
   const [, setLocation] = useLocation();
   const [wantAdvice, setWantAdvice] = useState(false);
+  const { t, lang, pick } = useI18n();
+  const sk = t.skillCard;
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["skill-report", wantAdvice],
@@ -81,9 +83,9 @@ export function SkillProfileCard() {
       <Card className="border-2">
         <CardContent className="p-6 text-center space-y-2">
           <Sparkles className="h-8 w-8 mx-auto text-muted-foreground" />
-          <h3 className="font-bold">نقاط قوتك ستظهر هنا</h3>
+          <h3 className="font-bold">{sk.emptyTitle}</h3>
           <p className="text-sm text-muted-foreground">
-            أكمل بعض الدروس والتمارين أولاً، ثم سنخبرك بما تتقنه وبما يحتاج إلى تدريب.
+            {sk.emptyBody}
           </p>
         </CardContent>
       </Card>
@@ -99,10 +101,10 @@ export function SkillProfileCard() {
     <Card className="border-2">
       <CardContent className="p-5 space-y-5">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="font-bold">مهاراتك</h3>
+          <h3 className="font-bold">{sk.title}</h3>
           {focus && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
-              ركّز على: {SKILL_LABELS[focus]}
+            <span className="text-xs px-2 py-0.5 rounded-full bg-lavender text-lavender-foreground">
+              {sk.focusOn(t.skills[focus] ?? focus)}
             </span>
           )}
         </div>
@@ -112,7 +114,7 @@ export function SkillProfileCard() {
             <div key={s.skill} className="space-y-1">
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-1.5">
-                  {SKILL_LABELS[s.skill]}
+                  {t.skills[s.skill] ?? s.skill}
                   <TrendIcon trend={s.trend} />
                 </span>
                 <span className="tabular-nums font-medium">{s.score}%</span>
@@ -131,9 +133,9 @@ export function SkillProfileCard() {
           <p className="text-xs text-muted-foreground">
             {profile.skills
               .filter((s) => s.confidence === "low")
-              .map((s) => SKILL_LABELS[s.skill])
-              .join("، ")}
-            : لم نجمع بعد ما يكفي لتقييمها.
+              .map((s) => t.skills[s.skill] ?? s.skill)
+              .join(lang === "ar" ? "، " : ", ")}
+            {sk.notEnough}
           </p>
         )}
 
@@ -152,20 +154,20 @@ export function SkillProfileCard() {
             ) : (
               <Sparkles className="h-4 w-4" />
             )}
-            نصيحة مخصصة
+            {sk.advice}
           </Button>
         )}
 
         {recommendations.length > 0 && (
           <div className="space-y-2 border-t pt-3">
-            <p className="text-xs font-bold text-muted-foreground">ابدأ من هنا</p>
+            <p className="text-xs font-bold text-muted-foreground">{sk.startHere}</p>
             {recommendations.map((r, i) => (
               <button
                 key={`${r.kind}-${r.lessonId}-${i}`}
                 type="button"
                 disabled={r.lessonId === null}
                 onClick={() => r.lessonId && setLocation(`/lesson/${r.lessonId}`)}
-                className={`w-full text-right p-3 rounded-xl border transition-colors flex items-start gap-3 ${
+                className={`w-full text-start p-3 rounded-xl border transition-colors flex items-start gap-3 ${
                   r.lessonId !== null
                     ? "hover:border-primary/40 cursor-pointer"
                     : "cursor-default bg-muted/30"
@@ -175,10 +177,13 @@ export function SkillProfileCard() {
                   <RecommendationIcon kind={r.kind} />
                 </span>
                 <span className="flex-1 min-w-0">
-                  {r.lessonTitleAr && (
-                    <span className="block font-medium truncate">{r.lessonTitleAr}</span>
+                  {(r.lessonTitleAr || r.lessonTitle) && (
+                    <span className="block font-medium truncate">{pick(r.lessonTitleAr, r.lessonTitle)}</span>
                   )}
-                  <span className="block text-xs text-muted-foreground">{r.reasonAr}</span>
+                  {/* The server words its reasons in Arabic only. */}
+                  <span className="block text-xs text-muted-foreground">
+                    {lang === "ar" ? r.reasonAr : sk.reasons[r.kind]}
+                  </span>
                   {r.words && r.words.length > 0 && (
                     <span className="flex flex-wrap gap-1 mt-1.5" dir="ltr">
                       {r.words.slice(0, 6).map((w) => (
