@@ -45,7 +45,9 @@ export function CMSLayout({ children }: { children: ReactNode }) {
   });
 
   return (
-    <div className="min-h-[100dvh] flex bg-gray-50">
+    // The CMS is English-only staff tooling: keep it LTR whatever language
+    // the student app is set to.
+    <div dir="ltr" className="min-h-[100dvh] flex bg-gray-50">
       {/* Sidebar */}
       <aside className="w-56 shrink-0 bg-white border-r border-gray-200 flex flex-col">
         <div className="p-4 border-b border-gray-200">
