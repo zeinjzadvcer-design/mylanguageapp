@@ -7,6 +7,7 @@ import NotFound from '@/pages/not-found';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 import { ProtectedRoute } from '@/components/protected-route';
 import { ServerWakeBanner } from '@/components/server-wake-banner';
+import { I18nProvider } from '@/lib/i18n';
 
 import Landing from '@/pages/landing';
 import Login from '@/pages/login';
@@ -118,13 +119,15 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-        <ServerWakeBanner />
-      </TooltipProvider>
+      <I18nProvider>
+        <TooltipProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+            <Router />
+          </WouterRouter>
+          <Toaster />
+          <ServerWakeBanner />
+        </TooltipProvider>
+      </I18nProvider>
     </QueryClientProvider>
   );
 }
