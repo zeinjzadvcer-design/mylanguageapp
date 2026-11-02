@@ -44,6 +44,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useI18n, type Lang } from "@/lib/i18n";
 import {
   Mic,
   MicOff,
@@ -59,13 +60,7 @@ import {
 
 const POLL_MS = 1000;
 
-const REASON_LABELS: Record<ReportReason, string> = {
-  harassment: "مضايقة أو إساءة",
-  inappropriate: "محتوى غير لائق",
-  spam: "إعلانات أو رسائل مزعجة",
-  language: "لغة غير مناسبة",
-  other: "سبب آخر",
-};
+const REPORT_REASONS: ReportReason[] = ["harassment", "inappropriate", "spam", "language", "other"];
 
 const EMPTY_PREFERENCES: PracticePreferences = {
   isAvailable: false,
@@ -83,7 +78,8 @@ const toTags = (text: string) =>
     .filter(Boolean)
     .slice(0, 10);
 
-const fromTags = (tags: string[]) => tags.join("، ");
+/** Joins tags for display and editing, with the comma of the UI language. */
+const fromTags = (tags: string[], lang: Lang) => tags.join(lang === "ar" ? "، " : ", ");
 
 function mmss(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60);
@@ -108,6 +104,8 @@ const STATUS_ORDER: Record<CallEvaluation["status"], number> = {
 
 export default function Practice() {
   const { toast } = useToast();
+  const { t } = useI18n();
+  const pr = t.practice;
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -143,7 +141,7 @@ export default function Practice() {
    * It cannot be the `uploading` STATE: that state was both a dependency of the
    * effects below and set by them, so `setUploading(true)` changed the deps,
    * React ran the cleanup, `cancelled` became true, and the `finally` then
-   * skipped clearing the flag — leaving the screen on "جارٍ الإرسال…" forever
+   * skipped clearing the flag — leaving the screen on "Sending…" forever
    * while no request had been made at all. A ref does not re-trigger the effect,
    * so the guard and the display are kept separate.
    */
@@ -162,7 +160,7 @@ export default function Practice() {
    */
   const uploadAttemptedRef = useRef<Set<number>>(new Set());
   /**
-   * Evaluations the student has dismissed with "إخفاء".
+   * Evaluations the student has dismissed with "Hide".
    *
    * Dismissing only cleared local state, so the next 15-second poll re-selected
    * the same finished evaluation and the card reappeared — and because it was
@@ -177,14 +175,14 @@ export default function Practice() {
     if (call.startRecording()) {
       setWantsEvaluation(true);
       toast({
-        title: "سيتم تسجيل هذه المحادثة",
-        description: "سنطلب موافقة شريكك بعد انتهاء المكالمة. لا يُرسل أي تسجيل قبل موافقته.",
+        title: pr.willRecord,
+        description: pr.willRecordBody,
       });
     } else {
       toast({
         variant: "destructive",
-        title: "التسجيل غير مدعوم",
-        description: "متصفحك لا يدعم تسجيل المكالمة، لذلك لا يمكن تقييمها.",
+        title: pr.recordUnsupported,
+        description: pr.recordUnsupportedBody,
       });
     }
   };
@@ -322,8 +320,8 @@ export default function Practice() {
         setWantsEvaluation(false);
         toast({
           variant: "destructive",
-          title: "لم يُحفظ تسجيل المحادثة",
-          description: "تعذّر تسجيل المكالمة، لذلك لا يمكن طلب تقييم لها.",
+          title: pr.notRecorded,
+          description: pr.notRecordedBody,
         });
       }
       return;
@@ -338,8 +336,8 @@ export default function Practice() {
         if (cancelled) return;
         setEvaluation(created);
         toast({
-          title: "تم إرسال الطلب",
-          description: "سنخبر شريكك، ولن يُرسل التسجيل إلا بعد موافقته.",
+          title: pr.requestSent,
+          description: pr.requestSentBody,
         });
       } catch (err) {
         if (cancelled) return;
@@ -353,14 +351,14 @@ export default function Practice() {
           call.discardRecording();
           void refreshEvaluations();
           toast({
-            title: "طلب شريكك التقييم أيضاً",
-            description: "سيظهر لك طلب الموافقة — وافق عليه ليُقيَّم التسجيل.",
+            title: pr.partnerAlsoAsked,
+            description: pr.partnerAlsoAskedBody,
           });
           return;
         }
         const message =
-          err instanceof PracticeError ? err.message : "تعذّر طلب التقييم.";
-        toast({ variant: "destructive", title: "لم نتمكن من طلب التقييم", description: message });
+          err instanceof PracticeError ? err.message : pr.requestFailedBody;
+        toast({ variant: "destructive", title: pr.requestFailed, description: message });
         setWantsEvaluation(false);
         call.discardRecording();
       } finally {
@@ -414,15 +412,15 @@ export default function Practice() {
         setEvaluation(updated);
         // The audio has left the browser; there is no reason to keep a copy.
         call.discardRecording();
-        toast({ title: "تم إرسال التسجيل", description: "سيظهر التقييم بعد قليل." });
+        toast({ title: pr.uploaded, description: pr.uploadedBody });
       } catch {
         if (!cancelled) {
           // The recording is deliberately NOT discarded: it is the only copy,
           // and keeping it is what makes the retry button below possible.
           toast({
             variant: "destructive",
-            title: "تعذّر إرسال التسجيل",
-            description: "اضغط \"أعد إرسال التسجيل\" للمحاولة مرة أخرى.",
+            title: pr.uploadFailed,
+            description: pr.uploadFailedBody,
           });
         }
       } finally {
@@ -471,10 +469,10 @@ export default function Practice() {
   const fail = useCallback(
     (err: unknown) => {
       const message =
-        err instanceof PracticeError ? err.message : "حدث خطأ. حاول مرة أخرى.";
-      toast({ title: "تعذّر إتمام العملية", description: message, variant: "destructive" });
+        err instanceof PracticeError ? err.message : pr.genericError;
+      toast({ title: pr.actionFailed, description: message, variant: "destructive" });
     },
-    [toast],
+    [toast, pr],
   );
 
   // ─── Actions ───────────────────────────────────────────────────────────────
@@ -484,7 +482,7 @@ export default function Practice() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["practice-profile"] });
       setEditing(false);
-      toast({ title: "تم حفظ تفضيلاتك" });
+      toast({ title: pr.prefsSaved });
     },
     onError: fail,
   });
@@ -583,8 +581,8 @@ export default function Practice() {
     try {
       await practiceApi.block(userId, sessionId);
       toast({
-        title: "تم الحظر",
-        description: "لن يتم إقرانك بهذا الشخص مرة أخرى.",
+        title: pr.blocked,
+        description: pr.blockedBody,
       });
     } catch (err) {
       fail(err);
@@ -610,11 +608,10 @@ export default function Practice() {
       <header>
         <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
           <Mic className="h-8 w-8 text-primary" />
-          التدريب الصوتي مع متعلّم آخر
+          {pr.title}
         </h1>
         <p className="text-muted-foreground mt-2">
-          محادثة صوتية مباشرة مع طالب آخر في مستواك تقريبًا. هذه ليست محادثة مع الذكاء
-          الاصطناعي — الشخص على الطرف الآخر متعلّم مثلك.
+          {pr.subtitle}
         </p>
       </header>
 
@@ -657,13 +654,11 @@ export default function Practice() {
               await practiceApi.respondToEvaluation(pendingConsent.id, agree);
               setPendingConsent(null);
               toast({
-                title: agree ? "تمت الموافقة" : "تم الرفض",
-                description: agree
-                  ? "سيُقيَّم التسجيل ويظهر لك رأي المعلّم عن كلامك فقط."
-                  : "لن يُرسل أي تسجيل لهذه المكالمة.",
+                title: agree ? pr.agreed : pr.declined,
+                description: agree ? pr.agreedBody : pr.declinedBody,
               });
             } catch {
-              toast({ variant: "destructive", title: "تعذّر إرسال ردّك" });
+              toast({ variant: "destructive", title: pr.replyFailed });
             }
           }}
         />
@@ -743,8 +738,8 @@ export default function Practice() {
                 alsoBlock,
               });
               toast({
-                title: "تم إرسال البلاغ",
-                description: "سيراجعه فريق الإشراف. شكرًا لإبلاغنا.",
+                title: pr.reportSent,
+                description: pr.reportSentBody,
               });
             } catch (err) {
               fail(err);
@@ -759,20 +754,18 @@ export default function Practice() {
 // ─── Pieces ───────────────────────────────────────────────────────────────────
 
 function PrivacyNotice() {
+  const { t } = useI18n();
+  const pv = t.practice.privacy;
   return (
     <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 space-y-1.5">
       <div className="flex items-center gap-2 font-bold">
         <Info className="h-4 w-4" />
-        قبل أن تبدأ
+        {pv.title}
       </div>
-      <ul className="list-disc pr-5 space-y-1 leading-relaxed">
-        <li>المكالمة مباشرة بينك وبين الطالب الآخر، ولا يتم تسجيلها ولا حفظ أي صوت منها.</li>
-        <li>
-          لأنّ المكالمة غير مسجّلة، لا يستطيع فريق الإشراف الاستماع إلى ما حدث. البلاغ يعتمد
-          على ما تكتبه أنت.
-        </li>
-        <li>يمكنك إنهاء المكالمة في أي لحظة، وحظر الشخص أو الإبلاغ عنه أثناء المكالمة نفسها.</li>
-        <li>لا تشارك اسمك الكامل أو رقم هاتفك أو أي معلومات شخصية.</li>
+      <ul className="list-disc ps-5 space-y-1 leading-relaxed">
+        {pv.points.map((point) => (
+          <li key={point}>{point}</li>
+        ))}
       </ul>
     </div>
   );
@@ -789,8 +782,10 @@ function PreferencesForm({
   onSave: (prefs: PracticePreferences) => void;
   onCancel?: () => void;
 }) {
-  const [goals, setGoals] = useState(fromTags(initial.goals));
-  const [interests, setInterests] = useState(fromTags(initial.interests));
+  const { t, lang } = useI18n();
+  const pf = t.practice.prefs;
+  const [goals, setGoals] = useState(fromTags(initial.goals, lang));
+  const [interests, setInterests] = useState(fromTags(initial.interests, lang));
   const [field, setField] = useState(initial.professionalField ?? "");
   const [hours, setHours] = useState<number[]>(initial.availableHours);
   const [agreed, setAgreed] = useState(initial.isAvailable);
@@ -804,45 +799,45 @@ function PreferencesForm({
     <Card className="border-2 border-border">
       <CardContent className="p-6 space-y-5">
         <div>
-          <h2 className="text-lg font-bold">تفضيلات التدريب</h2>
+          <h2 className="text-lg font-bold">{pf.title}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            نستخدم هذه المعلومات لإيجاد شريك قريب من مستواك ولديه ما يتحدث معك عنه.
+            {pf.body}
           </p>
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="interests">اهتماماتك</Label>
+          <Label htmlFor="interests">{pf.interests}</Label>
           <Input
             id="interests"
-            placeholder="كرة القدم، الطبخ، السفر"
+            placeholder={pf.interestsPlaceholder}
             value={interests}
             onChange={(e) => setInterests(e.target.value)}
           />
-          <p className="text-xs text-muted-foreground">افصل بينها بفاصلة. حتى ١٠ اهتمامات.</p>
+          <p className="text-xs text-muted-foreground">{pf.interestsHint}</p>
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="goals">أهدافك من تعلّم الإنجليزية</Label>
+          <Label htmlFor="goals">{pf.goals}</Label>
           <Input
             id="goals"
-            placeholder="السفر، العمل، الدراسة"
+            placeholder={pf.goalsPlaceholder}
             value={goals}
             onChange={(e) => setGoals(e.target.value)}
           />
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="field">مجال عملك أو دراستك</Label>
+          <Label htmlFor="field">{pf.field}</Label>
           <Input
             id="field"
-            placeholder="الطب، الهندسة، التجارة"
+            placeholder={pf.fieldPlaceholder}
             value={field}
             onChange={(e) => setField(e.target.value)}
           />
         </div>
 
         <div className="space-y-2">
-          <Label>الأوقات التي تكون متاحًا فيها عادةً</Label>
+          <Label>{pf.hours}</Label>
           <div className="grid grid-cols-6 sm:grid-cols-12 gap-1.5" dir="ltr">
             {Array.from({ length: 24 }, (_, hour) => (
               <button
@@ -860,15 +855,14 @@ function PreferencesForm({
             ))}
           </div>
           <p className="text-xs text-muted-foreground">
-            بتوقيت UTC. اختياري — يُستخدم فقط لترجيح من يشبه جدولك.
+            {pf.hoursHint}
           </p>
         </div>
 
         <div className="flex items-start gap-3 rounded-xl border border-border p-4">
           <Switch id="opt-in" checked={agreed} onCheckedChange={setAgreed} />
           <Label htmlFor="opt-in" className="text-sm leading-relaxed cursor-pointer">
-            أوافق على التحدث صوتيًا مع متعلّمين آخرين، وأفهم أنّ المكالمة مباشرة وغير مسجّلة،
-            وأنّ بإمكاني إنهاءها أو حظر الطرف الآخر في أي وقت.
+            {pf.consent}
           </Label>
         </div>
 
@@ -885,12 +879,12 @@ function PreferencesForm({
             }
             disabled={saving}
           >
-            {saving && <Loader2 className="h-4 w-4 ml-2 animate-spin" />}
-            حفظ
+            {saving && <Loader2 className="h-4 w-4 me-2 animate-spin" />}
+            {t.common.save}
           </Button>
           {onCancel && (
             <Button variant="outline" onClick={onCancel} disabled={saving}>
-              إلغاء
+              {t.common.cancel}
             </Button>
           )}
         </div>
@@ -912,6 +906,8 @@ function ReadyCard({
   onSearch: () => void;
   onEdit: () => void;
 }) {
+  const { t, lang } = useI18n();
+  const pr = t.practice;
   return (
     <Card className="border-2 border-border">
       <CardContent className="p-8 text-center space-y-5">
@@ -919,24 +915,23 @@ function ReadyCard({
           <Users className="h-10 w-10 text-primary" />
         </div>
         <div>
-          <h2 className="text-xl font-bold">جاهز للتحدث؟</h2>
+          <h2 className="text-xl font-bold">{pr.readyTitle}</h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            سنبحث عن طالب في مستواك تقريبًا ويشاركك بعض الاهتمامات. أقصى مدة للمكالمة{" "}
-            {maxMinutes} دقيقة.
+            {pr.readyBody(maxMinutes)}
           </p>
         </div>
         <Button size="lg" className="h-12 px-8 rounded-xl" onClick={onSearch} disabled={searching}>
           {searching ? (
-            <Loader2 className="h-5 w-5 ml-2 animate-spin" />
+            <Loader2 className="h-5 w-5 me-2 animate-spin" />
           ) : (
-            <Phone className="h-5 w-5 ml-2" />
+            <Phone className="h-5 w-5 me-2" />
           )}
-          ابحث عن شريك
+          {pr.findPartner}
         </Button>
         <div className="pt-2 text-xs text-muted-foreground">
-          {profile.interests.length > 0 && <span>اهتماماتك: {fromTags(profile.interests)}</span>}
-          <button onClick={onEdit} className="underline mr-3 hover:text-foreground">
-            تعديل التفضيلات
+          {profile.interests.length > 0 && <span>{pr.yourInterests(fromTags(profile.interests, lang))}</span>}
+          <button onClick={onEdit} className="underline ms-3 hover:text-foreground">
+            {pr.editPrefs}
           </button>
         </div>
       </CardContent>
@@ -953,24 +948,26 @@ function SearchingCard({
   secondsWaiting: number;
   onCancel: () => void;
 }) {
+  const { t } = useI18n();
+  const pr = t.practice;
   return (
     <Card className="border-2 border-primary/30">
       <CardContent className="p-8 text-center space-y-5">
         <Loader2 className="h-12 w-12 mx-auto animate-spin text-primary" />
         <div>
-          <h2 className="text-xl font-bold">نبحث عن شريك…</h2>
+          <h2 className="text-xl font-bold">{pr.searching}</h2>
           <p className="text-muted-foreground mt-1 text-sm">
             {waiting > 0
-              ? `${waiting} متعلّم آخر في قائمة الانتظار الآن.`
-              : "لا يوجد أحد متاح في هذه اللحظة. سنقرنك بأول من ينضم."}
+              ? pr.waitingCount(waiting)
+              : pr.nobodyWaiting}
           </p>
           <p className="text-xs text-muted-foreground mt-2">
-            وقت الانتظار: {mmss(secondsWaiting)}
+            {pr.waitTime(mmss(secondsWaiting))}
           </p>
         </div>
         <Button variant="outline" onClick={onCancel}>
-          <X className="h-4 w-4 ml-2" />
-          إيقاف البحث
+          <X className="h-4 w-4 me-2" />
+          {pr.stopSearch}
         </Button>
       </CardContent>
     </Card>
@@ -988,6 +985,8 @@ function RingingCard({
   onDecline: () => void;
   accepting: boolean;
 }) {
+  const { t, lang } = useI18n();
+  const pr = t.practice;
   return (
     <Card className="border-2 border-primary">
       <CardContent className="p-8 text-center space-y-5">
@@ -995,30 +994,30 @@ function RingingCard({
           <Phone className="h-10 w-10 text-primary" />
         </div>
         <div>
-          <h2 className="text-xl font-bold">وجدنا لك شريكًا</h2>
+          <h2 className="text-xl font-bold">{pr.found}</h2>
           <p className="text-2xl font-bold text-primary mt-2">{session.partner.name}</p>
           <p className="text-sm text-muted-foreground mt-1">
             {session.partner.levelCode && <span dir="ltr">{session.partner.levelCode}</span>}
             {session.partner.interests.length > 0 && (
-              <span> · {fromTags(session.partner.interests.slice(0, 3))}</span>
+              <span> · {fromTags(session.partner.interests.slice(0, 3), lang)}</span>
             )}
           </p>
         </div>
         <div className="flex gap-3 justify-center">
           <Button size="lg" className="rounded-xl" onClick={onAccept} disabled={accepting}>
             {accepting ? (
-              <Loader2 className="h-5 w-5 ml-2 animate-spin" />
+              <Loader2 className="h-5 w-5 me-2 animate-spin" />
             ) : (
-              <Phone className="h-5 w-5 ml-2" />
+              <Phone className="h-5 w-5 me-2" />
             )}
-            ابدأ المكالمة
+            {pr.startCall}
           </Button>
           <Button size="lg" variant="outline" className="rounded-xl" onClick={onDecline}>
-            رفض
+            {pr.decline}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          رفض المكالمة لا يُبلّغ الطرف الآخر بشيء.
+          {pr.declineNote}
         </p>
       </CardContent>
     </Card>
@@ -1041,6 +1040,8 @@ function ConsentCard({
   onAnswer: (agree: boolean) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const { t } = useI18n();
+  const cs = t.practice.consent;
   const answer = (agree: boolean) => {
     setBusy(true);
     onAnswer(agree);
@@ -1050,24 +1051,22 @@ function ConsentCard({
     <Card className="border-2 border-amber-300 bg-amber-50/60">
       <CardContent className="p-6 space-y-4">
         <div className="space-y-2">
-          <p className="font-bold">طلب شريكك تقييماً لمحادثتكما</p>
+          <p className="font-bold">{cs.title}</p>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            سجّل شريكك المحادثة ويريد إرسالها لتقييم لغته. لأنّ صوتك موجود في
-            التسجيل، لا يمكن إرسالها إلا بموافقتك.
+            {cs.body}
           </p>
           <ul className="text-sm text-muted-foreground list-disc ps-5 space-y-1">
-            <li>سيحصل كلٌّ منكما على ملاحظات عن كلامه هو فقط.</li>
-            <li>لن يرى شريكك أي ملاحظات عنك، ولن ترى ملاحظاته.</li>
-            <li>يُحذف التسجيل بعد التحليل، ويبقى النص المكتوب فقط.</li>
-            <li>إن رفضت، لا يُرسل شيء — والرفض نهائي.</li>
+            {cs.points.map((point) => (
+              <li key={point}>{point}</li>
+            ))}
           </ul>
         </div>
         <div className="flex gap-2">
           <Button disabled={busy} onClick={() => answer(true)}>
-            أوافق
+            {cs.agree}
           </Button>
           <Button variant="outline" disabled={busy} onClick={() => answer(false)}>
-            أرفض
+            {cs.refuse}
           </Button>
         </div>
       </CardContent>
@@ -1089,37 +1088,39 @@ function EvaluationCard({
   onRetryUpload: () => void;
   onDismiss: () => void;
 }) {
-  const feedback = evaluation.feedbackAr || evaluation.feedback;
-  const summary = evaluation.summaryAr || evaluation.summary;
+  const { t, pick } = useI18n();
+  const ev = t.practice.evaluation;
+  const feedback = pick(evaluation.feedbackAr, evaluation.feedback);
+  const summary = pick(evaluation.summaryAr, evaluation.summary);
 
   // Worded per side: the person who asked is waiting on their partner, while
   // the person who agreed is waiting on the uploader. The same sentence shown
   // to both would be wrong for one of them.
   const waiting: Partial<Record<CallEvaluation["status"], string>> = evaluation.isRequester
     ? {
-        requested: "بانتظار موافقة شريكك على إرسال التسجيل.",
-        consented: "وافق شريكك — يتم إرسال التسجيل.",
-        uploaded: "تم إرسال التسجيل، وسيُحلّل قريباً.",
-        analyzing: "يتم تحليل المحادثة الآن…",
+        requested: ev.requesterRequested,
+        consented: ev.requesterConsented,
+        uploaded: ev.uploaded,
+        analyzing: ev.analyzing,
       }
     : {
-        consented: "بانتظار إرسال التسجيل من شريكك.",
-        uploaded: "تم إرسال التسجيل، وسيُحلّل قريباً.",
-        analyzing: "يتم تحليل المحادثة الآن…",
+        consented: ev.partnerConsented,
+        uploaded: ev.uploaded,
+        analyzing: ev.analyzing,
       };
 
   return (
     <Card className="border-2">
       <CardContent className="p-6 space-y-3">
         <div className="flex items-start justify-between gap-3">
-          <p className="font-bold">تقييم المحادثة</p>
+          <p className="font-bold">{ev.title}</p>
           <Button variant="ghost" size="sm" onClick={onDismiss}>
-            إخفاء
+            {ev.hide}
           </Button>
         </div>
 
         {uploading && (
-          <p className="text-sm text-muted-foreground">جارٍ الإرسال…</p>
+          <p className="text-sm text-muted-foreground">{ev.sending}</p>
         )}
 
         {waiting[evaluation.status] && !uploading && (
@@ -1131,27 +1132,27 @@ function EvaluationCard({
             button the student presses, not an automatic retry. */}
         {canRetryUpload && (
           <Button size="sm" variant="outline" onClick={onRetryUpload}>
-            أعد إرسال التسجيل
+            {ev.resend}
           </Button>
         )}
 
         {evaluation.status === "declined" && (
           <p className="text-sm text-muted-foreground">
             {evaluation.isRequester
-              ? "لم يوافق شريكك على إرسال التسجيل، لذلك لن تُقيَّم هذه المحادثة."
-              : "لم تتم الموافقة على إرسال التسجيل، لذلك لن تُقيَّم هذه المحادثة."}
+              ? ev.declinedRequester
+              : ev.declinedPartner}
           </p>
         )}
 
         {evaluation.status === "expired" && (
           <p className="text-sm text-muted-foreground">
-            لم يردّ شريكك على الطلب في الوقت المحدد.
+            {ev.expired}
           </p>
         )}
 
         {evaluation.status === "failed" && (
           <p className="text-sm text-destructive">
-            {evaluation.error ?? "تعذّر تقييم هذه المحادثة."}
+            {evaluation.error ?? ev.failed}
           </p>
         )}
 
@@ -1161,29 +1162,28 @@ function EvaluationCard({
                 not identified, so the attribution can be wrong. */}
             {evaluation.attributionUncertain && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                ملاحظة: التمييز بين المتحدثين في التسجيل غير مؤكد تماماً، لذلك قد
-                تكون هذه الملاحظات عن كلام شريكك بدلاً من كلامك.
+                {ev.uncertain}
               </p>
             )}
             {feedback && (
               <div className="space-y-1">
-                <p className="text-sm font-medium">ملاحظات عن كلامك</p>
-                <p className="text-sm leading-relaxed" dir="rtl">
+                <p className="text-sm font-medium">{ev.aboutYou}</p>
+                <p className="text-sm leading-relaxed" dir="auto">
                   {feedback}
                 </p>
               </div>
             )}
             {summary && (
               <div className="space-y-1">
-                <p className="text-sm font-medium">عن المحادثة</p>
-                <p className="text-sm text-muted-foreground leading-relaxed" dir="rtl">
+                <p className="text-sm font-medium">{ev.aboutCall}</p>
+                <p className="text-sm text-muted-foreground leading-relaxed" dir="auto">
                   {summary}
                 </p>
               </div>
             )}
             {!feedback && !summary && (
               <p className="text-sm text-muted-foreground">
-                لم تتوفّر ملاحظات لهذه المحادثة.
+                {ev.none}
               </p>
             )}
           </div>
@@ -1220,11 +1220,13 @@ function CallCard({
   recording: boolean;
   onAskForEvaluation: () => void;
 }) {
+  const { t } = useI18n();
+  const cl = t.practice.call;
   return (
     <Card className="border-2 border-primary">
       <CardContent className="p-8 space-y-6">
         <div className="text-center space-y-1">
-          <p className="text-sm text-muted-foreground">تتحدث الآن مع</p>
+          <p className="text-sm text-muted-foreground">{cl.talkingWith}</p>
           <p className="text-2xl font-bold">{session.partner.name}</p>
           {phase === "connected" && (
             <p className="text-lg font-mono text-primary" dir="ltr">
@@ -1233,7 +1235,7 @@ function CallCard({
           )}
           {secondsRemaining !== null && secondsRemaining < 120 && phase === "connected" && (
             <p className="text-xs text-amber-700">
-              ستنتهي المكالمة تلقائيًا خلال {mmss(secondsRemaining)}
+              {cl.endsIn(mmss(secondsRemaining))}
             </p>
           )}
         </div>
@@ -1248,37 +1250,37 @@ function CallCard({
             onClick={onToggleMute}
             disabled={phase !== "connected"}
           >
-            {muted ? <MicOff className="h-5 w-5 ml-2" /> : <Mic className="h-5 w-5 ml-2" />}
-            {muted ? "الميكروفون مغلق" : "كتم الصوت"}
+            {muted ? <MicOff className="h-5 w-5 me-2" /> : <Mic className="h-5 w-5 me-2" />}
+            {muted ? cl.micOff : cl.mute}
           </Button>
 
           {/* No confirmation dialog, deliberately: someone who needs to get out
               of a conversation should not be asked whether they are sure. */}
           <Button size="lg" variant="destructive" className="rounded-xl" onClick={onEnd}>
-            <PhoneOff className="h-5 w-5 ml-2" />
-            إنهاء المكالمة
+            <PhoneOff className="h-5 w-5 me-2" />
+            {cl.end}
           </Button>
         </div>
 
         <div className="flex flex-wrap gap-2 justify-center border-t border-border pt-4">
           {phase === "connected" && !recording && (
             <Button variant="ghost" size="sm" onClick={onAskForEvaluation}>
-              اطلب تقييماً لهذه المحادثة
+              {cl.askEvaluation}
             </Button>
           )}
           {recording && (
             <span className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
-              يتم التسجيل — بانتظار موافقة شريكك بعد المكالمة
+              {cl.recording}
             </span>
           )}
           <Button variant="ghost" size="sm" className="text-destructive" onClick={onReport}>
-            <ShieldAlert className="h-4 w-4 ml-1.5" />
-            إبلاغ عن هذا الشخص
+            <ShieldAlert className="h-4 w-4 me-1.5" />
+            {cl.report}
           </Button>
           <Button variant="ghost" size="sm" onClick={onBlock}>
-            <Ban className="h-4 w-4 ml-1.5" />
-            حظر ومنع الإقران مجددًا
+            <Ban className="h-4 w-4 me-1.5" />
+            {cl.block}
           </Button>
         </div>
       </CardContent>
@@ -1293,10 +1295,12 @@ function CallCard({
  * in five while the deployment has no TURN relay, and it says so.
  */
 function CallPhaseNotice({ phase, turnAvailable }: { phase: string; turnAvailable: boolean }) {
+  const { t } = useI18n();
+  const ph = t.practice.phase;
   if (phase === "requesting-mic") {
     return (
       <p className="text-center text-sm text-muted-foreground">
-        اسمح للمتصفح باستخدام الميكروفون للمتابعة…
+        {ph.allowMic}
       </p>
     );
   }
@@ -1304,8 +1308,7 @@ function CallPhaseNotice({ phase, turnAvailable }: { phase: string; turnAvailabl
   if (phase === "mic-denied") {
     return (
       <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-center">
-        لم نتمكّن من الوصول إلى الميكروفون. افتح إعدادات المتصفح واسمح باستخدام الميكروفون لهذا
-        الموقع، ثم حاول مرة أخرى.
+        {ph.micDenied}
       </div>
     );
   }
@@ -1314,7 +1317,7 @@ function CallPhaseNotice({ phase, turnAvailable }: { phase: string; turnAvailabl
     return (
       <p className="text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
         <Loader2 className="h-4 w-4 animate-spin" />
-        جارٍ الاتصال…
+        {ph.connecting}
       </p>
     );
   }
@@ -1322,14 +1325,13 @@ function CallPhaseNotice({ phase, turnAvailable }: { phase: string; turnAvailabl
   if (phase === "failed") {
     return (
       <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm space-y-2">
-        <p className="font-bold">تعذّر إنشاء الاتصال الصوتي</p>
+        <p className="font-bold">{ph.failedTitle}</p>
         <p className="leading-relaxed">
-          لم تتمكن المكالمة من الوصول إلى الطرف الآخر. هذا يحدث عادةً بسبب نوع الشبكة (شبكات
-          الجوال أو شبكات الشركات)، وليس خطأً في حسابك أو في التطبيق.
-          {!turnAvailable && " النظام لا يستخدم خادم ترحيل حاليًا، لذلك بعض الشبكات لا تنجح."}
+          {ph.failedBody}
+          {!turnAvailable && ` ${ph.noTurn}`}
         </p>
         <p className="leading-relaxed">
-          جرّب شبكة أخرى (مثلاً Wi-Fi بدل بيانات الجوال)، أو ابحث عن شريك آخر.
+          {ph.tryOther}
         </p>
       </div>
     );
@@ -1352,67 +1354,68 @@ function ReportDialog({
   const [reason, setReason] = useState<ReportReason>("inappropriate");
   const [detail, setDetail] = useState("");
   const [alsoBlock, setAlsoBlock] = useState(true);
+  const { t } = useI18n();
+  const rp = t.practice.report;
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent dir="rtl" className="sm:max-w-md">
-        <DialogHeader className="text-right">
-          <DialogTitle>الإبلاغ عن {partnerName}</DialogTitle>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader className="text-start">
+          <DialogTitle>{rp.title(partnerName)}</DialogTitle>
           <DialogDescription>
-            سيصل البلاغ إلى فريق الإشراف. المكالمات غير مسجّلة، لذلك ما تكتبه هنا هو كل ما
-            سيعتمدون عليه — اذكر ما حدث بوضوح.
+            {rp.body}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>سبب البلاغ</Label>
+            <Label>{rp.reason}</Label>
             <div className="grid gap-1.5">
-              {(Object.keys(REASON_LABELS) as ReportReason[]).map((key) => (
+              {REPORT_REASONS.map((key) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => setReason(key)}
-                  className={`text-right px-3 py-2 rounded-lg border text-sm transition-colors ${
+                  className={`text-start px-3 py-2 rounded-lg border text-sm transition-colors ${
                     reason === key
                       ? "border-primary bg-primary/5 font-medium"
                       : "border-border hover:bg-secondary"
                   }`}
                 >
-                  {REASON_LABELS[key]}
+                  {rp.reasons[key]}
                 </button>
               ))}
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="detail">ماذا حدث؟</Label>
+            <Label htmlFor="detail">{rp.what}</Label>
             <Textarea
               id="detail"
               rows={4}
               value={detail}
               onChange={(e) => setDetail(e.target.value)}
-              placeholder="اكتب ما حدث بأكبر قدر من التفصيل."
+              placeholder={rp.whatPlaceholder}
             />
           </div>
 
           <div className="flex items-center gap-3">
             <Switch id="also-block" checked={alsoBlock} onCheckedChange={setAlsoBlock} />
             <Label htmlFor="also-block" className="text-sm cursor-pointer">
-              احظر هذا الشخص أيضًا حتى لا يتم إقراني به مجددًا
+              {rp.alsoBlock}
             </Label>
           </div>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={onClose}>
-            إلغاء
+            {t.common.cancel}
           </Button>
           <Button
             variant="destructive"
             onClick={() => onSubmit(reason, detail.trim() || null, alsoBlock)}
           >
-            إرسال البلاغ وإنهاء المكالمة
+            {rp.submit}
           </Button>
         </DialogFooter>
       </DialogContent>
