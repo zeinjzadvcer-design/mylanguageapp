@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,21 +10,23 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { BookOpen, Loader2, Eye, EyeOff } from "lucide-react";
+import { Loader2, Eye, EyeOff } from "lucide-react";
+import { BrandLogo, LanguageSwitcher } from "@/components/brand";
+import { useI18n } from "@/lib/i18n";
+import type { Messages } from "@/locales/en";
 
-/** Arabic labels for the signup referral question. */
-const REFERRAL_LABELS: Array<{ value: RegisterInputReferralSource; label: string }> = [
-  { value: RegisterInputReferralSource.facebook, label: "فيسبوك" },
-  { value: RegisterInputReferralSource.instagram, label: "إنستغرام" },
-  { value: RegisterInputReferralSource.tiktok, label: "تيك توك" },
-  { value: RegisterInputReferralSource.youtube, label: "يوتيوب" },
-  { value: RegisterInputReferralSource.whatsapp, label: "واتساب" },
-  { value: RegisterInputReferralSource.friend, label: "صديق أو قريب" },
-  { value: RegisterInputReferralSource.search, label: "بحث في الإنترنت" },
-  { value: RegisterInputReferralSource.advertisement, label: "إعلان" },
-  { value: RegisterInputReferralSource.other, label: "أخرى" },
+/** Signup referral options, in the order they are offered. */
+const REFERRAL_SOURCES: RegisterInputReferralSource[] = [
+  RegisterInputReferralSource.facebook,
+  RegisterInputReferralSource.instagram,
+  RegisterInputReferralSource.tiktok,
+  RegisterInputReferralSource.youtube,
+  RegisterInputReferralSource.whatsapp,
+  RegisterInputReferralSource.friend,
+  RegisterInputReferralSource.search,
+  RegisterInputReferralSource.advertisement,
+  RegisterInputReferralSource.other,
 ];
-
 
 // Keep this in sync with the weak-password list in artifacts/api-server/src/lib/validate.ts
 // so the browser catches the same obviously-weak passwords before hitting the server.
@@ -43,28 +45,31 @@ const WEAK_PASSWORDS = new Set([
   "changeme1",
 ]);
 
-const formSchema = z.object({
-  name: z.string().min(2, { message: "الاسم يجب أن يكون حرفين على الأقل" }),
-  email: z.string().email({ message: "الرجاء إدخال بريد إلكتروني صحيح" }),
-  password: z
-    .string()
-    .min(8, { message: "كلمة المرور يجب أن تكون 8 محارف على الأقل" })
-    .regex(/[a-zA-Z]/, { message: "كلمة المرور يجب أن تحتوي على حرف واحد على الأقل" })
-    .regex(/[0-9]/, { message: "كلمة المرور يجب أن تحتوي على رقم واحد على الأقل" })
-    .refine((value) => !WEAK_PASSWORDS.has(value.toLowerCase()), {
-      message: "كلمة المرور هذه شائعة جداً، الرجاء اختيار كلمة مرور أقوى",
+const makeSchema = (t: Messages) =>
+  z.object({
+    name: z.string().min(2, { message: t.auth.nameMin }),
+    email: z.string().email({ message: t.auth.invalidEmail }),
+    password: z
+      .string()
+      .min(8, { message: t.auth.passwordMin8 })
+      .regex(/[a-zA-Z]/, { message: t.auth.passwordLetter })
+      .regex(/[0-9]/, { message: t.auth.passwordDigit })
+      .refine((value) => !WEAK_PASSWORDS.has(value.toLowerCase()), {
+        message: t.auth.passwordWeak,
+      }),
+    confirmPassword: z.string().min(1, { message: t.auth.confirmRequired }),
+    preferredLanguage: z.nativeEnum(RegisterInputPreferredLanguage).default(RegisterInputPreferredLanguage.ar),
+    country: z.string().length(2).default("SY"),
+    referralSource: z.nativeEnum(RegisterInputReferralSource, {
+      errorMap: () => ({ message: t.auth.referralRequired }),
     }),
-  confirmPassword: z.string().min(1, { message: "الرجاء تأكيد كلمة المرور" }),
-  preferredLanguage: z.nativeEnum(RegisterInputPreferredLanguage).default(RegisterInputPreferredLanguage.ar),
-  country: z.string().length(2).default("SY"),
-  referralSource: z.nativeEnum(RegisterInputReferralSource, {
-    errorMap: () => ({ message: "الرجاء اختيار كيف تعرفت على التطبيق" }),
-  }),
-  referralDetail: z.string().max(200).optional(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "كلمتا المرور غير متطابقتين",
-  path: ["confirmPassword"],
-});
+    referralDetail: z.string().max(200).optional(),
+  }).refine((data) => data.password === data.confirmPassword, {
+    message: t.auth.passwordsMismatch,
+    path: ["confirmPassword"],
+  });
+
+type FormValues = z.infer<ReturnType<typeof makeSchema>>;
 
 export default function Register() {
   const [, setLocation] = useLocation();
@@ -73,19 +78,24 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   
-  const form = useForm<z.infer<typeof formSchema>>({
+  const { t, lang } = useI18n();
+  const a = t.auth;
+  const formSchema = useMemo(() => makeSchema(t), [t]);
+
+  const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: "",
       email: "",
       password: "",
       confirmPassword: "",
-      preferredLanguage: RegisterInputPreferredLanguage.ar,
+      // Default to the language the visitor is already reading the page in.
+      preferredLanguage: lang === "en" ? RegisterInputPreferredLanguage.en : RegisterInputPreferredLanguage.ar,
       country: "SY",
     },
   });
 
-  function onSubmit(values: z.infer<typeof formSchema>) {
+  function onSubmit(values: FormValues) {
     // confirmPassword only exists to check the two password fields match in
     // the browser — the backend only ever sees "password".
     const { confirmPassword: _confirmPassword, ...data } = values;
@@ -94,8 +104,8 @@ export default function Register() {
       {
         onSuccess: () => {
           toast({
-            title: "تم إنشاء الحساب بنجاح",
-            description: "مرحباً بك في لغتي! لنبدأ بتحديد مستواك.",
+            title: a.registerSuccess,
+            description: a.registerSuccessBody,
           });
           setLocation("/placement");
         },
@@ -111,12 +121,12 @@ export default function Register() {
             data?.details
               ?.map((d) => d.message)
               .filter((message): message is string => Boolean(message))
-              .join("، ") ||
+              .join(lang === "ar" ? "، " : ", ") ||
             data?.error ||
-            "حدث خطأ غير متوقع، الرجاء المحاولة مرة أخرى";
+            a.unexpectedError;
           toast({
             variant: "destructive",
-            title: "خطأ في إنشاء الحساب",
+            title: a.registerError,
             description,
           });
         },
@@ -125,21 +135,19 @@ export default function Register() {
   }
 
   return (
-    <div dir="rtl" className="min-h-screen bg-background flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="relative min-h-screen bg-background flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+      <LanguageSwitcher className="absolute top-4 end-4" />
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
-        <Link href="/" className="inline-flex items-center gap-2 mb-6 cursor-pointer">
-          <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center">
-            <BookOpen className="h-6 w-6 text-primary-foreground" />
-          </div>
-          <span className="font-bold text-3xl text-foreground font-sans">لغتي</span>
+        <Link href="/" className="inline-flex mb-6 cursor-pointer">
+          <BrandLogo size="lg" />
         </Link>
         <h2 className="mt-2 text-center text-3xl font-extrabold text-foreground">
-          إنشاء حساب جديد
+          {a.registerTitle}
         </h2>
         <p className="mt-2 text-center text-sm text-muted-foreground">
-          لديك حساب بالفعل؟{" "}
-          <Link href="/login" className="font-medium text-amber-600 hover:text-amber-500">
-            تسجيل الدخول
+          {a.haveAccount}{" "}
+          <Link href="/login" className="font-semibold text-primary hover:text-primary/80">
+            {a.loginTitle}
           </Link>
         </p>
       </div>
@@ -153,9 +161,9 @@ export default function Register() {
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>الاسم الكامل (Full Name)</FormLabel>
+                    <FormLabel>{a.fullName}</FormLabel>
                     <FormControl>
-                      <Input placeholder="أحمد محمد" {...field} />
+                      <Input placeholder={a.namePlaceholder} {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -167,7 +175,7 @@ export default function Register() {
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>البريد الإلكتروني (Email)</FormLabel>
+                    <FormLabel>{a.emailLabel}</FormLabel>
                     <FormControl>
                       <Input placeholder="your@email.com" dir="ltr" className="text-left" {...field} />
                     </FormControl>
@@ -181,7 +189,7 @@ export default function Register() {
                 name="password"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>كلمة المرور (Password)</FormLabel>
+                    <FormLabel>{a.passwordLabel}</FormLabel>
                     <FormControl>
                       <InputGroup dir="ltr">
                         <InputGroupInput
@@ -192,7 +200,7 @@ export default function Register() {
                         <InputGroupAddon align="inline-end">
                           <InputGroupButton
                             type="button"
-                            aria-label={showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
+                            aria-label={showPassword ? a.hidePassword : a.showPassword}
                             onClick={() => setShowPassword((prev) => !prev)}
                           >
                             {showPassword ? <EyeOff /> : <Eye />}
@@ -210,7 +218,7 @@ export default function Register() {
                 name="confirmPassword"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>تأكيد كلمة المرور (Confirm Password)</FormLabel>
+                    <FormLabel>{a.confirmPassword}</FormLabel>
                     <FormControl>
                       <InputGroup dir="ltr">
                         <InputGroupInput
@@ -221,7 +229,7 @@ export default function Register() {
                         <InputGroupAddon align="inline-end">
                           <InputGroupButton
                             type="button"
-                            aria-label={showConfirmPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
+                            aria-label={showConfirmPassword ? a.hidePassword : a.showPassword}
                             onClick={() => setShowConfirmPassword((prev) => !prev)}
                           >
                             {showConfirmPassword ? <EyeOff /> : <Eye />}
@@ -240,11 +248,11 @@ export default function Register() {
                   name="preferredLanguage"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>لغة الواجهة</FormLabel>
+                      <FormLabel>{a.uiLanguage}</FormLabel>
                       <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder="اختر اللغة" />
+                            <SelectValue placeholder={a.chooseLanguage} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -262,16 +270,16 @@ export default function Register() {
                   name="country"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>البلد (Country)</FormLabel>
+                      <FormLabel>{a.country}</FormLabel>
                       <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder="اختر البلد" />
+                            <SelectValue placeholder={a.chooseCountry} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="SY">سوريا</SelectItem>
-                          <SelectItem value="XX">أخرى</SelectItem>
+                          <SelectItem value="SY">{a.syria}</SelectItem>
+                          <SelectItem value="XX">{a.other}</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormMessage />
@@ -285,16 +293,16 @@ export default function Register() {
                 name="referralSource"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>كيف تعرفت على التطبيق؟ *</FormLabel>
+                    <FormLabel>{a.referralQuestion}</FormLabel>
                     <Select onValueChange={field.onChange} defaultValue={field.value}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="اختر" />
+                          <SelectValue placeholder={a.choose} />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {REFERRAL_LABELS.map(({ value, label }) => (
-                          <SelectItem key={value} value={value}>{label}</SelectItem>
+                        {REFERRAL_SOURCES.map((value) => (
+                          <SelectItem key={value} value={value}>{a.referral[value] ?? value}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -310,9 +318,9 @@ export default function Register() {
                   name="referralDetail"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>كيف؟</FormLabel>
+                      <FormLabel>{a.how}</FormLabel>
                       <FormControl>
-                        <Input {...field} value={field.value ?? ""} placeholder="اكتب هنا" />
+                        <Input {...field} value={field.value ?? ""} placeholder={a.writeHere} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -326,9 +334,9 @@ export default function Register() {
                 disabled={register.isPending}
               >
                 {register.isPending ? (
-                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                  <Loader2 className="h-5 w-5 animate-spin ms-2" />
                 ) : (
-                  "إنشاء الحساب"
+                  a.registerButton
                 )}
               </Button>
             </form>
