@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Lock, Unlock, CheckCircle2, ChevronLeft, Target } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 export default function Learn() {
   const { data: levelsResponse, isLoading, error } = useGetLevels();
   const levels = levelsResponse?.levels;
   const { data: dashboard } = useGetDashboard();
+  const { t, lang, pick } = useI18n();
 
   if (isLoading) {
     return (
@@ -25,7 +27,7 @@ export default function Learn() {
   if (error || !levels) {
     return (
       <div className="p-8 text-center text-destructive">
-        حدث خطأ أثناء تحميل المنهج
+        {t.learn.loadError}
       </div>
     );
   }
@@ -36,9 +38,9 @@ export default function Learn() {
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500">
       <div>
-        <h1 className="text-3xl font-bold text-foreground">المنهج الدراسي</h1>
+        <h1 className="text-3xl font-bold text-foreground">{t.learn.title}</h1>
         <p className="text-muted-foreground mt-2">
-          من الصفر وحتى الاحتراف. اختر المستوى المتاح لك للبدء.
+          {t.learn.subtitle}
         </p>
       </div>
 
@@ -48,12 +50,12 @@ export default function Learn() {
           <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
             <Target className="h-6 w-6 text-primary" />
           </div>
-          <div className="flex-1 text-center sm:text-right">
-            <p className="font-bold text-foreground">لم يتم تحديد مستواك بعد</p>
-            <p className="text-sm text-muted-foreground">أجرِ اختبار تحديد المستوى لفتح الدروس المناسبة لك.</p>
+          <div className="flex-1 text-center sm:text-start">
+            <p className="font-bold text-foreground">{t.learn.notPlaced}</p>
+            <p className="text-sm text-muted-foreground">{t.learn.notPlacedBody}</p>
           </div>
           <Link href="/placement">
-            <Button className="rounded-xl shrink-0">ابدأ الاختبار</Button>
+            <Button className="rounded-xl shrink-0">{t.dashboard.startTest}</Button>
           </Link>
         </div>
       )}
@@ -75,9 +77,9 @@ export default function Learn() {
 
                 {/* Status bar */}
                 <div className={`h-1.5 w-full ${
-                  level.isCompleted ? "bg-emerald-500" :
+                  level.isCompleted ? "bg-mint" :
                   isCurrentLevel ? "bg-primary" :
-                  level.isUnlocked ? "bg-amber-400" : "bg-muted"
+                  level.isUnlocked ? "bg-primary/40" : "bg-muted"
                 }`} />
 
                 <CardContent className="p-6 flex-1 flex flex-col">
@@ -86,39 +88,39 @@ export default function Learn() {
                       {level.code}
                     </div>
                     {level.isCompleted ? (
-                      <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+                      <CheckCircle2 className="h-6 w-6 text-mint-foreground" />
                     ) : level.isUnlocked ? (
-                      <Unlock className="h-5 w-5 text-amber-500" />
+                      <Unlock className="h-5 w-5 text-primary" />
                     ) : (
                       <Lock className="h-5 w-5 text-muted-foreground" />
                     )}
                   </div>
 
                   <h3 className="text-xl font-bold text-foreground mb-1">
-                    {level.nameAr}
+                    {pick(level.nameAr, level.name)}
                   </h3>
                   <p className="text-sm text-muted-foreground mb-6 line-clamp-2" dir="ltr">
-                    {level.name}
+                    {lang === "ar" ? level.name : ""}
                   </p>
 
                   <div className="mt-auto space-y-3">
                     <div className="flex justify-between text-xs font-medium text-muted-foreground">
-                      <span>{level.completedLessons || 0} من {level.totalLessons} درس</span>
+                      <span>{t.learn.lessonsOf(level.completedLessons || 0, level.totalLessons)}</span>
                       {level.isUnlocked && <span>{Math.round(progress)}%</span>}
                     </div>
 
                     {level.isUnlocked && (
                       <Progress
                         value={progress}
-                        className={`h-1.5 ${level.isCompleted ? "[&>div]:bg-emerald-500" : ""}`}
+                        className={`h-1.5 ${level.isCompleted ? "[&>div]:bg-mint" : ""}`}
                       />
                     )}
                   </div>
 
                   {level.isUnlocked && (
                     <div className="mt-6 flex items-center justify-between text-sm font-bold text-primary group-hover:text-primary/80">
-                      <span>{level.isCompleted ? "مراجعة" : isCurrentLevel ? "متابعة التعلم" : "ابدأ"}</span>
-                      <ChevronLeft className="h-4 w-4" />
+                      <span>{level.isCompleted ? t.common.review : isCurrentLevel ? t.learn.continue : t.common.start}</span>
+                      <ChevronLeft className="h-4 w-4 ltr:-scale-x-100" />
                     </div>
                   )}
                 </CardContent>

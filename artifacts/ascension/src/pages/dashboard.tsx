@@ -8,10 +8,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Flame, Star, Play, CheckCircle2, BookOpen, Target } from "lucide-react";
 import { format } from "date-fns";
-import { ar } from "date-fns/locale";
+import { useI18n } from "@/lib/i18n";
 
 export default function Dashboard() {
   const { data: dashboard, isLoading, error } = useGetDashboard();
+  const { t, lang, pick, dateLocale } = useI18n();
+  const d = t.dashboard;
 
   if (isLoading) {
     return (
@@ -28,8 +30,8 @@ export default function Dashboard() {
   if (error || !dashboard) {
     return (
       <div className="p-8 text-center">
-        <h2 className="text-xl font-bold text-destructive">حدث خطأ أثناء تحميل البيانات</h2>
-        <Button className="mt-4" onClick={() => window.location.reload()}>إعادة المحاولة</Button>
+        <h2 className="text-xl font-bold text-destructive">{t.common.loadError}</h2>
+        <Button className="mt-4" onClick={() => window.location.reload()}>{t.common.retry}</Button>
       </div>
     );
   }
@@ -44,29 +46,29 @@ export default function Dashboard() {
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-foreground">
-            مرحباً، {student.name.split(' ')[0]} 👋
+            {d.hello(student.name.split(' ')[0])}
           </h1>
           {currentLevel ? (
             <p className="text-muted-foreground mt-2 text-lg">
-              أنت حالياً في المستوى{" "}
-              <span className="font-bold text-primary">{currentLevel.nameAr} ({currentLevel.code})</span>
+              {d.currentLevel}{" "}
+              <span className="font-bold text-primary">{pick(currentLevel.nameAr, currentLevel.name)} ({currentLevel.code})</span>
             </p>
           ) : (
             <p className="text-muted-foreground mt-2 text-lg">
-              لم يتم تحديد مستواك بعد
+              {d.notPlaced}
             </p>
           )}
           {currentCurriculum && (
             <p className="text-sm text-muted-foreground mt-1">
-              المنهج: <span className="font-medium">{currentCurriculum.nameInLearnerLanguage || currentCurriculum.name}</span>
+              {d.curriculum} <span className="font-medium">{currentCurriculum.nameInLearnerLanguage || currentCurriculum.name}</span>
             </p>
           )}
         </div>
 
         {student.subscriptionPlan === "free" && (
           <Link href="/subscription">
-            <Button variant="outline" className="text-amber-600 border-amber-200 hover:bg-amber-50">
-              ترقية الحساب 👑
+            <Button variant="outline" className="text-mint-foreground border-mint/50 bg-mint-soft/60 hover:bg-mint-soft">
+              {d.upgrade}
             </Button>
           </Link>
         )}
@@ -79,15 +81,15 @@ export default function Dashboard() {
             <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
               <Target className="h-8 w-8 text-primary" />
             </div>
-            <div className="flex-1 text-center md:text-right">
-              <h3 className="text-xl font-bold text-foreground mb-1">ابدأ باختبار تحديد المستوى</h3>
+            <div className="flex-1 text-center md:text-start">
+              <h3 className="text-xl font-bold text-foreground mb-1">{d.placementTitle}</h3>
               <p className="text-muted-foreground text-sm">
-                لم يتم تحديد مستواك بعد. أجب على بضعة أسئلة قصيرة لنضعك في المستوى المناسب.
+                {d.placementBody}
               </p>
             </div>
             <Link href="/placement">
               <Button size="lg" className="rounded-xl h-12 px-8 shrink-0">
-                ابدأ الاختبار
+                {d.startTest}
               </Button>
             </Link>
           </CardContent>
@@ -96,43 +98,43 @@ export default function Dashboard() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="bg-gradient-to-br from-amber-50 to-orange-50 border-amber-100 shadow-sm">
+        <Card className="bg-lavender border-primary/15 shadow-sm">
           <CardContent className="p-6 flex flex-col items-center justify-center text-center space-y-2">
-            <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center">
-              <Flame className="h-6 w-6 text-amber-500" />
+            <div className="h-12 w-12 rounded-full bg-card flex items-center justify-center">
+              <Flame className="h-6 w-6 text-primary" />
             </div>
-            <div className="text-3xl font-bold text-amber-700">{weeklyProgress.streakDays}</div>
-            <p className="text-sm font-medium text-amber-600/80">أيام التتابع</p>
+            <div className="text-3xl font-bold text-lavender-foreground">{weeklyProgress.streakDays}</div>
+            <p className="text-sm font-medium text-lavender-foreground/80">{d.streak}</p>
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-teal-50 to-emerald-50 border-teal-100 shadow-sm">
+        <Card className="bg-mint-soft border-mint/30 shadow-sm">
           <CardContent className="p-6 flex flex-col items-center justify-center text-center space-y-2">
-            <div className="h-12 w-12 rounded-full bg-teal-100 flex items-center justify-center">
-              <Star className="h-6 w-6 text-teal-600" />
+            <div className="h-12 w-12 rounded-full bg-card flex items-center justify-center">
+              <Star className="h-6 w-6 text-mint-foreground" />
             </div>
-            <div className="text-3xl font-bold text-teal-700">{student.totalXp || 0}</div>
-            <p className="text-sm font-medium text-teal-600/80">إجمالي النقاط (XP)</p>
+            <div className="text-3xl font-bold text-mint-foreground">{student.totalXp || 0}</div>
+            <p className="text-sm font-medium text-mint-foreground/80">{d.totalXp}</p>
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-100 shadow-sm">
+        <Card className="bg-mint-soft border-mint/30 shadow-sm">
           <CardContent className="p-6 flex flex-col items-center justify-center text-center space-y-2">
-            <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
-              <BookOpen className="h-6 w-6 text-blue-600" />
+            <div className="h-12 w-12 rounded-full bg-card flex items-center justify-center">
+              <BookOpen className="h-6 w-6 text-mint-foreground" />
             </div>
-            <div className="text-3xl font-bold text-blue-700">{weeklyProgress.lessonsThisWeek}</div>
-            <p className="text-sm font-medium text-blue-600/80">دروس هذا الأسبوع</p>
+            <div className="text-3xl font-bold text-mint-foreground">{weeklyProgress.lessonsThisWeek}</div>
+            <p className="text-sm font-medium text-mint-foreground/80">{d.lessonsThisWeek}</p>
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-purple-50 to-fuchsia-50 border-purple-100 shadow-sm">
+        <Card className="bg-lavender border-primary/15 shadow-sm">
           <CardContent className="p-6 flex flex-col items-center justify-center text-center space-y-2">
-            <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center">
-              <CheckCircle2 className="h-6 w-6 text-purple-600" />
+            <div className="h-12 w-12 rounded-full bg-card flex items-center justify-center">
+              <CheckCircle2 className="h-6 w-6 text-primary" />
             </div>
-            <div className="text-3xl font-bold text-purple-700">{student.totalLessonsCompleted}</div>
-            <p className="text-sm font-medium text-purple-600/80">إجمالي الدروس</p>
+            <div className="text-3xl font-bold text-lavender-foreground">{student.totalLessonsCompleted}</div>
+            <p className="text-sm font-medium text-lavender-foreground/80">{d.totalLessons}</p>
           </CardContent>
         </Card>
       </div>
@@ -141,10 +143,10 @@ export default function Dashboard() {
       {lessonStateCounts && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: "متاحة", value: lessonStateCounts.available, color: "text-emerald-700 bg-emerald-50 border-emerald-100" },
-            { label: "جارية", value: lessonStateCounts.inProgress, color: "text-blue-700 bg-blue-50 border-blue-100" },
-            { label: "مكتملة", value: lessonStateCounts.completed, color: "text-purple-700 bg-purple-50 border-purple-100" },
-            { label: "مقفلة", value: lessonStateCounts.locked, color: "text-slate-600 bg-slate-50 border-slate-100" },
+            { label: d.available, value: lessonStateCounts.available, color: "text-mint-foreground bg-mint-soft/60 border-mint/30" },
+            { label: d.inProgress, value: lessonStateCounts.inProgress, color: "text-lavender-foreground bg-lavender/70 border-primary/15" },
+            { label: d.completed, value: lessonStateCounts.completed, color: "text-primary bg-card border-primary/20" },
+            { label: d.locked, value: lessonStateCounts.locked, color: "text-muted-foreground bg-muted/60 border-border" },
           ].map(({ label, value, color }) => (
             <div key={label} className={`rounded-xl border p-4 text-center ${color}`}>
               <div className="text-2xl font-bold">{value}</div>
@@ -157,7 +159,7 @@ export default function Dashboard() {
       <div className="grid md:grid-cols-3 gap-8">
         {/* Next Lesson (Main Action) */}
         <div className="md:col-span-2 space-y-6">
-          <h2 className="text-xl font-bold text-foreground">الدرس التالي</h2>
+          <h2 className="text-xl font-bold text-foreground">{d.nextLesson}</h2>
 
           {notPlaced ? (
             <Card className="border-dashed bg-secondary/50">
@@ -165,36 +167,39 @@ export default function Dashboard() {
                 <div className="h-16 w-16 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-4">
                   <Target className="h-8 w-8 text-primary" />
                 </div>
-                <h3 className="text-xl font-bold mb-2">أجرِ اختبار تحديد المستوى أولاً</h3>
-                <p className="text-muted-foreground mb-6 text-sm">بعد الاختبار ستظهر هنا دروسك المقترحة.</p>
+                <h3 className="text-xl font-bold mb-2">{d.placementFirst}</h3>
+                <p className="text-muted-foreground mb-6 text-sm">{d.placementFirstBody}</p>
                 <Link href="/placement">
-                  <Button size="lg" className="rounded-xl">ابدأ الاختبار</Button>
+                  <Button size="lg" className="rounded-xl">{d.startTest}</Button>
                 </Link>
               </CardContent>
             </Card>
           ) : nextLesson ? (
             <Card className="overflow-hidden border-2 hover:border-primary transition-colors duration-300">
-              <div className="h-2 bg-primary w-full"></div>
+              <div className="h-2 w-full bg-gradient-to-r from-primary to-mint"></div>
               <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center gap-6">
-                <div className="flex-1 space-y-4 text-center md:text-right">
+                <div className="flex-1 space-y-4 text-center md:text-start">
                   <div className="inline-block px-3 py-1 rounded-full bg-secondary text-secondary-foreground text-sm font-bold">
-                    الدرس {nextLesson.order}
+                    {t.common.lessonN(nextLesson.order)}
                   </div>
                   <h3 className="text-2xl font-bold text-foreground">
-                    {nextLesson.titleAr}
+                    {pick(nextLesson.titleAr, nextLesson.title)}
                   </h3>
-                  <p className="text-muted-foreground text-lg" dir="ltr">
-                    {nextLesson.title}
-                  </p>
+                  {/* In Arabic, the English title underneath is part of the lesson. */}
+                  {lang === "ar" && nextLesson.titleAr && (
+                    <p className="text-muted-foreground text-lg" dir="ltr">
+                      {nextLesson.title}
+                    </p>
+                  )}
                   <p className="text-sm text-muted-foreground pt-2">
-                    المدة المتوقعة: {nextLesson.estimatedMinutes} دقائق • يمنح {nextLesson.xpReward} XP
+                    {d.lessonMeta(nextLesson.estimatedMinutes, nextLesson.xpReward)}
                   </p>
                 </div>
 
                 <Link href={`/lesson/${nextLesson.id}`}>
                   <Button size="lg" className="h-16 px-8 rounded-2xl text-lg w-full md:w-auto shadow-md hover:shadow-lg">
-                    <Play className="ml-2 h-6 w-6 fill-current" />
-                    ابدأ الدرس
+                    <Play className="me-2 h-6 w-6 fill-current" />
+                    {d.startLesson}
                   </Button>
                 </Link>
               </CardContent>
@@ -205,10 +210,10 @@ export default function Dashboard() {
                 <div className="h-16 w-16 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-4">
                   <Star className="h-8 w-8 text-primary" />
                 </div>
-                <h3 className="text-2xl font-bold mb-2">أكملت جميع الدروس!</h3>
-                <p className="text-muted-foreground mb-6">أنت جاهز للانتقال للمستوى التالي.</p>
+                <h3 className="text-2xl font-bold mb-2">{d.allDone}</h3>
+                <p className="text-muted-foreground mb-6">{d.allDoneBody}</p>
                 <Link href="/learn">
-                  <Button size="lg" className="rounded-xl">استعراض المنهج</Button>
+                  <Button size="lg" className="rounded-xl">{d.browseCurriculum}</Button>
                 </Link>
               </CardContent>
             </Card>
@@ -218,12 +223,12 @@ export default function Dashboard() {
           {currentLevel && (
             <div className="space-y-3 pt-4">
               <div className="flex justify-between text-sm font-medium">
-                <span>تقدم المستوى ({currentLevel.code})</span>
+                <span>{d.levelProgress(currentLevel.code)}</span>
                 <span>{dashboard.levelProgressPercent}%</span>
               </div>
               <Progress value={dashboard.levelProgressPercent} className="h-3 rounded-full" />
-              <p className="text-xs text-muted-foreground text-left">
-                أكملت {dashboard.totalLessonsCompleted} من {dashboard.totalLessonsInLevel} درساً
+              <p className="text-xs text-muted-foreground text-end">
+                {d.completedOf(dashboard.totalLessonsCompleted, dashboard.totalLessonsInLevel)}
               </p>
             </div>
           )}
@@ -231,14 +236,14 @@ export default function Dashboard() {
 
         {/* Skills — strengths, weaknesses, and what to do about them */}
         <div className="space-y-6">
-          <h2 className="text-xl font-bold text-foreground">تقدّمك</h2>
+          <h2 className="text-xl font-bold text-foreground">{d.yourProgress}</h2>
           <SkillProfileCard />
         </div>
 
         {/* Recent Activity */}
         <div className="space-y-6">
           <h2 className="text-xl font-bold text-foreground flex items-center justify-between">
-            <span>النشاط الأخير</span>
+            <span>{d.recentActivity}</span>
           </h2>
 
           <Card>
@@ -249,17 +254,17 @@ export default function Dashboard() {
                     <div key={idx} className="p-4 flex items-start gap-4 hover:bg-secondary/30 transition-colors">
                       <div className="mt-1">
                         {activity.passed ? (
-                          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                          <CheckCircle2 className="h-5 w-5 text-mint-foreground" />
                         ) : (
                           <div className="h-5 w-5 rounded-full border-2 border-muted-foreground" />
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-foreground truncate">
-                          {activity.lessonTitleAr || activity.lessonTitle}
+                          {pick(activity.lessonTitleAr, activity.lessonTitle)}
                         </p>
                         <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                          <span>{format(new Date(activity.completedAt), 'd MMMM', { locale: ar })}</span>
+                          <span>{format(new Date(activity.completedAt), 'd MMMM', { locale: dateLocale })}</span>
                           <span>•</span>
                           <span dir="ltr">{activity.score}%</span>
                         </div>
@@ -269,7 +274,7 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <div className="p-8 text-center text-muted-foreground text-sm">
-                  لا يوجد نشاط مسجل بعد.<br/> ابدأ درسك الأول!
+                  {d.noActivity}<br/> {d.startFirst}
                 </div>
               )}
             </CardContent>
