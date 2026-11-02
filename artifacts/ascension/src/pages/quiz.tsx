@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMicRecorder } from "@/hooks/use-mic-recorder";
 import { uploadRecording, MediaUploadError } from "@/lib/media-api";
 import { BlockMedia } from "@/components/block-media";
+import { useI18n } from "@/lib/i18n";
 import {
   ArrowRight,
   ArrowLeft,
@@ -76,6 +77,8 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
   const quizId = parseInt(params.quizId, 10);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t, lang, pick } = useI18n();
+  const qz = t.quiz;
 
   const [quiz, setQuiz] = useState<StudentQuiz | null>(null);
   const [attempt, setAttempt] = useState<QuizAttempt | null>(null);
@@ -95,7 +98,7 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
     let cancelled = false;
 
     if (isNaN(quizId)) {
-      setLoadError("رقم الاختبار غير صالح");
+      setLoadError(qz.invalidId);
       return;
     }
 
@@ -117,7 +120,7 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
       } catch (e) {
         if (cancelled) return;
         setLoadError(
-          e instanceof QuizApiError ? e.message : "تعذر تحميل الاختبار",
+          e instanceof QuizApiError ? e.message : qz.loadFailed,
         );
       }
     })();
@@ -163,8 +166,8 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
       await saveResponse(attempt.id, block.id, responsePayload(block.type, value));
     } catch {
       toast({
-        title: "لم يتم حفظ الإجابة",
-        description: "سيُعاد إرسالها عند التسليم.",
+        title: qz.notSaved,
+        description: qz.notSavedBody,
         variant: "destructive",
       });
     }
@@ -207,13 +210,13 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
       const submitted = await submitAttempt(attempt.id);
       setResult(submitted);
       if (auto) {
-        toast({ title: "انتهى الوقت", description: "تم تسليم إجاباتك تلقائياً." });
+        toast({ title: qz.timeUp, description: qz.timeUpBody });
       }
     } catch (e) {
       submitGuard.current = false;
       toast({
-        title: "تعذر تسليم الاختبار",
-        description: e instanceof QuizApiError ? e.message : "حاول مرة أخرى.",
+        title: qz.submitFailed,
+        description: e instanceof QuizApiError ? e.message : qz.tryAgain,
         variant: "destructive",
       });
     } finally {
@@ -225,11 +228,11 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
 
   if (loadError) {
     return (
-      <div dir="rtl" className="p-8 max-w-2xl mx-auto text-center space-y-4">
+      <div className="p-8 max-w-2xl mx-auto text-center space-y-4">
         <AlertCircle className="h-10 w-10 mx-auto text-destructive" />
         <p className="text-destructive font-medium">{loadError}</p>
         <Button variant="outline" onClick={() => setLocation("/learn")} className="rounded-xl">
-          العودة للمنهج
+          {t.level.backToCurriculum}
         </Button>
       </div>
     );
@@ -237,7 +240,7 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
 
   if (!quiz || !attempt) {
     return (
-      <div dir="rtl" className="p-4 md:p-8 max-w-3xl mx-auto space-y-6">
+      <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-6">
         <Skeleton className="h-8 w-40 rounded-lg" />
         <Skeleton className="h-40 w-full rounded-2xl" />
         <Skeleton className="h-64 w-full rounded-2xl" />
@@ -256,15 +259,17 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
   const isLast = index === blocks.length - 1;
 
   return (
-    <div dir="rtl" className="p-4 md:p-8 max-w-3xl mx-auto space-y-6">
+    <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-6">
       {/* Header */}
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-2xl font-bold truncate">{quiz.titleAr}</h1>
-            <p className="text-sm text-muted-foreground truncate" dir="ltr">
-              {quiz.title}
-            </p>
+            <h1 className="text-2xl font-bold truncate">{pick(quiz.titleAr, quiz.title)}</h1>
+            {lang === "ar" && (
+              <p className="text-sm text-muted-foreground truncate" dir="ltr">
+                {quiz.title}
+              </p>
+            )}
           </div>
           {secondsLeft !== null && (
             <div
@@ -281,17 +286,17 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
         <div className="space-y-1">
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>
-              السؤال {index + 1} من {blocks.length}
+              {qz.questionOf(index + 1, blocks.length)}
             </span>
             <span>
-              أُجيب على {answered} من {answerable}
+              {qz.answeredOf(answered, answerable)}
             </span>
           </div>
           <Progress value={((index + 1) / blocks.length) * 100} className="h-2" />
         </div>
 
-        {quiz.instructionsAr && index === 0 && (
-          <p className="text-sm bg-muted/50 rounded-xl p-3">{quiz.instructionsAr}</p>
+        {pick(quiz.instructionsAr, quiz.instructions) && index === 0 && (
+          <p className="text-sm bg-muted/50 rounded-xl p-3">{pick(quiz.instructionsAr, quiz.instructions)}</p>
         )}
       </div>
 
@@ -310,8 +315,8 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
           disabled={index === 0 || submitting}
           className="rounded-xl gap-2"
         >
-          <ArrowRight className="h-4 w-4" />
-          السابق
+          <ArrowRight className="h-4 w-4 ltr:-scale-x-100" />
+          {qz.prev}
         </Button>
 
         {isLast ? (
@@ -321,19 +326,19 @@ export default function Quiz({ params }: { params: { quizId: string } }) {
             className="rounded-xl gap-2"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            تسليم الاختبار
+            {qz.submit}
           </Button>
         ) : (
           <Button onClick={goNext} disabled={submitting} className="rounded-xl gap-2">
-            التالي
-            <ArrowLeft className="h-4 w-4" />
+            {qz.next}
+            <ArrowLeft className="h-4 w-4 ltr:-scale-x-100" />
           </Button>
         )}
       </div>
 
       {answered < answerable && isLast && (
         <p className="text-xs text-center text-amber-600">
-          لم تُجب على {answerable - answered} سؤال. الأسئلة غير المُجابة تُحتسب صفراً.
+          {qz.unanswered(answerable - answered)}
         </p>
       )}
     </div>
@@ -351,9 +356,14 @@ function QuizBlock({
   value: unknown;
   onChange: (blockId: number, value: unknown) => void;
 }) {
-  const heading = block.titleAr ?? block.title;
-  const instructions = block.instructionsAr ?? block.instructions;
-  const prompt = block.promptAr ?? block.prompt;
+  const { t, lang, pick } = useI18n();
+  const qz = t.quiz;
+  const heading = pick(block.titleAr, block.title);
+  const instructions = pick(block.instructionsAr, block.instructions);
+  const prompt = pick(block.promptAr, block.prompt);
+  // Option text may be English or Arabic; let the browser pick its direction
+  // and align it with the page.
+  const optionAlign = lang === "ar" ? "text-right" : "text-left";
   const options = block.config.options ?? [];
 
   const shell = (children: React.ReactNode) => (
@@ -387,7 +397,7 @@ function QuizBlock({
             />
           ) : (
             <p className="text-sm bg-muted/60 rounded-xl p-3 text-muted-foreground">
-              لا يوجد ملف مرفق بهذا السؤال.
+              {qz.noMedia}
             </p>
           )}
           {block.type === "listening" && (
@@ -413,14 +423,14 @@ function QuizBlock({
                 key={o.id}
                 type="button"
                 onClick={() => onChange(block.id, o.id)}
-                className={`w-full text-right p-4 rounded-xl border-2 transition-colors ${
+                className={`w-full text-start p-4 rounded-xl border-2 transition-colors ${
                   selected
                     ? "border-primary bg-primary/5 font-medium"
                     : "border-border hover:border-primary/40"
                 }`}
               >
-                <span dir="ltr" className="block text-right">
-                  {o.textAr ?? o.text}
+                <span dir="auto" className={`block ${optionAlign}`}>
+                  {pick(o.textAr, o.text)}
                 </span>
               </button>
             );
@@ -432,7 +442,7 @@ function QuizBlock({
       const selected = Array.isArray(value) ? (value as string[]) : [];
       return shell(
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">اختر كل الإجابات الصحيحة.</p>
+          <p className="text-xs text-muted-foreground">{qz.selectAll}</p>
           {options.map((o) => {
             const on = selected.includes(o.id);
             return (
@@ -445,7 +455,7 @@ function QuizBlock({
                     on ? selected.filter((s) => s !== o.id) : [...selected, o.id],
                   )
                 }
-                className={`w-full text-right p-4 rounded-xl border-2 flex items-center gap-3 transition-colors ${
+                className={`w-full text-start p-4 rounded-xl border-2 flex items-center gap-3 transition-colors ${
                   on ? "border-primary bg-primary/5 font-medium" : "border-border hover:border-primary/40"
                 }`}
               >
@@ -456,8 +466,8 @@ function QuizBlock({
                 >
                   {on && <CheckCircle2 className="h-3.5 w-3.5" />}
                 </span>
-                <span dir="ltr" className="flex-1 text-right">
-                  {o.textAr ?? o.text}
+                <span dir="auto" className={`flex-1 ${optionAlign}`}>
+                  {pick(o.textAr, o.text)}
                 </span>
               </button>
             );
@@ -503,13 +513,13 @@ function QuizBlock({
             className="rounded-xl"
           />
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>{count} كلمة</span>
+            <span>{qz.words(count)}</span>
             {min !== undefined && (
-              <span className={count < min ? "text-amber-600" : ""}>الحد الأدنى {min} كلمة</span>
+              <span className={count < min ? "text-amber-600" : ""}>{qz.minWords(min)}</span>
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            تُقيَّم هذه الإجابة يدوياً أو بالذكاء الاصطناعي، وقد تظهر نتيجتها لاحقاً.
+            {qz.gradedLater}
           </p>
         </div>,
       );
@@ -517,7 +527,7 @@ function QuizBlock({
 
     default:
       return shell(
-        <p className="text-sm text-muted-foreground">نوع السؤال: {block.type}</p>,
+        <p className="text-sm text-muted-foreground">{qz.questionType(block.type)}</p>,
       );
   }
 }
@@ -543,6 +553,8 @@ function SpeakingAnswer({
   const mic = useMicRecorder();
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useI18n();
+  const sp = t.speaking;
 
   useEffect(() => {
     if (mic.status !== "done" || !mic.blob || mic.durationSec <= 0) return;
@@ -562,8 +574,8 @@ function SpeakingAnswer({
         setUploading(false);
         setError(
           err instanceof MediaUploadError && err.status === 503
-            ? "خدمة تخزين الصوت غير مفعّلة حالياً."
-            : "تعذّر رفع التسجيل. أعد المحاولة.",
+            ? sp.storageOff
+            : sp.uploadFailed,
         );
       });
 
@@ -583,11 +595,11 @@ function SpeakingAnswer({
             type="button"
             onClick={mic.start}
             className="h-20 w-20 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-lg hover:scale-105 transition-transform"
-            aria-label="ابدأ التسجيل"
+            aria-label={sp.startRecording}
           >
             <Mic className="h-8 w-8" />
           </button>
-          <p className="text-sm font-medium">انقر للتحدث</p>
+          <p className="text-sm font-medium">{sp.tapToSpeak}</p>
         </>
       )}
 
@@ -597,11 +609,11 @@ function SpeakingAnswer({
             type="button"
             onClick={mic.stop}
             className="h-20 w-20 rounded-full bg-rose-500 text-white flex items-center justify-center shadow-lg animate-pulse"
-            aria-label="أوقف التسجيل"
+            aria-label={sp.stopRecording}
           >
             <StopCircle className="h-8 w-8" />
           </button>
-          <p className="text-sm font-medium">جارٍ التسجيل…</p>
+          <p className="text-sm font-medium">{sp.recording}</p>
         </>
       )}
 
@@ -609,34 +621,34 @@ function SpeakingAnswer({
         <div className="w-full space-y-3">
           <audio controls className="w-full rounded-lg" src={mic.playbackUrl ?? undefined} />
           <p className="text-xs text-center text-muted-foreground">
-            المدة: {mic.durationSec} ثانية
+            {sp.duration(mic.durationSec)}
           </p>
           {uploading && (
-            <p className="text-xs text-center text-muted-foreground">جارٍ رفع التسجيل…</p>
+            <p className="text-xs text-center text-muted-foreground">{sp.uploading}</p>
           )}
           {error && <p className="text-xs text-center text-destructive">{error}</p>}
           {value !== null && !uploading && !error && (
-            <p className="text-xs text-center text-emerald-600">تم حفظ التسجيل.</p>
+            <p className="text-xs text-center text-mint-foreground">{sp.saved}</p>
           )}
           <Button variant="outline" size="sm" onClick={mic.reset} className="w-full rounded-xl">
-            إعادة التسجيل
+            {sp.reRecord}
           </Button>
         </div>
       )}
 
       {mic.status === "denied" && (
         <p className="text-sm text-center text-muted-foreground">
-          لم يتم السماح بالوصول للميكروفون. اسمح به من إعدادات المتصفح ثم أعد المحاولة.
+          {sp.denied}
         </p>
       )}
       {mic.status === "unsupported" && (
         <p className="text-sm text-center text-muted-foreground">
-          التسجيل الصوتي غير مدعوم في هذا المتصفح.
+          {sp.unsupported}
         </p>
       )}
 
       <p className="text-xs text-muted-foreground text-center">
-        يُحفظ تسجيلك ليُقيَّم لاحقاً. لا يوجد تقييم تلقائي للنطق حالياً.
+        {sp.savedForReview}
       </p>
     </div>
   );
@@ -654,33 +666,35 @@ function QuizResult({
   onLeave: () => void;
 }) {
   const [, setLocation] = useLocation();
+  const { t, lang, pick } = useI18n();
+  const qz = t.quiz;
   const pending = result.pendingReviewCount > 0;
   const score = Math.round(result.score ?? 0);
 
   return (
-    <div dir="rtl" className="p-4 md:p-8 max-w-2xl mx-auto space-y-6">
+    <div className="p-4 md:p-8 max-w-2xl mx-auto space-y-6">
       <Card className="border-2 overflow-hidden">
         <CardContent className="p-8 text-center space-y-4">
           {pending ? (
             <Clock className="h-14 w-14 mx-auto text-blue-500" />
           ) : result.passed ? (
-            <CheckCircle2 className="h-14 w-14 mx-auto text-emerald-500" />
+            <CheckCircle2 className="h-14 w-14 mx-auto text-mint-foreground" />
           ) : (
             <XCircle className="h-14 w-14 mx-auto text-destructive" />
           )}
 
           <h1 className="text-2xl font-bold">
-            {pending ? "بانتظار التصحيح" : result.passed ? "نجحت!" : "لم تنجح هذه المرة"}
+            {pending ? qz.pending : result.passed ? qz.passed : qz.failed}
           </h1>
 
           <div className="text-5xl font-bold tabular-nums">{score}%</div>
           <p className="text-sm text-muted-foreground">
-            درجة النجاح {result.passingScore}%
+            {t.evaluation.passMark(result.passingScore)}
           </p>
 
           {pending && (
             <p className="text-sm bg-blue-50 text-blue-800 rounded-xl p-3">
-              {result.pendingReviewCount} سؤال بانتظار التصحيح. النتيجة النهائية قد تتغير.
+              {qz.pendingCount(result.pendingReviewCount)}
             </p>
           )}
         </CardContent>
@@ -688,12 +702,12 @@ function QuizResult({
 
       {/* Promotion */}
       {result.promotion?.promoted && (
-        <Card className="border-2 border-emerald-200 bg-emerald-50">
+        <Card className="border-2 border-mint/50 bg-mint-soft">
           <CardContent className="p-6 text-center space-y-2">
-            <Trophy className="h-10 w-10 mx-auto text-emerald-600" />
-            <h2 className="text-xl font-bold text-emerald-900">تمت ترقيتك!</h2>
-            <p className="text-emerald-800">
-              مستواك الجديد: <span className="font-bold">{result.promotion.toLevelNameAr}</span>
+            <Trophy className="h-10 w-10 mx-auto text-mint-foreground" />
+            <h2 className="text-xl font-bold text-mint-foreground">{qz.promoted}</h2>
+            <p className="text-mint-foreground">
+              {qz.newLevel} <span className="font-bold">{pick(result.promotion.toLevelNameAr, result.promotion.toLevelName)}</span>
               <span className="mx-2 font-serif" dir="ltr">
                 ({result.promotion.toLevelCode})
               </span>
@@ -703,11 +717,11 @@ function QuizResult({
       )}
 
       {result.promotion?.curriculumCompleted && (
-        <Card className="border-2 border-amber-200 bg-amber-50">
+        <Card className="border-2 border-primary/30 bg-lavender">
           <CardContent className="p-6 text-center space-y-2">
-            <Trophy className="h-10 w-10 mx-auto text-amber-600" />
-            <h2 className="text-xl font-bold text-amber-900">أكملت المنهج بالكامل</h2>
-            <p className="text-amber-800">لقد اجتزت آخر مستوى في هذا المنهج.</p>
+            <Trophy className="h-10 w-10 mx-auto text-primary" />
+            <h2 className="text-xl font-bold text-lavender-foreground">{qz.curriculumDone}</h2>
+            <p className="text-lavender-foreground">{qz.curriculumDoneBody}</p>
           </CardContent>
         </Card>
       )}
@@ -718,7 +732,7 @@ function QuizResult({
           <CardContent className="p-6 space-y-3">
             <h2 className="font-bold flex items-center gap-2">
               <RotateCcw className="h-4 w-4" />
-              راجع هذه الدروس قبل المحاولة التالية
+              {qz.reviewBefore}
             </h2>
             <div className="space-y-2">
               {result.remediation.map((l) => (
@@ -726,16 +740,18 @@ function QuizResult({
                   key={l.lessonId}
                   type="button"
                   onClick={() => setLocation(`/lesson/${l.lessonId}`)}
-                  className="w-full text-right p-3 rounded-xl border hover:border-primary/40 transition-colors flex items-center justify-between gap-3"
+                  className="w-full text-start p-3 rounded-xl border hover:border-primary/40 transition-colors flex items-center justify-between gap-3"
                 >
                   <span className="min-w-0">
-                    <span className="block font-medium truncate">{l.titleAr}</span>
-                    <span className="block text-xs text-muted-foreground truncate" dir="ltr">
-                      {l.title}
-                    </span>
+                    <span className="block font-medium truncate">{pick(l.titleAr, l.title)}</span>
+                    {lang === "ar" && (
+                      <span className="block text-xs text-muted-foreground truncate" dir="ltr">
+                        {l.title}
+                      </span>
+                    )}
                   </span>
                   <span className="text-xs shrink-0 text-muted-foreground">
-                    {l.bestScore === null ? "لم تُدرس" : `${Math.round(l.bestScore)}%`}
+                    {l.bestScore === null ? t.evaluation.notStudied : `${Math.round(l.bestScore)}%`}
                   </span>
                 </button>
               ))}
@@ -745,7 +761,7 @@ function QuizResult({
       )}
 
       <Button onClick={onLeave} className="w-full rounded-xl" size="lg">
-        العودة للمنهج
+        {t.level.backToCurriculum}
       </Button>
       <p className="text-center text-xs text-muted-foreground" dir="ltr">
         {quiz.title}
