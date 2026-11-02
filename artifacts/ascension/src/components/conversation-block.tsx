@@ -19,6 +19,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useMicRecorder } from "@/hooks/use-mic-recorder";
 import { useSpeech } from "@/hooks/use-speech";
+import { useI18n } from "@/lib/i18n";
 import { uploadRecording, MediaUploadError } from "@/lib/media-api";
 import {
   startConversation,
@@ -49,6 +50,8 @@ interface Props {
 
 export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
   const { toast } = useToast();
+  const { t } = useI18n();
+  const cv = t.conversation;
   const mic = useMicRecorder();
   const speech = useSpeech();
 
@@ -63,7 +66,7 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
    * then a transcription, then the model — and until now all of that was one
    * undifferentiated spinner, so ten seconds looked identical to a hang. The
    * wait is not shortened by naming its stages, but it stops being a mystery,
-   * and "جارٍ الاستماع" tells the student their recording arrived.
+   * and "Listening…" tells the student their recording arrived.
    */
   const [stage, setStage] = useState<"idle" | "uploading" | "listening" | "thinking">("idle");
   const [starting, setStarting] = useState(false);
@@ -109,10 +112,10 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
         setUnavailable(e.message);
         return;
       }
-      toast({ title: "تعذّر المتابعة", description: e.message, variant: "destructive" });
+      toast({ title: cv.cannotContinue, description: e.message, variant: "destructive" });
       return;
     }
-    toast({ title: "حدث خطأ", variant: "destructive" });
+    toast({ title: cv.error, variant: "destructive" });
   };
 
   const begin = async () => {
@@ -155,7 +158,7 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
       setDraft(message);
       if (e instanceof ConversationError && (e.code === "TURN_LIMIT" || e.code === "TIME_LIMIT")) {
         setEnded(true);
-        toast({ title: "انتهت المحادثة", description: e.message });
+        toast({ title: cv.endedTitle, description: e.message });
       } else {
         reportError(e);
       }
@@ -204,8 +207,8 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
         if (cancelled) return;
         if (e instanceof MediaUploadError) {
           toast({
-            title: "تعذّر رفع التسجيل",
-            description: "اكتب رسالتك بدلاً من ذلك.",
+            title: cv.uploadFailed,
+            description: cv.typeInstead,
             variant: "destructive",
           });
         } else {
@@ -232,7 +235,7 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
         <CardContent className="p-5 flex gap-3">
           <AlertCircle className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
           <div className="text-sm text-amber-900">
-            <p className="font-bold">المحادثة غير متاحة الآن</p>
+            <p className="font-bold">{cv.unavailable}</p>
             <p>{unavailable}</p>
           </div>
         </CardContent>
@@ -245,15 +248,14 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
       <Card className="border-2">
         <CardContent className="p-6 text-center space-y-3">
           <MessageSquare className="h-10 w-10 mx-auto text-primary" />
-          <h3 className="font-bold text-lg">محادثة مع المعلّم</h3>
+          <h3 className="font-bold text-lg">{cv.title}</h3>
           {prompt && <p className="text-sm text-muted-foreground">{prompt}</p>}
           <p className="text-xs text-muted-foreground">
-            محادثة قصيرة حول موضوع هذا الدرس. تحدّث أو اكتب — والمعلّم سيسألك ويصحّح
-            أخطاءك المهمة باختصار.
+            {cv.intro}
           </p>
           <Button onClick={begin} disabled={starting} className="rounded-xl gap-2" size="lg">
             {starting && <Loader2 className="h-4 w-4 animate-spin" />}
-            ابدأ المحادثة
+            {cv.start}
           </Button>
         </CardContent>
       </Card>
@@ -268,15 +270,15 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <MessageSquare className="h-3.5 w-3.5" />
-            محادثة
+            {cv.label}
             {/* Hidden entirely where the browser cannot speak, rather than
                 shown as a control that does nothing. */}
             {speech.available && (
               <button
                 type="button"
                 onClick={() => speech.setEnabled(!speech.enabled)}
-                title={speech.enabled ? "إيقاف صوت المعلم" : "تشغيل صوت المعلم"}
-                aria-label={speech.enabled ? "إيقاف صوت المعلم" : "تشغيل صوت المعلم"}
+                title={speech.enabled ? cv.muteTutor : cv.unmuteTutor}
+                aria-label={speech.enabled ? cv.muteTutor : cv.unmuteTutor}
                 className="p-1 rounded-md hover:bg-secondary transition-colors"
               >
                 {speech.enabled ? (
@@ -290,26 +292,26 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
             )}
           </span>
           <span className="tabular-nums">
-            {turnsRemaining !== null && `${turnsRemaining} أدوار متبقية`}
-            {minutesRemaining !== null && ` · ${minutesRemaining} دقيقة`}
+            {turnsRemaining !== null && cv.turnsLeft(turnsRemaining)}
+            {minutesRemaining !== null && ` · ${t.common.minutes(minutesRemaining)}`}
           </span>
         </div>
 
-        <div ref={scrollRef} className="max-h-80 overflow-y-auto space-y-2 pr-1">
-          {turns.map((t, i) => (
+        <div ref={scrollRef} className="max-h-80 overflow-y-auto space-y-2 ps-1">
+          {turns.map((turn, i) => (
             <div
               key={i}
-              className={`flex ${t.role === "student" ? "justify-start" : "justify-end"}`}
+              className={`flex ${turn.role === "student" ? "justify-start" : "justify-end"}`}
             >
               <div
                 dir="ltr"
                 className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-                  t.role === "student"
+                  turn.role === "student"
                     ? "bg-primary text-primary-foreground"
                     : "bg-secondary text-foreground"
                 }`}
               >
-                {t.content}
+                {turn.content}
               </div>
             </div>
           ))}
@@ -332,12 +334,12 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
                 {/* Named stages, because a spoken turn waits on an upload, a
                     transcription and then the model — and one unlabelled
                     spinner for all three made ten seconds look like a hang. */}
-                <span className="text-xs text-muted-foreground" dir="rtl">
+                <span className="text-xs text-muted-foreground">
                   {stage === "uploading"
-                    ? "جارٍ إرسال التسجيل…"
+                    ? cv.uploading
                     : stage === "listening"
-                      ? "جارٍ الاستماع…"
-                      : "يكتب…"}
+                      ? cv.listening
+                      : cv.typing}
                 </span>
               </div>
             </div>
@@ -354,7 +356,7 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
                   key={w}
                   className={`text-xs font-mono px-2 py-0.5 rounded-lg border flex items-center gap-1 ${
                     used
-                      ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                      ? "bg-mint-soft border-mint/40 text-mint-foreground"
                       : "bg-background text-muted-foreground"
                   }`}
                 >
@@ -368,11 +370,11 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
 
         {ended ? (
           <div className="text-center space-y-2 pt-2 border-t">
-            <CheckCircle2 className="h-6 w-6 mx-auto text-emerald-500" />
-            <p className="text-sm font-medium">انتهت المحادثة. أحسنت!</p>
+            <CheckCircle2 className="h-6 w-6 mx-auto text-mint-foreground" />
+            <p className="text-sm font-medium">{cv.endedWell}</p>
             {vocabUsed.length > 0 && (
               <p className="text-xs text-muted-foreground">
-                استخدمت {vocabUsed.length} من كلمات الدرس.
+                {cv.wordsUsed(vocabUsed.length)}
               </p>
             )}
           </div>
@@ -408,7 +410,8 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
                 disabled={busy || mic.status === "unsupported"}
                 onClick={() => (mic.status === "recording" ? mic.stop() : void mic.start())}
                 className="rounded-xl"
-                title="تحدّث بدلاً من الكتابة"
+                title={cv.speakInstead}
+                aria-label={cv.speakInstead}
               >
                 {mic.status === "recording" ? (
                   <StopCircle className="h-4 w-4" />
@@ -427,7 +430,7 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
             }}
             className="text-xs text-muted-foreground hover:text-foreground w-full text-center"
           >
-            إنهاء المحادثة
+            {cv.end}
           </button>
         )}
       </CardContent>
