@@ -4,6 +4,8 @@
  * Uses the Vite BASE_URL so paths work when the app is served under a sub-path.
  */
 
+import type { ContentBlock } from "@workspace/api-client-react";
+
 const base = () => `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
 
 async function request<T>(
@@ -177,6 +179,9 @@ export interface CMSBlock {
   audioNote?: string | null; prompt?: string | null; promptAr?: string | null;
   exampleAudio?: string | null; isRequired: boolean;
   estimatedMinutes?: number | null; isActive: boolean; config?: unknown;
+  /** The student reads `content` aloud and is scored against it. */
+  expectsReferenceReading?: boolean;
+  updatedAt?: string | null;
   exercise?: CMSExercise | null; options?: CMSOption[];
   /** Every question on this block. `exercise`/`options` describe the first. */
   exercises?: Array<CMSExercise & { options: CMSOption[] }>;
@@ -187,8 +192,10 @@ export interface CMSExercise {
   exerciseType: string; question: string; questionAr?: string | null;
   correctOptionId: string; explanation?: string | null;
   prompt?: string | null; promptAr?: string | null;
+  instructionsText?: string | null; instructionsAr?: string | null;
   modelAnswer?: string | null; modelAnswerAr?: string | null;
   expectedConcepts?: string | null; difficulty?: string | null; points?: number;
+  updatedAt?: string | null;
 }
 
 export interface CMSOption {
@@ -233,7 +240,13 @@ export const cmsApi = {
     archive: (id: number) => post<{ id: number; status: string }>(`/cms/lessons/${id}/archive`),
     restore: (id: number) => post<{ id: number; status: string }>(`/cms/lessons/${id}/restore`),
     delete: (id: number) => del<{ deleted: boolean }>(`/cms/lessons/${id}`),
-    preview: (id: number) => get<{ isPreview: boolean; lesson: CMSLesson; contentBlocks: CMSBlock[]; vocabulary: CMSVocabItem[] }>(`/cms/lessons/${id}/preview`),
+    preview: (id: number) => get<{
+      isPreview: boolean; lesson: CMSLesson; contentBlocks: CMSBlock[]; vocabulary: CMSVocabItem[];
+      /** Active blocks in the student lesson shape, for the real player. */
+      studentBlocks: ContentBlock[];
+      /** Answer keys by exercise id, which the student route withholds. */
+      answerKeys: Record<number, { correctOptionId: string | null; explanation: string | null; explanationAr: string | null }>;
+    }>(`/cms/lessons/${id}/preview`),
   },
 
   // Blocks
