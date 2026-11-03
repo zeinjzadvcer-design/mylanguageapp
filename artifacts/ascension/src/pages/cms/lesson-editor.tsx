@@ -178,7 +178,10 @@ export default function LessonEditor({ lessonId }: Props) {
     if (!lessonId) { toast({ description: "Save lesson metadata first" }); return; }
     const maxOrder = blocks.length > 0 ? Math.max(...blocks.map(b => b.order)) : 0;
     // Recording blocks start optional: required + unconfigured strands the student.
-    const startsOptional = type === "speaking_prompt" || type === "pronunciation_guide";
+    // A reading block counts — it is read aloud by default (below), and a
+    // student with no working microphone must still be able to get past it.
+    const startsOptional =
+      type === "speaking_prompt" || type === "pronunciation_guide" || type === "text";
     const block = await cmsApi.blocks.create(lessonId, {
       type,
       order: maxOrder + 1,
@@ -236,6 +239,7 @@ export default function LessonEditor({ lessonId }: Props) {
     const last = group[group.length - 1];
     const baseConfig = (first.config && typeof first.config === "object" ? first.config : {}) as Record<string, unknown>;
     let groupId = groupIdOf(first);
+    let createdId: number | null = null;
     try {
       if (!groupId) {
         groupId = newGroupId();
@@ -251,6 +255,7 @@ export default function LessonEditor({ lessonId }: Props) {
         expectsReferenceReading: first.expectsReferenceReading,
         config: { ...baseConfig, groupId },
       });
+      createdId = created.id;
       // Insert right after the group rather than at the end of the lesson.
       const ids = [...blocks].sort((a, b) => a.order - b.order).map(b => b.id);
       ids.splice(ids.indexOf(last.id) + 1, 0, created.id);
@@ -258,6 +263,11 @@ export default function LessonEditor({ lessonId }: Props) {
       setExpandedBlocks(prev => new Set([...prev, created.id]));
       await refetchBlocks();
     } catch (e: any) {
+      // Created but not placed: its order collides with the next block's, which
+      // can split the group. Remove it rather than leave it half-placed.
+      if (createdId !== null) {
+        await cmsApi.blocks.delete(lessonId, createdId).catch(() => {});
+      }
       toast({ title: "Could not add item", description: e.message, variant: "destructive" });
       await refetchBlocks();
     }
@@ -1217,14 +1227,27 @@ function SpeakingEditor({ block, exercise, isFirst, onSave, onSaveBlock, saving,
     expectedConcepts: exercise?.expectedConcepts ?? "",
   });
   const [fields, setFields] = useState(initial);
+  /** The server values the form was last synced to — what "unsaved" is measured against. */
+  const synced = useRef(fields);
   const set = (k: keyof ReturnType<typeof initial>) => (e: { target: { value: string } }) =>
     setFields(f => ({ ...f, [k]: e.target.value }));
 
   // Adopt server state when the block or prompt changes underneath us,
-  // matching BlockEditor — otherwise the form keeps showing a stale prompt
-  // after a refetch.
+  // matching BlockEditor, so the form never shows a stale prompt after a
+  // refetch — but keep what the author has typed and not yet saved. Every
+  // save on this block (another prompt, an attached image) changes the block,
+  // and replacing the whole form threw away the other prompts' typing.
   useEffect(() => {
-    setFields(initial());
+    const next = initial();
+    const previous = synced.current;
+    synced.current = next;
+    setFields(local => {
+      const merged = { ...next };
+      for (const key of Object.keys(next) as Array<keyof typeof next>) {
+        if (local[key] !== previous[key]) merged[key] = local[key];
+      }
+      return merged;
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [block.id, block.updatedAt, exercise?.id, exercise?.updatedAt, isFirst]);
 
