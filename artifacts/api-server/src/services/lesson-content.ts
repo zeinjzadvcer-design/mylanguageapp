@@ -26,14 +26,39 @@ export function emptyToNull(value: string | null | undefined): string | null {
  *
  * A text block joins them when the author asked the student to read it aloud:
  * the recording is matched word by word against the passage, the same
- * arithmetic a pronunciation block uses.
+ * arithmetic a pronunciation block uses. Only when there IS an English passage:
+ * an Arabic-only reading block with the box ticked has nothing to read aloud,
+ * and treating it as an exercise asked the student to record against nothing.
  */
-export function isRecordingBlock(block: Pick<ContentBlock, "type" | "expectsReferenceReading">): boolean {
+export function isRecordingBlock(
+  block: Pick<ContentBlock, "type" | "expectsReferenceReading" | "content">,
+): boolean {
   return (
     block.type === "speaking_prompt" ||
     block.type === "pronunciation_guide" ||
-    (block.type === "text" && block.expectsReferenceReading)
+    (block.type === "text" && block.expectsReferenceReading && !!emptyToNull(block.content))
   );
+}
+
+/**
+ * The words a student is asked to read, without the list markers around them.
+ *
+ * Authors format passages as lists ("- item", "1. item") and the player shows
+ * them as lists, so the markers are never read out. Left in, every "-" and "2."
+ * became a reference word the student could not say, and an accurate reading
+ * scored below 100%.
+ */
+export function readingText(content: string | null | undefined): string | null {
+  const text = emptyToNull(content);
+  if (!text) return null;
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) =>
+      line.replace(/^\s*(?:[-*•–·▪]|[0-9\u0660-\u0669\u06F0-\u06F9]+[.)\u066B])\s+/, ""),
+    )
+    .join("\n")
+    .trim();
 }
 
 /**

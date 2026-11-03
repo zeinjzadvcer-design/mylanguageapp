@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ContentBlock, Exercise, ExerciseOption } from "@workspace/db";
-import { groupIdOf, isRecordingBlock, toStudentContentBlocks } from "./lesson-content";
+import { groupIdOf, isRecordingBlock, readingText, toStudentContentBlocks } from "./lesson-content";
 
 function block(overrides: Partial<ContentBlock>): ContentBlock {
   return {
@@ -30,7 +30,7 @@ function exercise(overrides: Partial<Exercise>): Exercise {
 describe("isRecordingBlock", () => {
   it("treats a text block as a recording block only when it is read aloud", () => {
     expect(isRecordingBlock(block({ type: "text" }))).toBe(false);
-    expect(isRecordingBlock(block({ type: "text", expectsReferenceReading: true }))).toBe(true);
+    expect(isRecordingBlock(block({ type: "text", expectsReferenceReading: true, content: "Hello" }))).toBe(true);
   });
 
   it("always treats speaking and pronunciation blocks as recording blocks", () => {
@@ -121,5 +121,32 @@ describe("groupIdOf — items added as separate blocks", () => {
       [], [], [],
     );
     expect(b.groupId).toBe("g1");
+  });
+});
+
+describe("read-aloud needs an English passage", () => {
+  it("does not ask for a recording when there is nothing to read", () => {
+    // Arabic-only reading block with the box ticked.
+    expect(isRecordingBlock(block({ type: "text", expectsReferenceReading: true, content: null, contentAr: "نص" }))).toBe(false);
+    expect(isRecordingBlock(block({ type: "text", expectsReferenceReading: true, content: "   " }))).toBe(false);
+  });
+});
+
+describe("readingText — list markers are not words to read", () => {
+  it("strips bullets and numbers the player shows as list formatting", () => {
+    expect(readingText("Today:\n- order a coffee\n• pay\n1. say thanks\n2) leave")).toBe(
+      "Today:\norder a coffee\npay\nsay thanks\nleave",
+    );
+  });
+
+  it("keeps hyphens and numbers inside sentences", () => {
+    expect(readingText("A well-known cafe opens at 7. It costs 3.5 pounds.")).toBe(
+      "A well-known cafe opens at 7. It costs 3.5 pounds.",
+    );
+  });
+
+  it("is null when there is no passage", () => {
+    expect(readingText("")).toBeNull();
+    expect(readingText(null)).toBeNull();
   });
 });
