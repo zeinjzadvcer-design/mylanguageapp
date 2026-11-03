@@ -119,9 +119,15 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
    * reload the browser may refuse to speak until the student has clicked
    * something; marking that attempt as done meant the greeting was never heard.
    */
+  // The latest speech controller, for the delayed greeting retry below: the
+  // listener is attached once, and reading `speech` from that render would
+  // ignore a mute pressed in between.
+  const speechRef = useRef(speech);
+  speechRef.current = speech;
+
   const greetOnce = (id: number, text: string) => {
     if (wasGreeted(id)) return;
-    speech.speak(text, () => markGreeted(id));
+    speechRef.current.speak(text, () => markGreeted(id));
   };
 
   // Resume whatever is open, so a reload does not lose the thread.
@@ -131,6 +137,18 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
     void getActiveConversation()
       .then(({ session }) => {
         if (cancelled || !session || session.lessonId !== lessonId) return;
+
+        // Another dialogue part of this lesson. Only one conversation can be
+        // open at a time, so one the student walked away from would block this
+        // part from starting at all; it is closed, and this part starts fresh.
+        // Sessions from before blocks were recorded have no block id and are
+        // resumed as before.
+        if (session.blockId != null && session.blockId !== blockId) {
+          void endConversation(session.sessionId).catch(() => {
+            // Starting will report the open conversation if this failed.
+          });
+          return;
+        }
         setSessionId(session.sessionId);
         setTurns(session.turns);
         setTurnsRemaining(session.turnsRemaining);
@@ -160,10 +178,10 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
       cancelled = true;
       retryCleanup?.();
     };
-  // greetOnce reads the latest speech settings when called; re-running this
+  // greetOnce reads the latest speech settings through a ref; re-running this
   // effect for it would refetch the conversation on every render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lessonId]);
+  }, [lessonId, blockId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

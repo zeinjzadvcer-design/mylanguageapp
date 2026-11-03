@@ -155,6 +155,8 @@ export function useSpeech(): SpeechController {
 
   // Held in a ref so `speak` does not need to be rebuilt when a voice arrives.
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  /** Cancels a line still waiting for the voice list (see `say`). */
+  const pendingRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!available) return;
@@ -193,16 +195,21 @@ export function useSpeech(): SpeechController {
     return () => window.speechSynthesis.removeEventListener("voiceschanged", pick);
   }, [available, voiceName]);
 
-  // Leaving the lesson mid-sentence should not keep the tutor talking.
+  // Leaving the lesson mid-sentence should not keep the tutor talking — nor
+  // start it talking, if a line was still waiting for the voice list.
   useEffect(() => {
     if (!available) return;
-    return () => window.speechSynthesis.cancel();
+    return () => {
+      pendingRef.current?.();
+      window.speechSynthesis.cancel();
+    };
   }, [available]);
 
   const setEnabled = useCallback(
     (on: boolean) => {
       setEnabledState(on);
       if (!on && supported()) {
+        pendingRef.current?.();
         window.speechSynthesis.cancel();
         setSpeaking(false);
       }
@@ -222,6 +229,9 @@ export function useSpeech(): SpeechController {
       const trimmed = text.trim();
       if (!trimmed) return;
 
+      // A newer line replaces one still waiting, as it replaces one speaking.
+      pendingRef.current?.();
+
       // The voice list arrives late (see the header). Speaking before it lands
       // used the browser's default voice — or nothing — so the first line of a
       // conversation, the one most likely to be spoken this early, ignored the
@@ -229,16 +239,25 @@ export function useSpeech(): SpeechController {
       // that never announces one still speaks, with its default.
       if (window.speechSynthesis.getVoices().length === 0) {
         let done = false;
-        const go = () => {
-          if (done) return;
+        const settle = () => {
           done = true;
           window.speechSynthesis.removeEventListener("voiceschanged", go);
+          window.clearTimeout(timer);
+          if (pendingRef.current === cancel) pendingRef.current = null;
+        };
+        const go = () => {
+          if (done) return;
+          settle();
           // The picker's own voiceschanged listener was registered first, so
           // the chosen voice is in place by the time this runs.
           speakNow(trimmed, onStart);
         };
+        const cancel = () => {
+          if (!done) settle();
+        };
         window.speechSynthesis.addEventListener("voiceschanged", go);
-        window.setTimeout(go, 1500);
+        const timer = window.setTimeout(go, 1500);
+        pendingRef.current = cancel;
         return;
       }
       speakNow(trimmed, onStart);
@@ -292,6 +311,7 @@ export function useSpeech(): SpeechController {
 
   const stop = useCallback(() => {
     if (!available) return;
+    pendingRef.current?.();
     window.speechSynthesis.cancel();
     setSpeaking(false);
   }, [available]);
