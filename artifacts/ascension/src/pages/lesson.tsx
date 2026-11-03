@@ -66,13 +66,14 @@ function isUsableUrl(url?: string | null): boolean {
 /**
  * Blocks answered with a recording. A text block joins them when its author
  * asked for it to be read aloud — the recording is matched word by word
- * against the passage on the server.
+ * against the passage on the server. Only when there is an English passage:
+ * mirrors `isRecordingBlock` in the server's lesson-content service.
  */
 function isRecordingBlock(block: ContentBlock): boolean {
   return (
     block.type === "speaking_prompt" ||
     block.type === "pronunciation_guide" ||
-    (block.type === "text" && !!block.expectsReferenceReading)
+    (block.type === "text" && !!block.expectsReferenceReading && !!block.content?.trim())
   );
 }
 
@@ -1304,7 +1305,11 @@ export function LessonPlayer({
     // submits and a second one moves on. A passive block has no verdict to
     // show — marking it read IS the whole interaction — so stopping there just
     // asks for the same click twice with nothing happening in between.
-    const advancesImmediately = !needsSecondClick(block);
+    // A recording block submitted WITHOUT a recording — an optional one the
+    // student chose to pass — has no verdict coming either, so it moves on
+    // rather than asking for a second identical click.
+    const advancesImmediately =
+      !needsSecondClick(block) || (isRecordingBlock(block) && !st.hasRecording);
 
     // Preview: mark locally and record nothing. An MCQ answer is checked
     // against the answer key the CMS supplied, so the author sees the verdict
@@ -1846,6 +1851,10 @@ export function LessonPlayer({
               </>
             ) : (
               <ConversationBlock
+                // Keyed: two dialogue parts in a row sit at the same place in
+                // the tree, and without a key React reused part 1's component —
+                // its turns, its session — for part 2.
+                key={currentBlock.id}
                 lessonId={lessonId}
                 blockId={currentBlock.id}
                 prompt={currentBlock.promptAr ?? currentBlock.prompt}
