@@ -1,16 +1,15 @@
 import { Router, type IRouter } from "express";
+import { resolvePlanCode } from "../services/ai-quota";
 import { eq, asc } from "drizzle-orm";
-import { and, desc } from "drizzle-orm";
+import { and } from "drizzle-orm";
 import {
   db,
   placementQuestionsTable,
   placementOptionsTable,
   placementResultsTable,
   studentProfilesTable,
-  studentSubscriptionsTable,
   levelsTable,
-  curriculaTable,
-} from "@workspace/db";
+  curriculaTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { setStudentLevel } from "../services/progression";
 import {
@@ -20,22 +19,6 @@ import {
 } from "../services/scoring/placement";
 import { analysePlacement } from "../services/placement-analysis";
 import { gradeOpenAnswer } from "../services/graders/open-answer";
-
-/** The plan a student's AI quota is charged against during placement. */
-async function planFor(userId: number): Promise<string> {
-  const [sub] = await db
-    .select({ planCode: studentSubscriptionsTable.planCode })
-    .from(studentSubscriptionsTable)
-    .where(
-      and(
-        eq(studentSubscriptionsTable.userId, userId),
-        eq(studentSubscriptionsTable.status, "active"),
-      ),
-    )
-    .orderBy(desc(studentSubscriptionsTable.startedAt))
-    .limit(1);
-  return sub?.planCode ?? "free";
-}
 
 const router: IRouter = Router();
 
@@ -195,7 +178,7 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
           studentAnswer: writtenAnswer,
           passingScore: 60,
         },
-        { userId, subscriptionPlan: await planFor(userId) },
+        { userId, subscriptionPlan: await resolvePlanCode(userId) },
       );
       writingScore = verdict.score;
     } catch {
@@ -243,7 +226,7 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
   // back, and a placement with no AI at all still assigns a level.
   const analysis = await analysePlacement(outcome, orderedCodes, {
     userId,
-    subscriptionPlan: await planFor(userId),
+    subscriptionPlan: await resolvePlanCode(userId),
   });
 
   const { levelCode, adjusted } = applyLevelAdjustment(
