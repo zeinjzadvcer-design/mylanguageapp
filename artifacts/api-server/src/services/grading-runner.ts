@@ -36,6 +36,7 @@ import {
 } from "./graders/open-answer";
 import { assessSpeech, type SpeechVerdict } from "./graders/pronunciation";
 import { resolvePlanCode } from "./ai-quota";
+import { readingText } from "./lesson-content";
 import { transcribeSpokenTurn } from "./conversation";
 import {
   blockPoints,
@@ -563,7 +564,7 @@ export async function gradeSpeakingActivity(
       {
         mediaKey: asset.key,
         mimeType: asset.mimeType,
-        referenceText: block?.expectsReferenceReading ? block.content : null,
+        referenceText: block?.expectsReferenceReading ? readingText(block.content) : null,
         levelCode,
         // A content manager may author the task on the block or on its
         // exercise — the Corner Café lesson puts everything on the exercise and
