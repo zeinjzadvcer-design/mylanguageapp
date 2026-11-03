@@ -1808,6 +1808,11 @@ export interface ActiveConversation {
   sessionId: number;
   /** @nullable */
   lessonId: number | null;
+  /**
+     * The dialogue block the conversation belongs to. A lesson can hold several, so the lesson alone does not say which one to resume.
+     * @nullable
+     */
+  blockId?: number | null;
   /** The exchange so far, oldest first. */
   turns: ConversationMessage[];
   turnsUsed: number;

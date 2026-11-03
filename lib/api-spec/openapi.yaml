@@ -4029,6 +4029,11 @@ components:
           type: number
         lessonId:
           type: ["number", "null"]
+        blockId:
+          description: >-
+            The dialogue block the conversation belongs to. A lesson can hold
+            several, so the lesson alone does not say which one to resume.
+          type: ["number", "null"]
         turns:
           description: The exchange so far, oldest first.
           type: array
