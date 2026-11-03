@@ -11,7 +11,9 @@
  *
  * The trade is voice quality, which varies by platform. If that is judged too
  * poor later, this hook is the only place that changes — the component calls
- * `speak(text)` either way.
+ * `speak(text)` either way. Students can also pick another of their browser's
+ * English voices and hear it first, since the one ranked best automatically is
+ * not always the one that sounds best on their device.
  *
  * WHAT THE PLATFORM MAKES AWKWARD
  * ────────────────────────────────
@@ -31,16 +33,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const PREFERENCE_KEY = "enstep.tutorVoice.enabled";
-
-/** Slower than default: this is a learner listening in a second language. */
-const RATE = 0.9;
+/** The voice the student chose, by name. Absent means "pick the best one". */
+const VOICE_KEY = "enstep.tutorVoice.name";
 
 /**
- * Just below default. The flat, slightly-high default reading is most of what
- * makes a synthesised voice sound mechanical; dropping it a little lands closer
- * to a speaking register without tipping into the comical.
+ * Speed and pitch, by kind of voice.
+ *
+ * The legacy OS voices are read a little slower and lower: their flat,
+ * slightly-high default is most of what makes them sound mechanical, and a
+ * learner listening in a second language benefits from the slower pace.
+ *
+ * The neural voices are left exactly as they are. They were trained to sound
+ * natural at their own speed and pitch, and bending either is what makes them
+ * sound synthetic — the same 0.9 / 0.95 that softened an old voice put an
+ * audible artificial drag on Aria and Google's voices.
  */
-const PITCH = 0.95;
+const LEGACY = { rate: 0.9, pitch: 0.95 };
+const NEURAL = { rate: 1, pitch: 1 };
+/** Voices scoring at or above this are neural (see VOICE_TIERS). */
+const NEURAL_SCORE = 80;
+
+/** What the preview button says. Short, natural, and in the tutor's register. */
+const PREVIEW_TEXT = "Hi! I'm your tutor. Shall we practise a short conversation?";
 
 function supported(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window;
@@ -93,21 +107,51 @@ function voicePreference(a: SpeechSynthesisVoice, b: SpeechSynthesisVoice): numb
   return bUs - aUs;
 }
 
+function loadVoiceName(): string | null {
+  try {
+    return window.localStorage.getItem(VOICE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export interface SpeechController {
   /** False when the browser has no speech synthesis at all — hide the control. */
   available: boolean;
   enabled: boolean;
   setEnabled: (on: boolean) => void;
   speaking: boolean;
-  /** Says it aloud, cancelling anything still in flight. No-op when disabled. */
-  speak: (text: string) => void;
+  /**
+   * Says it aloud, cancelling anything still in flight. No-op when disabled.
+   * `onStart` runs only if the browser actually begins speaking — not when it
+   * refuses (autoplay before any click) or the tutor is muted.
+   */
+  speak: (text: string, onStart?: () => void) => void;
   stop: () => void;
+  /** English voices this browser offers, best first. */
+  voices: SpeechSynthesisVoice[];
+  /** The chosen voice's name, or null for automatic (the best available). */
+  voiceName: string | null;
+  setVoiceName: (name: string | null) => void;
+  /** Says a sample sentence in the current voice, even while muted. */
+  preview: () => void;
+  /**
+   * Says one message again on request, even while muted: the student pressed
+   * the button for it. Used to replay a tutor line — after switching voice, or
+   * to hear a sentence they did not catch.
+   */
+  replay: (text: string) => void;
 }
 
 export function useSpeech(): SpeechController {
   const [available] = useState(supported);
   const [enabled, setEnabledState] = useState<boolean>(() => supported() && loadPreference());
   const [speaking, setSpeaking] = useState(false);
+
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [voiceName, setVoiceNameState] = useState<string | null>(() =>
+    supported() ? loadVoiceName() : null,
+  );
 
   // Held in a ref so `speak` does not need to be rebuilt when a voice arrives.
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
@@ -119,9 +163,20 @@ export function useSpeech(): SpeechController {
       const voices = window.speechSynthesis.getVoices();
       if (voices.length === 0) return;
       // An English voice is the point — the tutor speaks English.
-      const english = voices.filter((v) => v.lang.toLowerCase().startsWith("en"));
+      const english = voices
+        .filter((v) => v.lang.toLowerCase().startsWith("en"))
+        .sort(voicePreference);
+      setVoices(english);
       if (english.length === 0) {
         voiceRef.current = null;
+        return;
+      }
+      // The student's own choice wins while this browser still has it. A name
+      // saved on another device, or a voice since removed, falls back to the
+      // best available rather than to no voice.
+      const chosen = voiceName ? english.find((v) => v.name === voiceName) : undefined;
+      if (chosen) {
+        voiceRef.current = chosen;
         return;
       }
       // Best available, rather than fastest to start. This used to prefer
@@ -130,13 +185,13 @@ export function useSpeech(): SpeechController {
       // ("Google US English", "Microsoft Aria Online") are the single biggest
       // quality difference available without paying a TTS provider per
       // character. The fetch costs a short delay on the first utterance only.
-      voiceRef.current = [...english].sort(voicePreference)[0] ?? null;
+      voiceRef.current = english[0] ?? null;
     };
 
     pick();
     window.speechSynthesis.addEventListener("voiceschanged", pick);
     return () => window.speechSynthesis.removeEventListener("voiceschanged", pick);
-  }, [available]);
+  }, [available, voiceName]);
 
   // Leaving the lesson mid-sentence should not keep the tutor talking.
   useEffect(() => {
@@ -160,30 +215,80 @@ export function useSpeech(): SpeechController {
     [],
   );
 
-  const speak = useCallback(
-    (text: string) => {
-      if (!available || !enabled) return;
+  /** Speaks regardless of the mute setting; `speak` and `preview` decide that. */
+  const say = useCallback(
+    (text: string, onStart?: () => void) => {
+      if (!available) return;
       const trimmed = text.trim();
       if (!trimmed) return;
 
-      window.speechSynthesis.cancel();
-
-      const utterance = new SpeechSynthesisUtterance(trimmed);
-      utterance.lang = voiceRef.current?.lang ?? "en-US";
-      utterance.rate = RATE;
-      utterance.pitch = PITCH;
-      if (voiceRef.current) utterance.voice = voiceRef.current;
-
-      utterance.onstart = () => setSpeaking(true);
-      utterance.onend = () => setSpeaking(false);
-      // Autoplay refusal and interruption both land here. Failing quietly is
-      // right: the reply is already on screen, so the student loses nothing.
-      utterance.onerror = () => setSpeaking(false);
-
-      window.speechSynthesis.speak(utterance);
+      // The voice list arrives late (see the header). Speaking before it lands
+      // used the browser's default voice — or nothing — so the first line of a
+      // conversation, the one most likely to be spoken this early, ignored the
+      // voice the student had chosen. Wait for the list, briefly: a browser
+      // that never announces one still speaks, with its default.
+      if (window.speechSynthesis.getVoices().length === 0) {
+        let done = false;
+        const go = () => {
+          if (done) return;
+          done = true;
+          window.speechSynthesis.removeEventListener("voiceschanged", go);
+          // The picker's own voiceschanged listener was registered first, so
+          // the chosen voice is in place by the time this runs.
+          speakNow(trimmed, onStart);
+        };
+        window.speechSynthesis.addEventListener("voiceschanged", go);
+        window.setTimeout(go, 1500);
+        return;
+      }
+      speakNow(trimmed, onStart);
     },
-    [available, enabled],
+    [available],
   );
+
+  /** Speaks with whatever voice is selected right now. */
+  const speakNow = (trimmed: string, onStart?: () => void) => {
+    window.speechSynthesis.cancel();
+
+    const voice = voiceRef.current;
+    const tuning = voice && voiceScore(voice) >= NEURAL_SCORE ? NEURAL : LEGACY;
+    const utterance = new SpeechSynthesisUtterance(trimmed);
+    utterance.lang = voice?.lang ?? "en-US";
+    utterance.rate = tuning.rate;
+    utterance.pitch = tuning.pitch;
+    if (voice) utterance.voice = voice;
+
+    utterance.onstart = () => {
+      setSpeaking(true);
+      onStart?.();
+    };
+    utterance.onend = () => setSpeaking(false);
+    // Autoplay refusal and interruption both land here. Failing quietly is
+    // right: the reply is already on screen, so the student loses nothing.
+    utterance.onerror = () => setSpeaking(false);
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const speak = useCallback(
+    (text: string, onStart?: () => void) => {
+      if (enabled) say(text, onStart);
+    },
+    [enabled, say],
+  );
+
+  const preview = useCallback(() => say(PREVIEW_TEXT), [say]);
+  const replay = useCallback((text: string) => say(text), [say]);
+
+  const setVoiceName = useCallback((name: string | null) => {
+    setVoiceNameState(name);
+    try {
+      if (name) window.localStorage.setItem(VOICE_KEY, name);
+      else window.localStorage.removeItem(VOICE_KEY);
+    } catch {
+      // A remembered voice is a convenience, not a requirement.
+    }
+  }, []);
 
   const stop = useCallback(() => {
     if (!available) return;
@@ -191,5 +296,8 @@ export function useSpeech(): SpeechController {
     setSpeaking(false);
   }, [available]);
 
-  return { available, enabled, setEnabled, speaking, speak, stop };
+  return {
+    available, enabled, setEnabled, speaking, speak, stop,
+    voices, voiceName, setVoiceName, preview, replay,
+  };
 }
