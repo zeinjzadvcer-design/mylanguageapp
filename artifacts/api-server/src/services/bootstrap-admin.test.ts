@@ -34,13 +34,47 @@ describe("creating the first administrator", () => {
     });
   });
 
-  it("behaves the same whatever the deployment is — the values come from the environment", () => {
-    // There is no NODE_ENV branch on purpose: a deployment changes .env, not
-    // the code path.
+  it("creates one in production from values the operator chose", () => {
     const deployment = decideBootstrapAdmin(
-      input({ email: "ops@lughati.app", password: "a-real-secret-9" }),
+      input({ email: "ops@lughati.app", password: "a-real-secret-9", production: true }),
     );
     expect(deployment).toMatchObject({ action: "create", email: "ops@lughati.app" });
+  });
+});
+
+describe("the documented defaults in production", () => {
+  // The defaults are printed in .env.example, the compose file and the deploy
+  // docs. On a public URL they are an administrator login anyone can look up.
+  it("refuses the default email and password together", () => {
+    expect(decideBootstrapAdmin(input({ production: true }))).toMatchObject({
+      action: "skip",
+      reason: "DEFAULT_CREDENTIALS",
+    });
+  });
+
+  it("refuses the default password with a chosen email", () => {
+    expect(
+      decideBootstrapAdmin(input({ email: "ops@lughati.app", production: true })),
+    ).toMatchObject({ action: "skip", reason: "DEFAULT_CREDENTIALS" });
+  });
+
+  it("refuses the default email with a chosen password", () => {
+    expect(
+      decideBootstrapAdmin(input({ password: "a-real-secret-9", production: true })),
+    ).toMatchObject({ action: "skip", reason: "DEFAULT_CREDENTIALS" });
+  });
+
+  it("refuses what an unset production environment reads as", () => {
+    const config = readBootstrapConfig({ NODE_ENV: "production" } as NodeJS.ProcessEnv);
+    expect(decideBootstrapAdmin(input(config))).toMatchObject({
+      action: "skip",
+      reason: "DEFAULT_CREDENTIALS",
+    });
+  });
+
+  it("still allows them outside production, so a fresh checkout has a way in", () => {
+    const config = readBootstrapConfig({} as NodeJS.ProcessEnv);
+    expect(decideBootstrapAdmin(input(config)).action).toBe("create");
   });
 });
 
@@ -112,7 +146,7 @@ describe("reading the environment", () => {
       ADMIN_EMAIL: "ops@lughati.app",
       ADMIN_PASSWORD: "a-real-secret-9",
     } as NodeJS.ProcessEnv);
-    expect(c).toEqual({ email: "ops@lughati.app", password: "a-real-secret-9" });
+    expect(c).toEqual({ email: "ops@lughati.app", password: "a-real-secret-9", production: false });
   });
 
   it("treats an empty or blank value as unset, not as a chosen empty password", () => {

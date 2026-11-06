@@ -38,7 +38,8 @@ export type BootstrapSkipReason =
   | "ADMIN_EXISTS"
   | "EMAIL_TAKEN"
   | "INVALID_EMAIL"
-  | "WEAK_PASSWORD";
+  | "WEAK_PASSWORD"
+  | "DEFAULT_CREDENTIALS";
 
 export type BootstrapDecision =
   | { action: "create"; email: string; password: string }
@@ -51,6 +52,8 @@ export interface BootstrapInput {
   emailTaken: boolean;
   email: string;
   password: string;
+  /** NODE_ENV is production: the documented defaults are refused. */
+  production?: boolean;
 }
 
 /**
@@ -77,6 +80,23 @@ export function decideBootstrapAdmin(input: BootstrapInput): BootstrapDecision {
       message:
         `${input.email} is already registered, as a non-administrator. ` +
         "Promote that account, or set ADMIN_EMAIL to a different address.",
+    };
+  }
+
+  // The defaults are printed in .env.example, the compose file and the deploy
+  // docs. Locally that is the point; on a public URL it is an administrator
+  // login anyone can look up. Either half being the default is refused: a
+  // known email plus a known password is the whole credential.
+  if (
+    input.production &&
+    (input.email === DEFAULT_ADMIN_EMAIL || input.password === DEFAULT_ADMIN_PASSWORD)
+  ) {
+    return {
+      action: "skip",
+      reason: "DEFAULT_CREDENTIALS",
+      message:
+        "ADMIN_EMAIL and ADMIN_PASSWORD must both be set to non-default values in production. " +
+        "No administrator was created.",
     };
   }
 
@@ -110,11 +130,13 @@ export function decideBootstrapAdmin(input: BootstrapInput): BootstrapDecision {
 export function readBootstrapConfig(env: NodeJS.ProcessEnv = process.env): {
   email: string;
   password: string;
+  production: boolean;
 } {
   return {
     // Lowercased because that is how login looks an account up.
     email: (env.ADMIN_EMAIL?.trim() || DEFAULT_ADMIN_EMAIL).toLowerCase(),
     password: env.ADMIN_PASSWORD?.trim() || DEFAULT_ADMIN_PASSWORD,
+    production: env.NODE_ENV === "production",
   };
 }
 
