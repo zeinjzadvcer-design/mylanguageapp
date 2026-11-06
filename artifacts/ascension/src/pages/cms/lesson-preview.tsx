@@ -66,10 +66,8 @@ export default function LessonPreviewPage({ lessonId }: Props) {
               — exactly what a student sees. Nothing is recorded, uploaded or sent to AI.
             </span>
           </div>
-          <Link href={exitHref}>
-            <a className="text-xs text-amber-700 hover:text-amber-900 flex items-center gap-1 shrink-0">
-              <ArrowLeft className="h-3.5 w-3.5" /> Back to editor
-            </a>
+          <Link href={exitHref} className="text-xs text-amber-700 hover:text-amber-900 flex items-center gap-1 shrink-0">
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to editor
           </Link>
         </div>
 

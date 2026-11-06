@@ -125,16 +125,12 @@ export default function CMSLessonsList() {
                     <td className="px-4 py-3 hidden lg:table-cell text-gray-500 capitalize">{l.lessonType}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        <Link href={`/cms/lessons/${l.id}/preview`}>
-                          <a title="Preview" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
-                            <Eye className="h-3.5 w-3.5" />
-                          </a>
+                        <Link href={`/cms/lessons/${l.id}/preview`} title="Preview" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
+                          <Eye className="h-3.5 w-3.5" />
                         </Link>
                         {isContentManager && (
-                          <Link href={`/cms/lessons/${l.id}/edit`}>
-                            <a title="Edit" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
-                              <Pencil className="h-3.5 w-3.5" />
-                            </a>
+                          <Link href={`/cms/lessons/${l.id}/edit`} title="Edit" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
+                            <Pencil className="h-3.5 w-3.5" />
                           </Link>
                         )}
                         {isContentManager && (
