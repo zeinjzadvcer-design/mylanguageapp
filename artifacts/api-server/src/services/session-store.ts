@@ -38,10 +38,13 @@
 import type { SessionData, Store } from "express-session";
 import session from "express-session";
 import Redis from "ioredis";
+import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
 
 /** Key prefix, so session keys are obvious in `redis-cli --scan`. */
 const PREFIX = "sess:";
+/** A set of one user's session ids, so they can all be ended at once. */
+const USER_PREFIX = "user-sess:";
 
 /** Fallback TTL when a session carries no cookie expiry, in seconds. */
 const DEFAULT_TTL_S = 30 * 24 * 60 * 60;
@@ -131,8 +134,15 @@ class RedisSessionStore extends session.Store {
   }
 
   set(sid: string, sess: SessionData, callback?: (err?: unknown) => void): void {
-    this.client
-      .set(PREFIX + sid, JSON.stringify(sess), "EX", this.ttl(sess))
+    const ttl = this.ttl(sess);
+    const tx = this.client.multi().set(PREFIX + sid, JSON.stringify(sess), "EX", ttl);
+    // Index the session under its user, so a password reset can find and end
+    // every one of them. Redis cannot otherwise answer "which sessions belong
+    // to user 42" without scanning every key.
+    if (sess.userId) {
+      tx.sadd(USER_PREFIX + sess.userId, sid).expire(USER_PREFIX + sess.userId, ttl);
+    }
+    tx.exec()
       .then(() => callback?.())
       .catch((err) => callback?.(err));
   }
@@ -146,10 +156,19 @@ class RedisSessionStore extends session.Store {
    * application. Here it is one EXPIRE against a key already in memory.
    */
   touch(sid: string, sess: SessionData, callback?: (err?: unknown) => void): void {
-    this.client
-      .expire(PREFIX + sid, this.ttl(sess))
-      .then(() => callback?.())
-      .catch((err) => callback?.(err));
+    const ttl = this.ttl(sess);
+    // The user's index must live as long as their longest-lived session, or a
+    // session kept alive by `rolling` would outlast the entry that lets a
+    // password reset find it. Every session has the same maxAge, so the one
+    // touched last is the one that lives longest. Same round trip: pipelined.
+    const done = sess.userId
+      ? this.client
+          .multi()
+          .expire(PREFIX + sid, ttl)
+          .expire(USER_PREFIX + sess.userId, ttl)
+          .exec()
+      : this.client.expire(PREFIX + sid, ttl);
+    done.then(() => callback?.()).catch((err) => callback?.(err));
   }
 
   destroy(sid: string, callback?: (err?: unknown) => void): void {
@@ -158,6 +177,32 @@ class RedisSessionStore extends session.Store {
       .then(() => callback?.())
       .catch((err) => callback?.(err));
   }
+
+  /** End every session this user has. */
+  async destroyAllForUser(userId: number): Promise<void> {
+    const key = USER_PREFIX + userId;
+    const sids = await this.client.smembers(key);
+    // Ids whose session already expired are deleted harmlessly.
+    await this.client.del(key, ...sids.map((sid) => PREFIX + sid));
+  }
+}
+
+/**
+ * End every session a user has — after a password reset, so a session someone
+ * else holds does not outlive the password it was opened with.
+ *
+ * Works for either store. PostgreSQL can be asked directly, since
+ * connect-pg-simple keeps the session as JSON; Redis needs the per-user index
+ * the store above maintains.
+ */
+export async function destroyUserSessions(store: Store, userId: number): Promise<void> {
+  if (store instanceof RedisSessionStore) {
+    await store.destroyAllForUser(userId);
+    return;
+  }
+  // `sess::jsonb`: connect-pg-simple creates the column as json, but the
+  // migrations here create it as text. The cast reads either.
+  await pool.query(`DELETE FROM "session" WHERE (sess::jsonb->>'userId')::int = $1`, [userId]);
 }
 
 /**

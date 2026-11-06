@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq, and, isNull, lt } from "drizzle-orm";
+import type { Request } from "express";
+import { eq, and, isNull, lt, gt } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomBytes, createHash } from "node:crypto";
 import {
@@ -8,10 +9,31 @@ import {
 import { requireAuth } from "../middlewares/auth";
 import { validate, registerSchema, passwordSchema } from "../lib/validate";
 import { mailer } from "../services/mailer";
+import { destroyUserSessions } from "../services/session-store";
 import { logger } from "../lib/logger";
 import { z } from "zod";
 
 const router: IRouter = Router();
+
+/**
+ * Sign this request in as `user`, under a NEW session id.
+ *
+ * Reusing whatever id the request arrived with is session fixation: someone who
+ * got a session id into the victim's browser before they logged in would hold
+ * the victim's signed-in session afterwards. Regenerating discards that id.
+ */
+async function signIn(
+  req: Request,
+  user: Pick<typeof usersTable.$inferSelect, "id" | "role" | "name" | "email">,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) =>
+    req.session.regenerate((err) => (err ? reject(err) : resolve())),
+  );
+  req.session.userId = user.id;
+  req.session.role = user.role;
+  req.session.name = user.name;
+  req.session.email = user.email;
+}
 
 /** Look up the default curriculum (first active one by id) */
 async function getDefaultCurriculumId(): Promise<number | null> {
@@ -59,10 +81,7 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     placementCompleted: false,
   });
 
-  req.session.userId = user.id;
-  req.session.role = user.role;
-  req.session.name = user.name;
-  req.session.email = user.email;
+  await signIn(req, user);
 
   res.status(201).json({
     user: {
@@ -97,10 +116,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
-  req.session.userId = user.id;
-  req.session.role = user.role;
-  req.session.name = user.name;
-  req.session.email = user.email;
+  await signIn(req, user);
 
   res.json({
     user: {
@@ -143,6 +159,16 @@ router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
 /** How long a reset link stays valid. Short: it is a password, emailed. */
 const RESET_TTL_MS = 60 * 60 * 1000;
 
+/**
+ * How soon after one reset link another may be sent to the same address.
+ *
+ * Every request retires the previous link, so without this anyone could keep a
+ * user from ever finishing a reset — and flood their inbox while doing it —
+ * from as many addresses as they like. Within the cooldown the request is
+ * answered exactly like any other, and the link already sent stays good.
+ */
+const RESET_COOLDOWN_MS = parseInt(process.env.RESET_COOLDOWN_MS ?? "120000", 10);
+
 /** The token travels in the URL; only this hash is ever stored. */
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -169,6 +195,17 @@ router.post("/auth/forgot-password", async (req, res): Promise<void> => {
   const ok = { message: "If that email is registered, a reset link has been sent." };
 
   if (!user) { res.json(ok); return; }
+
+  const [recent] = await db
+    .select({ id: passwordResetTokensTable.id })
+    .from(passwordResetTokensTable)
+    .where(and(
+      eq(passwordResetTokensTable.userId, user.id),
+      isNull(passwordResetTokensTable.usedAt),
+      gt(passwordResetTokensTable.createdAt, new Date(Date.now() - RESET_COOLDOWN_MS)),
+    ))
+    .limit(1);
+  if (recent) { res.json(ok); return; }
 
   // Expire outstanding tokens: requesting a new link should retire the old one.
   await db
@@ -253,6 +290,10 @@ router.post("/auth/reset-password", async (req, res): Promise<void> => {
   await db.update(passwordResetTokensTable)
     .set({ usedAt: new Date() })
     .where(eq(passwordResetTokensTable.id, row.id));
+
+  // A reset is often how someone takes their account back. Any session opened
+  // with the old password — including one a thief holds — ends here.
+  await destroyUserSessions(req.sessionStore, row.userId);
 
   // Housekeeping, not security: spent and expired rows have no further use.
   await db.delete(passwordResetTokensTable)
