@@ -33,7 +33,15 @@ describe("passwordSchema", () => {
 });
 
 describe("registerSchema", () => {
-  const base = { name: "Sumaia", email: "sumaia@example.com" };
+  // referralSource is required at signup, so every case carries one; without
+  // it the weak-password case below would be rejected for the wrong reason.
+  const base = { name: "Sumaia", email: "sumaia@example.com", referralSource: "friend" };
+
+  it("rejects registration without a referral source", () => {
+    const { referralSource: _omit, ...withoutReferral } = base;
+    const result = registerSchema.safeParse({ ...withoutReferral, password: "Sunshine42" });
+    expect(result.success).toBe(false);
+  });
 
   it("rejects registration when the password is weak", () => {
     const result = registerSchema.safeParse({ ...base, password: "aaaaaaaa" });
