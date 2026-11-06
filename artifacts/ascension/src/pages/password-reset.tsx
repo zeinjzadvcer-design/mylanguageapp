@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle2, ArrowLeft } from "lucide-react";
 import { BrandLogo, LanguageSwitcher } from "@/components/brand";
+import { PasswordInput } from "@/components/password-input";
 import { useI18n } from "@/lib/i18n";
 
 const base = () => `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
@@ -197,12 +198,9 @@ export function ResetPassword() {
       <form onSubmit={submit} className="space-y-4">
         <div className="space-y-2">
           <Label>{a.newPassword}</Label>
-          <Input
-            type="password"
+          <PasswordInput
             required
             minLength={8}
-            dir="ltr"
-            className="text-left"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
@@ -212,11 +210,8 @@ export function ResetPassword() {
         </div>
         <div className="space-y-2">
           <Label>{a.confirmPassword}</Label>
-          <Input
-            type="password"
+          <PasswordInput
             required
-            dir="ltr"
-            className="text-left"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
           />
