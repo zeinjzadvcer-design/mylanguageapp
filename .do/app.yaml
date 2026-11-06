@@ -228,6 +228,16 @@ services:
       - key: PRACTICE_STUN_URLS
         value: ""
 
+      # Cloudflare Realtime TURN (Realtime → TURN Server in the dashboard).
+      # Set both and the static PRACTICE_TURN_* above may stay empty.
+      - key: CLOUDFLARE_TURN_KEY_ID
+        scope: RUN_TIME
+        value: SET-ME
+      - key: CLOUDFLARE_TURN_API_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+
       # ── Call bounds ─────────────────────────────────────────────────────────
       # 15, not 30: a call recording is capped at 960s (16 min) by the media
       # pipeline, so a longer call could never be evaluated. 15 minutes also

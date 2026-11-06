@@ -180,8 +180,8 @@ router.post("/practice/sessions/:id/end", requireAuth, async (req, res): Promise
  * Served rather than bundled so a TURN relay can be switched on with
  * environment variables, and so its credentials never sit in public JavaScript.
  */
-router.get("/practice/ice-servers", requireAuth, (_req, res): void => {
-  res.json(iceServers());
+router.get("/practice/ice-servers", requireAuth, async (_req, res): Promise<void> => {
+  res.json(await iceServers());
 });
 
 const signalSchema = z.object({
