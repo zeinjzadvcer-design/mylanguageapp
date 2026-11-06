@@ -108,7 +108,7 @@ export const en = {
     emailLabel: "Email",
     passwordLabel: "Password",
     invalidEmail: "Please enter a valid email address",
-    passwordMin6: "Password must be at least 6 characters",
+    passwordRequired: "Please enter your password",
     loginTitle: "Log in",
     noAccount: "Don't have an account?",
     registerNow: "Sign up",

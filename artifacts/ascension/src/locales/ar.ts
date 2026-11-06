@@ -104,7 +104,7 @@ export const ar: Messages = {
     emailLabel: "البريد الإلكتروني",
     passwordLabel: "كلمة المرور",
     invalidEmail: "الرجاء إدخال بريد إلكتروني صحيح",
-    passwordMin6: "كلمة المرور يجب أن تكون 6 محارف على الأقل",
+    passwordRequired: "الرجاء إدخال كلمة المرور",
     loginTitle: "تسجيل الدخول",
     noAccount: "ليس لديك حساب؟",
     registerNow: "سجل الآن",
