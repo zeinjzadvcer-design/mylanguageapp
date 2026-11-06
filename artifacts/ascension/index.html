@@ -3,6 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <!-- Full URLs (a reset link carries its token) never go to other sites. -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <!--
+      Clickjacking guard. Another site could load the app in an invisible frame
+      and trick a student into clicking. The X-Frame-Options header would stop
+      that, but a static host (DigitalOcean App Platform) cannot send headers —
+      so the page starts hidden, and only shows itself as the top window.
+      Framed with scripts blocked, it stays hidden; the app is JavaScript, so
+      there is nothing to click either way.
+    -->
+    <style id="frame-guard">html { display: none !important; }</style>
+    <script>
+      if (window.self === window.top) {
+        document.getElementById('frame-guard').remove();
+      } else {
+        try { window.top.location = window.self.location; } catch (e) {}
+      }
+    </script>
     <title>EnStep — English step by step</title>
     <meta name="description" content="EnStep: تحدث الإنجليزية بثقة، خطوة بخطوة. منصة تعليم الإنجليزية المصممة خصيصاً للمتعلم العربي." />
     <meta name="robots" content="index, follow" />
