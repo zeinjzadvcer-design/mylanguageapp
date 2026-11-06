@@ -34,7 +34,14 @@
  */
 
 import { withRedisCritical, withRedis } from "./redis";
-import { pool, type AITask } from "@workspace/db";
+import { eq, and, desc } from "drizzle-orm";
+import {
+  db,
+  pool,
+  usersTable,
+  studentSubscriptionsTable,
+  type AITask,
+} from "@workspace/db";
 import type { AIFeature } from "./ai";
 import { getPlanAllowance } from "./ai-config";
 import { logger } from "../lib/logger";
@@ -73,6 +80,45 @@ export interface UsageRecord extends QuotaContext {
   requestId?: string;
   /** Logged, not stored — there is no column for it, and it is a debugging aid. */
   latencyMs?: number;
+}
+
+// ─── Which plan's limits apply ────────────────────────────────────────────────
+
+/**
+ * The plan whose AI limits apply to this user.
+ *
+ * An administrator is held to the `admin` policy whatever they subscribe to.
+ * That row has always existed — unlimited, so staff can check the AI features
+ * of the lessons they build — but nothing ever selected it: the plan came only
+ * from the subscription, so an admin walking a lesson was treated as `free`
+ * (or as whatever test subscription they held) and every recording they made
+ * was refused with "not included in your plan", read-aloud and speaking alike.
+ *
+ * Everyone else gets their newest active subscription, or `free`.
+ *
+ * One copy of this used to live in each place that called the AI, and they had
+ * all made the same omission.
+ */
+export async function resolvePlanCode(userId: number): Promise<string> {
+  const [user] = await db
+    .select({ role: usersTable.role })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId))
+    .limit(1);
+  if (user?.role === "admin") return "admin";
+
+  const [sub] = await db
+    .select({ planCode: studentSubscriptionsTable.planCode })
+    .from(studentSubscriptionsTable)
+    .where(
+      and(
+        eq(studentSubscriptionsTable.userId, userId),
+        eq(studentSubscriptionsTable.status, "active"),
+      ),
+    )
+    .orderBy(desc(studentSubscriptionsTable.startedAt))
+    .limit(1);
+  return sub?.planCode ?? "free";
 }
 
 // ─── Quota check ──────────────────────────────────────────────────────────────

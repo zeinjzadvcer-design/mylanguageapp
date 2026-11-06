@@ -554,6 +554,17 @@ export type ContentBlockQuestionsItem = {
   /** @nullable */
   questionAr?: string | null;
   options: ContentBlockQuestionsItemOptionsItem[];
+  /**
+     * What a speaking or open-ended item asks.
+     * @nullable
+     */
+  prompt?: string | null;
+  /** @nullable */
+  promptAr?: string | null;
+  /** @nullable */
+  instructions?: string | null;
+  /** @nullable */
+  instructionsAr?: string | null;
 };
 
 export interface VocabularyItem {
@@ -602,6 +613,13 @@ export interface ContentBlock {
   audioNote?: string | null;
   /** @nullable */
   audioUrl?: string | null;
+  /**
+     * Consecutive blocks sharing this id are items of one block, shown to the student as "item 2 of 3". Null for a block on its own.
+     * @nullable
+     */
+  groupId?: string | null;
+  /** The student reads the passage aloud and the recording is scored by matching their words against it. On a text block this turns a passage to read into an exercise. */
+  expectsReferenceReading?: boolean;
   /** @nullable */
   vocabularyItems?: VocabularyItem[] | null;
   /** @nullable */
@@ -1966,6 +1984,11 @@ export interface ActiveConversation {
   sessionId: number;
   /** @nullable */
   lessonId: number | null;
+  /**
+     * The dialogue block the conversation belongs to. A lesson can hold several, so the lesson alone does not say which one to resume.
+     * @nullable
+     */
+  blockId?: number | null;
   /** The exchange so far, oldest first. */
   turns: ConversationMessage[];
   turnsUsed: number;

@@ -1,21 +1,37 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
-    <title>Ascension / لغتي</title>
-    <meta name="description" content="تحدث الإنجليزية بثقة، من قلب دمشق. منصة تعليم الإنجليزية المصممة خصيصاً للمتعلم السوري." />
+    <title>EnStep — English step by step</title>
+    <meta name="description" content="EnStep: تحدث الإنجليزية بثقة، خطوة بخطوة. منصة تعليم الإنجليزية المصممة خصيصاً للمتعلم العربي." />
     <meta name="robots" content="index, follow" />
-    <meta property="og:title" content="Ascension / لغتي" />
-    <meta property="og:description" content="تحدث الإنجليزية بثقة، من قلب دمشق. منصة تعليم الإنجليزية المصممة خصيصاً للمتعلم السوري." />
+    <meta name="theme-color" content="#FBF8F1" />
+    <meta property="og:title" content="EnStep — English step by step" />
+    <meta property="og:description" content="EnStep: تحدث الإنجليزية بثقة، خطوة بخطوة. منصة تعليم الإنجليزية المصممة خصيصاً للمتعلم العربي." />
     <meta property="og:type" content="website" />
+    <meta property="og:image" content="/brand/icon-512.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Ascension / لغتي" />
-    <meta name="twitter:description" content="تحدث الإنجليزية بثقة، من قلب دمشق. منصة تعليم الإنجليزية المصممة خصيصاً للمتعلم السوري." />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="twitter:title" content="EnStep — English step by step" />
+    <meta name="twitter:description" content="EnStep: تحدث الإنجليزية بثقة، خطوة بخطوة. منصة تعليم الإنجليزية المصممة خصيصاً للمتعلم العربي." />
+    <link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/brand/favicon-64.png" />
+    <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Set the language and direction before first paint so an English
+      // visitor never sees the page flash right-to-left. Keep the key in
+      // sync with LANG_STORAGE_KEY in src/lib/i18n.tsx.
+      try {
+        var l = localStorage.getItem('enstep.lang');
+        if (l === 'en') {
+          document.documentElement.lang = 'en';
+          document.documentElement.dir = 'ltr';
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

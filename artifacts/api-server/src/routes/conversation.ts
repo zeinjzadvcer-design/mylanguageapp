@@ -8,9 +8,10 @@
  */
 
 import { Router, type IRouter } from "express";
+import { resolvePlanCode } from "../services/ai-quota";
 import { z } from "zod";
-import { eq, and, desc } from "drizzle-orm";
-import { db, studentSubscriptionsTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
+import { db } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import {
   startConversation,
@@ -25,21 +26,6 @@ import { assertUsableRecording, MediaValidationError } from "../services/media";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
-
-async function planFor(userId: number): Promise<string> {
-  const [sub] = await db
-    .select({ planCode: studentSubscriptionsTable.planCode })
-    .from(studentSubscriptionsTable)
-    .where(
-      and(
-        eq(studentSubscriptionsTable.userId, userId),
-        eq(studentSubscriptionsTable.status, "active"),
-      ),
-    )
-    .orderBy(desc(studentSubscriptionsTable.startedAt))
-    .limit(1);
-  return sub?.planCode ?? "free";
-}
 
 function handleError(err: unknown, res: import("express").Response): void {
   if (err instanceof ConversationBlockedError) {
@@ -93,7 +79,7 @@ router.post("/conversation/start", requireAuth, async (req, res): Promise<void> 
     const userId = req.session.userId!;
     res.status(201).json(
       await startConversation(userId, parsed.data.lessonId, parsed.data.blockId ?? null, {
-        subscriptionPlan: await planFor(userId),
+        subscriptionPlan: await resolvePlanCode(userId),
       }),
     );
   } catch (err) {
@@ -129,7 +115,7 @@ router.post("/conversation/:id/turn", requireAuth, async (req, res): Promise<voi
 
   try {
     const userId = req.session.userId!;
-    const plan = await planFor(userId);
+    const plan = await resolvePlanCode(userId);
 
     let said = message ?? "";
     let transcript: string | null = null;

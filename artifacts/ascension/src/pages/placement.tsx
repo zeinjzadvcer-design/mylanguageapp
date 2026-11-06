@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { BlockMedia } from "@/components/block-media";
+import { useI18n } from "@/lib/i18n";
 import { useToast } from "@/hooks/use-toast";
 import type { PlacementTestResult } from "@workspace/api-client-react";
 
@@ -19,6 +20,8 @@ export default function Placement() {
   const { data: test, isLoading, error } = useGetPlacementTest();
   const submitTest = useSubmitPlacementTest();
   const [, setLocation] = useLocation();
+  const { t, lang, pick } = useI18n();
+  const pl = t.placement;
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -40,37 +43,39 @@ export default function Placement() {
   if (error || !test) {
     return (
       <div className="p-8 text-center max-w-md mx-auto mt-20">
-        <h2 className="text-xl font-bold text-destructive mb-4">حدث خطأ في تحميل الاختبار</h2>
-        <Button onClick={() => window.location.reload()}>إعادة المحاولة</Button>
+        <h2 className="text-xl font-bold text-destructive mb-4">{pl.loadError}</h2>
+        <Button onClick={() => window.location.reload()}>{t.common.retry}</Button>
       </div>
     );
   }
 
   if (result) {
     return (
-      <div dir="rtl" className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
+      <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
         <Card className="max-w-lg w-full text-center border-primary shadow-2xl animate-in zoom-in-95 duration-500">
-          <div className="h-3 w-full bg-primary" />
+          <div className="h-3 w-full bg-gradient-to-r from-primary to-mint" />
           <CardContent className="pt-10 pb-8 px-6 space-y-6">
             <div className="h-20 w-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-2">
               <CheckCircle2 className="h-10 w-10 text-primary" />
             </div>
-            <h2 className="text-3xl font-bold text-foreground">تم تحديد مستواك بنجاح!</h2>
+            <h2 className="text-3xl font-bold text-foreground">{pl.resultTitle}</h2>
 
             <div className="p-6 bg-secondary rounded-2xl space-y-2">
-              <p className="text-muted-foreground mb-2">المستوى الخاص بك هو</p>
+              <p className="text-muted-foreground mb-2">{pl.yourLevel}</p>
               <div className="text-4xl font-bold text-primary" dir="ltr">{result.assignedLevelCode}</div>
-              <div className="text-xl font-bold text-foreground">{result.assignedLevelNameAr}</div>
-              <div className="text-sm text-muted-foreground" dir="ltr">{result.assignedLevelName}</div>
+              <div className="text-xl font-bold text-foreground">{pick(result.assignedLevelNameAr, result.assignedLevelName)}</div>
+              {lang === "ar" && (
+                <div className="text-sm text-muted-foreground" dir="ltr">{result.assignedLevelName}</div>
+              )}
             </div>
 
             <p className="text-muted-foreground text-sm">
-              بناءً على نتيجة {result.score} من {result.total} ({result.percentage}%) في اختبار تحديد المستوى.
+              {pl.basedOn(result.score, result.total, result.percentage)}
             </p>
 
-            {result.messageAr && (
+            {pick(result.messageAr, result.message) && (
               <p className="text-sm font-medium text-foreground bg-secondary/60 p-3 rounded-lg">
-                {result.messageAr}
+                {pick(result.messageAr, result.message)}
               </p>
             )}
 
@@ -79,7 +84,7 @@ export default function Placement() {
               className="w-full h-14 text-lg rounded-xl mt-4"
               onClick={() => setLocation("/dashboard")}
             >
-              الانتقال للرئيسية
+              {pl.goHome}
             </Button>
           </CardContent>
         </Card>
@@ -90,12 +95,12 @@ export default function Placement() {
   // Zero questions edge case
   if (test.questions.length === 0) {
     return (
-      <div dir="rtl" className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
+      <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
         <Card className="max-w-xl w-full border-border shadow-lg">
           <CardContent className="p-8 text-center space-y-6">
-            <h1 className="text-2xl font-bold text-foreground">الاختبار غير متاح</h1>
-            <p className="text-muted-foreground">لا توجد أسئلة في الاختبار حالياً. يرجى المحاولة لاحقاً.</p>
-            <Button onClick={() => setLocation("/dashboard")}>العودة للرئيسية</Button>
+            <h1 className="text-2xl font-bold text-foreground">{pl.unavailableTitle}</h1>
+            <p className="text-muted-foreground">{pl.unavailableBody}</p>
+            <Button onClick={() => setLocation("/dashboard")}>{pl.backHome}</Button>
           </CardContent>
         </Card>
       </div>
@@ -104,26 +109,25 @@ export default function Placement() {
 
   if (!started) {
     return (
-      <div dir="rtl" className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
+      <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-background">
         <Card className="max-w-xl w-full border-border shadow-lg">
           <CardContent className="p-8 text-center space-y-6">
-            <div className="h-16 w-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <div className="h-16 w-16 bg-lavender rounded-2xl flex items-center justify-center mx-auto mb-4">
               <span className="text-2xl">🎯</span>
             </div>
-            <h1 className="text-3xl font-bold text-foreground">اختبار تحديد المستوى</h1>
+            <h1 className="text-3xl font-bold text-foreground">{pl.introTitle}</h1>
             <p className="text-muted-foreground text-lg leading-relaxed">
-              لمعرفة من أين يجب أن تبدأ رحلتك معنا، قمنا بإعداد هذا الاختبار القصير.
-              الاختبار يتكون من {test.questions.length} سؤال.
+              {pl.introBody(test.questions.length)}
             </p>
-            <p className="text-sm text-amber-600 font-medium bg-amber-50 p-3 rounded-lg">
-              ملاحظة: إذا كنت لا تعرف الإجابة، يفضل تخطي السؤال لكي يتم تحديد مستواك بدقة بدلاً من التخمين.
+            <p className="text-sm text-mint-foreground font-medium bg-mint-soft p-3 rounded-lg">
+              {pl.introNote}
             </p>
             <Button
               size="lg"
               className="w-full h-14 text-lg rounded-xl mt-4 bg-primary hover:bg-primary/90"
               onClick={() => setStarted(true)}
             >
-              ابدأ الاختبار الآن
+              {pl.startNow}
             </Button>
           </CardContent>
         </Card>
@@ -174,8 +178,8 @@ export default function Placement() {
         onError: () => {
           toast({
             variant: "destructive",
-            title: "حدث خطأ",
-            description: "لم نتمكن من إرسال إجاباتك، يرجى المحاولة مرة أخرى.",
+            title: pl.submitErrorTitle,
+            description: pl.submitErrorBody,
           });
         }
       }
@@ -199,11 +203,11 @@ export default function Placement() {
   };
 
   return (
-    <div dir="rtl" className="min-h-[100dvh] flex flex-col p-4 bg-background max-w-2xl mx-auto w-full pt-12 md:pt-24">
+    <div className="min-h-[100dvh] flex flex-col p-4 bg-background max-w-2xl mx-auto w-full pt-12 md:pt-24">
       {/* Progress */}
       <div className="mb-8 space-y-2">
         <div className="flex justify-between text-sm font-medium text-muted-foreground">
-          <span>السؤال {currentIndex + 1} من {test.questions.length}</span>
+          <span>{pl.questionOf(currentIndex + 1, test.questions.length)}</span>
           <span>{Math.round(progress)}%</span>
         </div>
         <Progress value={progress} className="h-2" />
@@ -219,7 +223,7 @@ export default function Placement() {
             {question.questionText}
           </div>
           {question.questionTextAr && (
-            <div className="text-muted-foreground text-center mb-8">
+            <div className="text-muted-foreground text-center mb-8" dir="rtl">
               {question.questionTextAr}
             </div>
           )}
@@ -237,7 +241,7 @@ export default function Placement() {
                 placeholder="Write your answer in English…"
                 className="w-full rounded-xl border-2 border-border bg-card p-4 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none"
               />
-              <div className="text-xs text-muted-foreground text-right" dir="rtl">
+              <div className="text-xs text-muted-foreground text-start" dir="rtl">
                 {(writtenAnswers[question.id] ?? "").trim().length} / 4000
               </div>
             </div>
@@ -276,7 +280,7 @@ export default function Placement() {
           className="h-12 px-6 rounded-xl border-2"
           disabled={submitTest.isPending}
         >
-          لا أعرف الإجابة (تخطي)
+          {pl.skip}
         </Button>
 
         <Button
@@ -293,11 +297,11 @@ export default function Placement() {
           {submitTest.isPending ? (
             <Loader2 className="h-5 w-5 animate-spin" />
           ) : isLast ? (
-            "إنهاء الاختبار"
+            pl.finish
           ) : (
             <>
-              التالي
-              <ArrowLeft className="ml-2 h-4 w-4" />
+              {pl.next}
+              <ArrowLeft className="me-2 h-4 w-4 ltr:-scale-x-100" />
             </>
           )}
         </Button>

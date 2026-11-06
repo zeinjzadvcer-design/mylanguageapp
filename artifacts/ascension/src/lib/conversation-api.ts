@@ -55,6 +55,8 @@ export interface ConversationTurn {
 export interface ActiveSession {
   sessionId: number;
   lessonId: number | null;
+  /** The dialogue block it belongs to; a lesson can hold several. */
+  blockId?: number | null;
   turns: ConversationTurn[];
   turnsUsed: number;
   turnsRemaining: number;

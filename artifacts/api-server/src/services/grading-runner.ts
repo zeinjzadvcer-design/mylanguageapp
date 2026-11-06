@@ -16,7 +16,7 @@
  *    verdict, a teacher re-grading — converges instead of drifting.
  */
 
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import {
   db,
   quizzesTable,
@@ -28,7 +28,6 @@ import {
   exercisesTable,
   lessonsTable,
   levelsTable,
-  studentSubscriptionsTable,
 } from "@workspace/db";
 import {
   gradeOpenAnswer,
@@ -36,6 +35,8 @@ import {
   type OpenAnswerVerdict,
 } from "./graders/open-answer";
 import { assessSpeech, type SpeechVerdict } from "./graders/pronunciation";
+import { resolvePlanCode } from "./ai-quota";
+import { readingText } from "./lesson-content";
 import { transcribeSpokenTurn } from "./conversation";
 import {
   blockPoints,
@@ -82,18 +83,7 @@ function speechColumns(verdict: SpeechVerdict) {
  * policies deny — so an unsubscribed student cannot spend tokens.
  */
 async function getPlanCode(userId: number): Promise<string> {
-  const [sub] = await db
-    .select({ planCode: studentSubscriptionsTable.planCode })
-    .from(studentSubscriptionsTable)
-    .where(
-      and(
-        eq(studentSubscriptionsTable.userId, userId),
-        eq(studentSubscriptionsTable.status, "active"),
-      ),
-    )
-    .orderBy(desc(studentSubscriptionsTable.startedAt))
-    .limit(1);
-  return sub?.planCode ?? "free";
+  return resolvePlanCode(userId);
 }
 
 /** The level code an answer should be judged against. */
@@ -574,13 +564,20 @@ export async function gradeSpeakingActivity(
       {
         mediaKey: asset.key,
         mimeType: asset.mimeType,
-        referenceText: block?.expectsReferenceReading ? block.content : null,
+        referenceText: block?.expectsReferenceReading ? readingText(block.content) : null,
         levelCode,
         // A content manager may author the task on the block or on its
         // exercise — the Corner Café lesson puts everything on the exercise and
         // leaves the block's own prompt empty. Falling through means the
         // assessor is told what was asked either way.
-        prompt: block?.prompt ?? exercise?.prompt ?? exercise?.question ?? undefined,
+        //
+        // The exercise comes first: a speaking block can hold several prompts,
+        // one per exercise, and the block's own prompt only mirrors the first.
+        // Blank strings count as absent — the editor saves "" for empty fields.
+        prompt:
+          [exercise?.prompt, block?.prompt, exercise?.question].find(
+            (p): p is string => !!p && p.trim() !== "",
+          ) ?? undefined,
         modelAnswer: exercise?.modelAnswer ?? null,
       },
       { userId: attempt.userId, subscriptionPlan: planCode },

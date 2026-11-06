@@ -6,9 +6,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Plus } from "lucide-react";
 import { Link } from "wouter";
+import { useI18n } from "@/lib/i18n";
 
 export default function AdminLessons() {
   const { data: lessons, isLoading, error } = useGetAdminLessons();
+  const { t, lang, pick } = useI18n();
+  const al = t.admin.lessons;
 
   if (isLoading) {
     return (
@@ -22,7 +25,7 @@ export default function AdminLessons() {
   if (error || !lessons) {
     return (
       <div className="p-8 text-center text-destructive">
-        حدث خطأ أثناء تحميل بيانات الدروس
+        {al.loadError}
       </div>
     );
   }
@@ -31,28 +34,28 @@ export default function AdminLessons() {
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">المنهج والدروس</h1>
-          <p className="text-muted-foreground mt-1">إدارة المحتوى التعليمي للمنصة</p>
+          <h1 className="text-3xl font-bold text-foreground">{al.title}</h1>
+          <p className="text-muted-foreground mt-1">{al.subtitle}</p>
         </div>
         <Button asChild>
           <Link href="/cms/lessons/new">
-            <Plus className="mr-2 h-4 w-4" />
-            إضافة درس جديد
+            <Plus className="me-2 h-4 w-4" />
+            {al.add}
           </Link>
         </Button>
       </div>
 
       <Card>
         <CardContent className="p-0">
-          <Table dir="rtl">
+          <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-right w-16">المعرف</TableHead>
-                <TableHead className="text-right">عنوان الدرس</TableHead>
-                <TableHead className="text-right">النوع</TableHead>
-                <TableHead className="text-right">المدة المتوقعة</TableHead>
-                <TableHead className="text-right">الحالة</TableHead>
-                <TableHead className="text-center w-24">إجراءات</TableHead>
+                <TableHead className="text-start w-16">{al.id}</TableHead>
+                <TableHead className="text-start">{al.lessonTitle}</TableHead>
+                <TableHead className="text-start">{al.type}</TableHead>
+                <TableHead className="text-start">{al.duration}</TableHead>
+                <TableHead className="text-start">{al.status}</TableHead>
+                <TableHead className="text-center w-24">{al.actions}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -60,23 +63,25 @@ export default function AdminLessons() {
                 <TableRow key={lesson.id}>
                   <TableCell className="font-mono text-muted-foreground">{lesson.id}</TableCell>
                   <TableCell>
-                    <div className="font-bold text-foreground">{lesson.titleAr}</div>
-                    <div className="text-xs text-muted-foreground" dir="ltr">{lesson.title}</div>
+                    <div className="font-bold text-foreground">{pick(lesson.titleAr, lesson.title)}</div>
+                    {lang === "ar" && (
+                      <div className="text-xs text-muted-foreground" dir="ltr">{lesson.title}</div>
+                    )}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline" className="capitalize">{lesson.lessonType}</Badge>
+                    <Badge variant="outline" className="capitalize">{t.level.lessonTypes[lesson.lessonType] ?? lesson.lessonType}</Badge>
                   </TableCell>
-                  <TableCell>{lesson.estimatedMinutes} دقيقة</TableCell>
+                  <TableCell>{t.common.minutes(lesson.estimatedMinutes)}</TableCell>
                   <TableCell>
                     {lesson.isPublished ? (
-                      <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 border-emerald-200">منشور</Badge>
+                      <Badge className="bg-mint-soft text-mint-foreground hover:bg-mint-soft border-mint/40">{al.published}</Badge>
                     ) : (
-                      <Badge variant="secondary">مسودة</Badge>
+                      <Badge variant="secondary">{al.draft}</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-center">
                     <Button variant="ghost" size="sm" asChild>
-                      <Link href={`/cms/lessons/${lesson.id}/edit`}>تعديل</Link>
+                      <Link href={`/cms/lessons/${lesson.id}/edit`}>{al.edit}</Link>
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -84,7 +89,7 @@ export default function AdminLessons() {
               {lessons.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                    لا يوجد دروس لعرضها
+                    {al.empty}
                   </TableCell>
                 </TableRow>
               )}

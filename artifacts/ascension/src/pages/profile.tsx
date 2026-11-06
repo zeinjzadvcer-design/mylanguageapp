@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -13,22 +13,30 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { User as UserIcon, Loader2, Save, Calendar, Globe, BookOpen, Crown } from "lucide-react";
 import { format } from "date-fns";
-import { ar } from "date-fns/locale";
+import { useI18n } from "@/lib/i18n";
+import { LanguageSwitcher } from "@/components/brand";
+import type { Messages } from "@/locales/en";
 
-const formSchema = z.object({
-  name: z.string().min(2, { message: "الاسم يجب أن يكون حرفين على الأقل" }),
-  bio: z.string().max(160, { message: "النبذة يجب ألا تتجاوز 160 حرف" }).optional(),
-  preferredLanguage: z.nativeEnum(ProfileUpdatePreferredLanguage).default(ProfileUpdatePreferredLanguage.ar),
-  country: z.string().default("Syria"),
-});
+const makeSchema = (t: Messages) =>
+  z.object({
+    name: z.string().min(2, { message: t.profile.nameMin }),
+    bio: z.string().max(160, { message: t.profile.bioMax }).optional(),
+    preferredLanguage: z.nativeEnum(ProfileUpdatePreferredLanguage).default(ProfileUpdatePreferredLanguage.ar),
+    country: z.string().default("Syria"),
+  });
+
+type FormValues = z.infer<ReturnType<typeof makeSchema>>;
 
 export default function Profile() {
   const { data: profile, isLoading, refetch } = useGetProfile();
   const updateProfile = useUpdateProfile();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
+  const { t, setLang, dateLocale } = useI18n();
+  const p = t.profile;
+  const formSchema = useMemo(() => makeSchema(t), [t]);
 
-  const form = useForm<z.infer<typeof formSchema>>({
+  const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: "",
@@ -60,13 +68,15 @@ export default function Profile() {
 
   if (!profile) return null;
 
-  function onSubmit(values: z.infer<typeof formSchema>) {
+  function onSubmit(values: FormValues) {
     updateProfile.mutate(
       { data: values },
       {
         onSuccess: () => {
+          // The saved preference is also the language to show right now.
+          setLang(values.preferredLanguage === ProfileUpdatePreferredLanguage.en ? "en" : "ar");
           toast({
-            title: "تم تحديث الملف الشخصي",
+            title: p.updated,
           });
           setIsEditing(false);
           refetch();
@@ -74,8 +84,8 @@ export default function Profile() {
         onError: () => {
           toast({
             variant: "destructive",
-            title: "خطأ",
-            description: "لم نتمكن من تحديث بياناتك",
+            title: p.error,
+            description: p.updateFailed,
           });
         }
       }
@@ -87,11 +97,11 @@ export default function Profile() {
       
       {/* Profile Header */}
       <Card className="overflow-hidden border-border bg-gradient-to-br from-card to-secondary/30">
-        <CardContent className="p-8 md:p-12 text-center md:text-right flex flex-col md:flex-row items-center gap-8">
+        <CardContent className="p-8 md:p-12 text-center md:text-start flex flex-col md:flex-row items-center gap-8">
           <div className="h-32 w-32 rounded-full bg-primary/10 flex items-center justify-center shrink-0 border-4 border-card shadow-lg relative">
             <UserIcon className="h-16 w-16 text-primary" />
           </div>
-          <div className="flex-1 space-y-2 text-center md:text-right">
+          <div className="flex-1 space-y-2 text-center md:text-start">
             <h1 className="text-3xl font-bold text-foreground">{profile.name}</h1>
             <p className="text-muted-foreground text-lg" dir="ltr">{profile.email}</p>
             {profile.bio && (
@@ -102,15 +112,15 @@ export default function Profile() {
             <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 pt-4 mt-4 border-t border-border/50 text-sm text-muted-foreground">
               <div className="flex items-center gap-1.5">
                 <Calendar className="h-4 w-4" />
-                انضم في {format(new Date(profile.createdAt), "MMMM yyyy", { locale: ar })}
+                {p.joined(format(new Date(profile.createdAt), "MMMM yyyy", { locale: dateLocale }))}
               </div>
               <div className="flex items-center gap-1.5">
                 <Globe className="h-4 w-4" />
-                {profile.country || "سوريا"}
+                {(profile.country && p.countries[profile.country]) || profile.country || p.defaultCountry}
               </div>
               <div className="flex items-center gap-1.5">
                 <BookOpen className="h-4 w-4" />
-                المستوى: {profile.currentLevelCode}
+                {p.level(profile.currentLevelCode ?? "—")}
               </div>
             </div>
           </div>
@@ -120,7 +130,7 @@ export default function Profile() {
             className="md:self-start rounded-xl"
             onClick={() => setIsEditing(!isEditing)}
           >
-            {isEditing ? "إلغاء التعديل" : "تعديل الحساب"}
+            {isEditing ? p.cancelEdit : p.edit}
           </Button>
         </CardContent>
       </Card>
@@ -129,7 +139,7 @@ export default function Profile() {
       {isEditing ? (
         <Card>
           <CardHeader>
-            <CardTitle>تعديل البيانات الشخصية</CardTitle>
+            <CardTitle>{p.editTitle}</CardTitle>
           </CardHeader>
           <CardContent>
             <Form {...form}>
@@ -140,7 +150,7 @@ export default function Profile() {
                     name="name"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>الاسم الكامل</FormLabel>
+                        <FormLabel>{p.fullName}</FormLabel>
                         <FormControl>
                           <Input {...field} />
                         </FormControl>
@@ -154,18 +164,17 @@ export default function Profile() {
                     name="country"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>البلد</FormLabel>
+                        <FormLabel>{p.country}</FormLabel>
                         <Select onValueChange={field.onChange} defaultValue={field.value}>
                           <FormControl>
                             <SelectTrigger>
-                              <SelectValue placeholder="اختر البلد" />
+                              <SelectValue placeholder={p.chooseCountry} />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            <SelectItem value="Syria">سوريا</SelectItem>
-                            <SelectItem value="Lebanon">لبنان</SelectItem>
-                            <SelectItem value="Jordan">الأردن</SelectItem>
-                            <SelectItem value="Other">أخرى</SelectItem>
+                            {["Syria", "Lebanon", "Jordan", "Other"].map((c) => (
+                              <SelectItem key={c} value={c}>{p.countries[c]}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -178,11 +187,11 @@ export default function Profile() {
                     name="preferredLanguage"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>لغة الواجهة المفضلة</FormLabel>
+                        <FormLabel>{p.preferredLanguage}</FormLabel>
                         <Select onValueChange={field.onChange} defaultValue={field.value}>
                           <FormControl>
                             <SelectTrigger>
-                              <SelectValue placeholder="اختر اللغة" />
+                              <SelectValue placeholder={p.chooseLanguage} />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
@@ -201,10 +210,10 @@ export default function Profile() {
                   name="bio"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>نبذة عنك (اختياري)</FormLabel>
+                      <FormLabel>{p.bio}</FormLabel>
                       <FormControl>
                         <Textarea 
-                          placeholder="اكتب نبذة قصيرة عن أهدافك من تعلم اللغة..." 
+                          placeholder={p.bioPlaceholder} 
                           className="resize-none"
                           {...field} 
                         />
@@ -215,8 +224,8 @@ export default function Profile() {
                 />
 
                 <Button type="submit" disabled={updateProfile.isPending} className="rounded-xl">
-                  {updateProfile.isPending ? <Loader2 className="h-4 w-4 animate-spin ml-2" /> : <Save className="h-4 w-4 ml-2" />}
-                  حفظ التعديلات
+                  {updateProfile.isPending ? <Loader2 className="h-4 w-4 animate-spin me-2" /> : <Save className="h-4 w-4 me-2" />}
+                  {p.saveChanges}
                 </Button>
               </form>
             </Form>
@@ -226,25 +235,25 @@ export default function Profile() {
         <div className="grid md:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="bg-secondary/30 pb-4">
-              <CardTitle className="text-lg">إحصائيات التعلم</CardTitle>
+              <CardTitle className="text-lg">{p.statsTitle}</CardTitle>
             </CardHeader>
             <CardContent className="pt-6 space-y-6">
               <div className="flex justify-between items-center pb-4 border-b border-border">
-                <span className="text-muted-foreground font-medium">الدروس المنجزة</span>
+                <span className="text-muted-foreground font-medium">{p.lessonsDone}</span>
                 <span className="text-xl font-bold text-foreground">{profile.totalLessonsCompleted}</span>
               </div>
               <div className="flex justify-between items-center pb-4 border-b border-border">
-                <span className="text-muted-foreground font-medium">أيام التتابع (Streak)</span>
-                <span className="text-xl font-bold text-amber-600">{profile.streakDays}🔥</span>
+                <span className="text-muted-foreground font-medium">{p.streak}</span>
+                <span className="text-xl font-bold text-mint-foreground">{profile.streakDays}🔥</span>
               </div>
               <div className="flex justify-between items-center pb-4 border-b border-border">
-                <span className="text-muted-foreground font-medium">إجمالي النقاط</span>
+                <span className="text-muted-foreground font-medium">{p.totalXp}</span>
                 <span className="text-xl font-bold text-primary">{profile.totalXp} XP</span>
               </div>
               <div className="flex justify-between items-center pb-4 border-b border-border">
-                <span className="text-muted-foreground font-medium">حالة اختبار تحديد المستوى</span>
-                <span className={`text-sm font-bold px-3 py-1 rounded-full ${profile.placementCompleted ? "bg-emerald-100 text-emerald-700" : "bg-muted text-muted-foreground"}`}>
-                  {profile.placementCompleted ? "مكتمل" : "غير مكتمل"}
+                <span className="text-muted-foreground font-medium">{p.placementStatus}</span>
+                <span className={`text-sm font-bold px-3 py-1 rounded-full ${profile.placementCompleted ? "bg-mint-soft text-mint-foreground" : "bg-muted text-muted-foreground"}`}>
+                  {profile.placementCompleted ? p.complete : p.incomplete}
                 </span>
               </div>
             </CardContent>
@@ -252,23 +261,31 @@ export default function Profile() {
 
           <Card>
             <CardHeader className="bg-secondary/30 pb-4">
-              <CardTitle className="text-lg">حالة الاشتراك</CardTitle>
+              <CardTitle className="text-lg">{p.planTitle}</CardTitle>
             </CardHeader>
             <CardContent className="pt-6 flex flex-col items-center justify-center text-center space-y-4">
               <div className="h-16 w-16 bg-primary/10 rounded-full flex items-center justify-center mb-2">
                 <Crown className="h-8 w-8 text-primary" />
               </div>
               <h3 className="text-2xl font-bold capitalize">
-                {profile.subscriptionPlan === "free" ? "الباقة المجانية" : 
-                 profile.subscriptionPlan === "professional_english" ? "الإنجليزية المهنية" :
-                 profile.subscriptionPlan === "general_english" ? "الإنجليزية العامة" : profile.subscriptionPlan}
+                {(profile.subscriptionPlan && p.plans[profile.subscriptionPlan]) || profile.subscriptionPlan}
               </h3>
               <p className="text-muted-foreground text-sm max-w-xs mx-auto">
-                أنت حالياً تستخدم الخطة الأساسية للتعلم. للوصول لجميع الميزات يمكنك الترقية.
+                {p.planBody}
               </p>
               <Button onClick={() => window.location.href="/subscription"} className="mt-4 rounded-xl" variant="outline">
-                إدارة الاشتراك
+                {p.manage}
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="md:col-span-2">
+            <CardContent className="p-6 flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex-1">
+                <h3 className="font-bold text-foreground">{p.languageTitle}</h3>
+                <p className="text-sm text-muted-foreground mt-1">{p.languageBody}</p>
+              </div>
+              <LanguageSwitcher className="self-start sm:self-auto" />
             </CardContent>
           </Card>
         </div>

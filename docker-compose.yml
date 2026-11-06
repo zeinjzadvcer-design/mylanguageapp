@@ -145,6 +145,9 @@ services:
       PRACTICE_TURN_URLS: ${PRACTICE_TURN_URLS:-}
       PRACTICE_TURN_USERNAME: ${PRACTICE_TURN_USERNAME:-}
       PRACTICE_TURN_CREDENTIAL: ${PRACTICE_TURN_CREDENTIAL:-}
+      # Cloudflare Realtime TURN: mints short-lived credentials per process.
+      CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
+      CLOUDFLARE_TURN_API_TOKEN: ${CLOUDFLARE_TURN_API_TOKEN:-}
 
       # Call bounds. MAX_CALL_MINUTES is a cost lever, not just a courtesy:
       # it decides ASR minutes per evaluated call.

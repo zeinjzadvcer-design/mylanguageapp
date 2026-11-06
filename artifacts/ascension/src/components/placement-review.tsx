@@ -20,16 +20,18 @@ import { useToast } from "@/hooks/use-toast";
 import {
   getPlacementReview,
   overrideLevel,
-  SKILL_LABELS_AR,
   PlacementAdminError,
 } from "@/lib/placement-admin-api";
 import { AlertCircle, Sparkles, History, Loader2 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 export function PlacementReview({ studentId }: { studentId: number }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [levelId, setLevelId] = useState<number | "">("");
   const [note, setNote] = useState("");
+  const { t, lang, pick, locale } = useI18n();
+  const pr = t.placementReview;
 
   const { data, isLoading } = useQuery({
     queryKey: ["placement-review", studentId],
@@ -42,11 +44,11 @@ export function PlacementReview({ studentId }: { studentId: number }) {
       qc.invalidateQueries({ queryKey: ["placement-review", studentId] });
       setNote("");
       setLevelId("");
-      toast({ title: "تم تغيير المستوى", description: `المستوى الجديد: ${r.toLevelNameAr}` });
+      toast({ title: pr.changed, description: pr.newLevel(lang === "ar" ? r.toLevelNameAr : r.toLevelCode) });
     },
     onError: (e: Error) =>
       toast({
-        title: "تعذّر التغيير",
+        title: pr.changeFailed,
         description: e instanceof PlacementAdminError ? e.message : undefined,
         variant: "destructive",
       }),
@@ -62,24 +64,24 @@ export function PlacementReview({ studentId }: { studentId: number }) {
     placement.computedLevelCode !== placement.assignedLevelCode;
 
   return (
-    <div dir="rtl" className="space-y-4 bg-secondary/30 rounded-xl p-4">
+    <div className="space-y-4 bg-secondary/30 rounded-xl p-4">
       {!placementCompleted && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <AlertCircle className="h-4 w-4" />
-          لم يُكمل هذا الطالب اختبار تحديد المستوى بعد.
+          {pr.notPlaced}
         </div>
       )}
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <span className="text-xs text-muted-foreground">المستوى الحالي</span>
+          <span className="text-xs text-muted-foreground">{pr.currentLevel}</span>
           <p className="font-bold">
-            {currentLevel ? `${currentLevel.nameAr} (${currentLevel.code})` : "—"}
+            {currentLevel ? `${pick(currentLevel.nameAr, currentLevel.name)} (${currentLevel.code})` : "—"}
           </p>
         </div>
         {placement && (
-          <div className="text-left">
-            <span className="text-xs text-muted-foreground">نتيجة الاختبار</span>
+          <div className="text-end">
+            <span className="text-xs text-muted-foreground">{pr.testScore}</span>
             <p className="font-bold tabular-nums">
               {placement.score}/{placement.total}
             </p>
@@ -92,7 +94,7 @@ export function PlacementReview({ studentId }: { studentId: number }) {
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900 flex gap-2">
           <Sparkles className="h-3.5 w-3.5 shrink-0 mt-px" />
           <span>
-            حسب الاختبار: <strong>{placement.computedLevelCode}</strong> — عُدّل إلى{" "}
+            {pr.byTest} <strong>{placement.computedLevelCode}</strong> — {pr.adjustedTo}{" "}
             <strong>{placement.assignedLevelCode}</strong>
             {placement.adjustmentReason ? ` (${placement.adjustmentReason})` : ""}
           </span>
@@ -102,18 +104,18 @@ export function PlacementReview({ studentId }: { studentId: number }) {
       {/* The breakdown is what makes a review possible at all. */}
       {placement?.skillScores && Object.keys(placement.skillScores).length > 0 && (
         <div className="space-y-1.5">
-          <span className="text-xs text-muted-foreground">حسب المهارة</span>
+          <span className="text-xs text-muted-foreground">{pr.bySkill}</span>
           {Object.entries(placement.skillScores).map(([skill, score]) => (
             <div key={skill} className="space-y-0.5">
               <div className="flex justify-between text-xs">
-                <span>{SKILL_LABELS_AR[skill] ?? skill}</span>
+                <span>{t.skills[skill] ?? skill}</span>
                 <span className="tabular-nums">{score}%</span>
               </div>
               <Progress
                 value={score}
                 className={`h-1.5 ${
                   score >= 80
-                    ? "[&>div]:bg-emerald-500"
+                    ? "[&>div]:bg-mint"
                     : score <= 55
                       ? "[&>div]:bg-amber-500"
                       : ""
@@ -131,7 +133,7 @@ export function PlacementReview({ studentId }: { studentId: number }) {
       {placement?.writingSample && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground">
-            إجابة الكتابة
+            {pr.writing}
             {placement.writingScore !== null && ` (${Math.round(placement.writingScore)}%)`}
           </summary>
           <p className="mt-1 p-2 bg-background rounded-lg border" dir="ltr">
@@ -143,17 +145,17 @@ export function PlacementReview({ studentId }: { studentId: number }) {
       {/* Override. A note is required — an unexplained level change is
           indistinguishable from a mistake six months later. */}
       <div className="border-t pt-3 space-y-2">
-        <span className="text-xs font-bold">تغيير المستوى يدوياً</span>
+        <span className="text-xs font-bold">{pr.override}</span>
         <div className="grid gap-2 sm:grid-cols-2">
           <select
             value={levelId}
             onChange={(e) => setLevelId(e.target.value ? Number(e.target.value) : "")}
             className="h-9 rounded-lg border bg-background px-2 text-sm"
           >
-            <option value="">— اختر المستوى —</option>
+            <option value="">{pr.chooseLevel}</option>
             {levels.map((l) => (
               <option key={l.id} value={l.id}>
-                {l.code} — {l.nameAr}
+                {l.code} — {pick(l.nameAr, l.name)}
               </option>
             ))}
           </select>
@@ -161,7 +163,7 @@ export function PlacementReview({ studentId }: { studentId: number }) {
             rows={1}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="سبب التغيير (مطلوب)"
+            placeholder={pr.reason}
             className="text-sm rounded-lg"
           />
         </div>
@@ -172,7 +174,7 @@ export function PlacementReview({ studentId }: { studentId: number }) {
           className="rounded-lg gap-2"
         >
           {overrideMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          حفظ التغيير
+          {pr.save}
         </Button>
       </div>
 
@@ -180,24 +182,24 @@ export function PlacementReview({ studentId }: { studentId: number }) {
         <details className="text-xs border-t pt-2">
           <summary className="cursor-pointer text-muted-foreground flex items-center gap-1.5">
             <History className="h-3.5 w-3.5" />
-            سجل المستويات ({history.length})
+            {pr.history(history.length)}
           </summary>
           <ul className="mt-2 space-y-1">
             {history.map((h) => (
               <li key={h.id} className="flex justify-between gap-2 text-muted-foreground">
                 <span>
-                  {h.fromLevel ? `${h.fromLevel.code} ← ` : ""}
+                  {h.fromLevel ? `${h.fromLevel.code} ${lang === "ar" ? "←" : "→"} ` : ""}
                   <strong className="text-foreground">{h.toLevel?.code ?? "—"}</strong>
                   {" · "}
                   {h.reason === "placement"
-                    ? "اختبار التحديد"
+                    ? pr.reasonPlacement
                     : h.reason === "evaluation"
-                      ? "اجتياز التقييم"
-                      : "تعديل إداري"}
+                      ? pr.reasonEvaluation
+                      : pr.reasonAdmin}
                   {h.note ? ` — ${h.note}` : ""}
                 </span>
                 <span className="shrink-0 tabular-nums">
-                  {new Date(h.createdAt).toLocaleDateString()}
+                  {new Date(h.createdAt).toLocaleDateString(locale)}
                 </span>
               </li>
             ))}

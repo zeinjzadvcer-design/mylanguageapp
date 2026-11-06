@@ -22,7 +22,6 @@ import {
   deriveLessonStateWithOrders,
   getStudentCurriculumContext,
   getCurriculumLevels,
-  resolveAudioUrl,
   deriveLessonScore,
   getMissingRequiredBlockIds,
   maybeAdvanceLevel,
@@ -39,6 +38,11 @@ import {
   type LessonDenial,
 } from "../services/entitlements";
 import { gradeLessonActivity } from "../services/grading-runner";
+import {
+  toStudentContentBlocks,
+  isRecordingBlock,
+  type StudentContentBlock,
+} from "../services/lesson-content";
 import { jobs } from "../services/jobs";
 
 const router: IRouter = Router();
@@ -223,55 +227,7 @@ interface LessonContentBundle {
   levelOrder: number;
   levelId: number;
   levelCurriculumId: number;
-  contentBlocks: Array<{
-    id: number;
-    type: string;
-    order: number;
-    title: string | null;
-    titleAr: string | null;
-    instructions: string | null;
-    instructionsAr: string | null;
-    isRequired: boolean;
-    estimatedMinutes: number | null;
-    config: unknown;
-    content: string | null;
-    contentAr: string | null;
-    audioNote: string | null;
-    vocabularyItems: Array<{
-      id: number;
-      levelId: number;
-      lessonId: number | null;
-      word: string;
-      translation: string;
-      exampleSentence: string | null;
-      exampleSentenceAr: string | null;
-      pronunciation: string | null;
-      audioNote: string | null;
-    }> | null;
-    exerciseId: number | null;
-    exerciseType: string | null;
-    question: string | null;
-    questionAr: string | null;
-    options: Array<{ id: string; text: string; textAr: string | null }> | null;
-    prompt: string | null;
-    promptAr: string | null;
-    exampleAudio: string | null;
-    audioUrl: string | null;
-    referenceMediaId: number | null;
-    /** Optional illustration media. No grading meaning. */
-    imageMediaId: number | null;
-    audioMediaId: number | null;
-  }>;
-}
-
-/**
- * Treats a blank string as a missing value. The CMS writes "" for text fields
- * left untouched, so `??` alone would prefer an empty block column over a real
- * value stored on the exercise.
- */
-function emptyToNull(value: string | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  return value.trim() === "" ? null : value;
+  contentBlocks: StudentContentBlock[];
 }
 
 async function loadLessonContent(lessonId: number): Promise<LessonContentBundle | null> {
@@ -309,88 +265,7 @@ async function loadLessonContent(lessonId: number): Promise<LessonContentBundle 
           .where(inArray(exerciseOptionsTable.exerciseId, exerciseIds))
       : [];
 
-  const contentBlocks = blocks.map((block) => {
-    // A block can hold several questions; the singular fields below describe
-    // the first, and `questions` carries them all.
-    // Already ordered by the query; filter preserves that order.
-    const blockExercises = exercises.filter((e) => e.contentBlockId === block.id);
-    const exercise = blockExercises[0] ?? null;
-    const optionsFor = (exerciseId: number) =>
-      allOptions
-        .filter((o) => o.exerciseId === exerciseId)
-        .map((o) => ({ id: o.optionId, text: o.text, textAr: o.textAr ?? null }));
-    const options = exercise ? optionsFor(exercise.id) : null;
-
-    return {
-      id: block.id,
-      type: block.type,
-      order: block.order,
-      title: block.title ?? null,
-      titleAr: block.titleAr ?? null,
-      instructions: block.instructions ?? null,
-      instructionsAr: block.instructionsAr ?? null,
-      isRequired: block.isRequired,
-      estimatedMinutes: block.estimatedMinutes ?? null,
-      config: block.config ?? null,
-      content: block.content ?? null,
-      contentAr: block.contentAr ?? null,
-      audioNote: block.audioNote ?? null,
-      vocabularyItems:
-        block.type === "vocabulary_list"
-          ? vocab.map((v) => ({
-              id: v.id,
-              levelId: v.levelId,
-              lessonId: v.lessonId ?? null,
-              word: v.word,
-              translation: v.translation,
-              exampleSentence: v.exampleSentence ?? null,
-              exampleSentenceAr: v.exampleSentenceAr ?? null,
-              pronunciation: v.pronunciation ?? null,
-              audioNote: v.audioNote ?? null,
-            }))
-          : null,
-      exerciseId: exercise?.id ?? null,
-      exerciseType: exercise?.exerciseType ?? null,
-      question: exercise?.question ?? null,
-      questionAr: exercise?.questionAr ?? null,
-      // Never expose correctOptionId before submission
-      options,
-      /** Every question on this block, in order. Answer keys stay server-side. */
-      questions: blockExercises.map((e) => ({
-        exerciseId: e.id,
-        exerciseType: e.exerciseType,
-        question: e.question,
-        questionAr: e.questionAr ?? null,
-        options: optionsFor(e.id),
-      })),
-      // The CMS speaking and open-ended editors write the question onto the
-      // exercise row, while every other block type carries it on the block
-      // itself. Fall back to the exercise so a block authored that way still
-      // shows its prompt instead of an empty screen. `question` is the
-      // open-ended editor's field, `prompt` the speaking one's. Empty strings
-      // count as absent: the editor saves "" rather than NULL for a field it
-      // never filled.
-      prompt:
-        emptyToNull(block.prompt) ??
-        emptyToNull(exercise?.prompt) ??
-        emptyToNull(exercise?.question) ??
-        null,
-      promptAr:
-        emptyToNull(block.promptAr) ??
-        emptyToNull(exercise?.promptAr) ??
-        emptyToNull(exercise?.questionAr) ??
-        null,
-      exampleAudio: block.exampleAudio ?? null,
-      audioUrl: resolveAudioUrl(block, exercise),
-      // Resolved to a playable URL by the client through /media/:id/url rather
-      // than presigned here — a lesson can hold many blocks, and signing every
-      // one on every load would be wasted work for the ones never played.
-      referenceMediaId: block.referenceMediaId ?? null,
-      // Resolved to a playable URL by the client, same as referenceMediaId.
-      imageMediaId: block.imageMediaId ?? null,
-      audioMediaId: block.audioMediaId ?? null,
-    };
-  });
+  const contentBlocks = toStudentContentBlocks(blocks, exercises, allOptions, vocab);
 
   return {
     lesson: {
@@ -842,7 +717,29 @@ router.post(
       return;
     }
 
-    // A block may be answered a limited number of times.
+    // Find the exercise being answered. Scoping by block and lesson as well as
+    // id is what stops an exercise from another lesson being submitted here.
+    const [exercise] = await db
+      .select()
+      .from(exercisesTable)
+      .where(
+        and(
+          eq(exercisesTable.contentBlockId, blockId),
+          eq(exercisesTable.lessonId, lessonId),
+          ...(requestedExerciseId ? [eq(exercisesTable.id, requestedExerciseId)] : []),
+        ),
+      )
+      // Same order the student is shown, so "the first question" means the
+      // same one here as on screen.
+      .orderBy(asc(exercisesTable.ordering), asc(exercisesTable.id))
+      .limit(1);
+
+    if (requestedExerciseId && !exercise) {
+      res.status(404).json({ error: "Exercise not found on this block" });
+      return;
+    }
+
+    // An item may be answered a limited number of times.
     //
     // Nothing used to bound this. The only ceiling was the per-plan AI quota,
     // which meant a student could retry one pronunciation block until their
@@ -854,11 +751,19 @@ router.post(
     // cannot drift from the attempts actually recorded, and so it is right for
     // rows that already exist.
     //
+    // Counted per question when the block holds several. Counting per block
+    // refused the fourth question of a four-question block outright: each
+    // question answered once had already used the block's three attempts.
+    //
     // Passive blocks are exempt: re-reading a passage costs nothing and marking
-    // one as seen twice is not a retry. The cap applies per block per lesson,
-    // so retaking the lesson later is a separate matter — `maxAttempts` bounds
-    // one sitting, `ai_plan_policies` bounds the month.
-    if (block.type !== "text" && block.type !== "explanation" && block.type !== "review") {
+    // one as seen twice is not a retry. A text block read ALOUD is not passive —
+    // each recording is a transcription — so it is counted like any other. The
+    // cap applies per lesson, so retaking the lesson later is a separate matter
+    // — `maxAttempts` bounds one sitting, `ai_plan_policies` bounds the month.
+    const isPassiveBlock =
+      (block.type === "text" || block.type === "explanation" || block.type === "review") &&
+      mediaId === undefined;
+    if (!isPassiveBlock) {
       const [{ used }] = await db
         .select({ used: sql<number>`count(*)::int` })
         .from(learningActivityAttemptsTable)
@@ -867,6 +772,7 @@ router.post(
             eq(learningActivityAttemptsTable.userId, userId),
             eq(learningActivityAttemptsTable.lessonId, lessonId),
             eq(learningActivityAttemptsTable.blockId, blockId),
+            ...(exercise ? [eq(learningActivityAttemptsTable.exerciseId, exercise.id)] : []),
           ),
         );
 
@@ -917,26 +823,6 @@ router.post(
         }
         throw err;
       }
-    }
-
-    // Find the exercise being answered. Scoping by block and lesson as well as
-    // id is what stops an exercise from another lesson being submitted here.
-    const [exercise] = await db
-      .select()
-      .from(exercisesTable)
-      .where(
-        and(
-          eq(exercisesTable.contentBlockId, blockId),
-          eq(exercisesTable.lessonId, lessonId),
-          ...(requestedExerciseId ? [eq(exercisesTable.id, requestedExerciseId)] : []),
-        ),
-      )
-      .orderBy(asc(exercisesTable.id))
-      .limit(1);
-
-    if (requestedExerciseId && !exercise) {
-      res.status(404).json({ error: "Exercise not found on this block" });
-      return;
     }
 
     let activityType = "passive";
@@ -992,6 +878,14 @@ router.post(
         isCorrect = null;
         score = null;
       }
+    } else if (mediaId !== undefined && isRecordingBlock(block)) {
+      // A recording on a block with no exercise row. The pronunciation editor
+      // never creates one — the word, passage and reference audio all live on
+      // the block — and neither does a text block read aloud. Treating these as
+      // passive stored the recording and never assessed it. The speech grader
+      // reads the passage from the block, so the block is all it needs.
+      activityType = block.type === "speaking_prompt" ? "speaking" : "pronunciation";
+      evaluationStatus = "pending";
     }
 
     // Persist attempt

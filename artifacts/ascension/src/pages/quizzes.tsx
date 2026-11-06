@@ -17,30 +17,28 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GraduationCap, Clock, Trophy, CheckCircle2, RotateCcw } from "lucide-react";
-
-function formatMinutes(seconds: number | null): string | null {
-  if (!seconds) return null;
-  return `${Math.round(seconds / 60)} دقيقة`;
-}
+import { useI18n } from "@/lib/i18n";
 
 function QuizCard({ quiz }: { quiz: QuizListItem }) {
+  const { t, pick } = useI18n();
+  const q = t.quizzes;
   const exhausted =
     quiz.attemptsRemaining !== null && quiz.attemptsRemaining <= 0 && !quiz.activeAttemptId;
-  const timeLimit = formatMinutes(quiz.timeLimitSec);
+  const timeLimit = quiz.timeLimitSec ? q.minutes(Math.round(quiz.timeLimitSec / 60)) : null;
 
   return (
     <Card className="border-2 border-border hover:border-primary/30 transition-colors">
       <CardContent className="p-5 space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1 flex-1">
-            <h3 className="text-lg font-bold text-foreground">{quiz.titleAr || quiz.title}</h3>
-            {quiz.descriptionAr && (
-              <p className="text-sm text-muted-foreground leading-relaxed">{quiz.descriptionAr}</p>
+            <h3 className="text-lg font-bold text-foreground">{pick(quiz.titleAr, quiz.title)}</h3>
+            {pick(quiz.descriptionAr, quiz.description) && (
+              <p className="text-sm text-muted-foreground leading-relaxed">{pick(quiz.descriptionAr, quiz.description)}</p>
             )}
           </div>
           {quiz.passed && (
-            <Badge className="shrink-0 bg-emerald-600 hover:bg-emerald-600">
-              <CheckCircle2 className="h-3 w-3 ml-1" /> ناجح
+            <Badge className="shrink-0 bg-mint text-accent-foreground hover:bg-mint">
+              <CheckCircle2 className="h-3 w-3 me-1" /> {q.passed}
             </Badge>
           )}
         </div>
@@ -52,36 +50,36 @@ function QuizCard({ quiz }: { quiz: QuizListItem }) {
             </span>
           )}
           <span className="flex items-center gap-1">
-            <Trophy className="h-3.5 w-3.5" /> النجاح {quiz.passingScore}%
+            <Trophy className="h-3.5 w-3.5" /> {q.passMark(quiz.passingScore)}
           </span>
           {quiz.bestScore !== null && (
             <span className="font-medium text-foreground">
-              أفضل نتيجة: {Math.round(quiz.bestScore)}%
+              {q.bestScore(Math.round(quiz.bestScore))}
             </span>
           )}
           <span>
             {quiz.attemptsRemaining === null
-              ? `${quiz.attemptsUsed} محاولة`
-              : `${quiz.attemptsRemaining} من ${quiz.maxAttempts} محاولات متبقية`}
+              ? q.attemptsUsed(quiz.attemptsUsed)
+              : q.attemptsLeft(quiz.attemptsRemaining, quiz.maxAttempts ?? quiz.attemptsRemaining)}
           </span>
         </div>
 
         <div className="pt-1">
           {exhausted ? (
             <Button disabled className="w-full md:w-auto">
-              لا توجد محاولات متبقية
+              {q.noAttempts}
             </Button>
           ) : (
             <Link href={`/quiz/${quiz.id}`}>
               <Button className="w-full md:w-auto">
                 {quiz.activeAttemptId ? (
                   <>
-                    <RotateCcw className="h-4 w-4 ml-1" /> متابعة المحاولة
+                    <RotateCcw className="h-4 w-4 me-1" /> {q.resume}
                   </>
                 ) : quiz.attemptsUsed > 0 ? (
-                  "إعادة المحاولة"
+                  q.retake
                 ) : (
-                  "ابدأ الاختبار"
+                  q.start
                 )}
               </Button>
             </Link>
@@ -97,6 +95,8 @@ export default function Quizzes() {
     queryKey: ["student-quizzes"],
     queryFn: listQuizzes,
   });
+  const { t } = useI18n();
+  const q = t.quizzes;
 
   if (isLoading) {
     return (
@@ -113,7 +113,7 @@ export default function Quizzes() {
 
   if (error || !data) {
     return (
-      <div className="p-8 text-center text-destructive">حدث خطأ أثناء تحميل الاختبارات</div>
+      <div className="p-8 text-center text-destructive">{q.loadError}</div>
     );
   }
 
@@ -126,9 +126,9 @@ export default function Quizzes() {
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
       <div>
-        <h1 className="text-3xl font-bold text-foreground">الاختبارات</h1>
+        <h1 className="text-3xl font-bold text-foreground">{q.title}</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          اختبر ما تعلمته. يمكنك إعادة المحاولة حسب القواعد المحددة لكل اختبار.
+          {q.subtitle}
         </p>
       </div>
 
@@ -137,14 +137,14 @@ export default function Quizzes() {
           <CardContent className="p-10 flex flex-col items-center text-center gap-3">
             <GraduationCap className="h-12 w-12 text-muted-foreground/40" />
             <p className="text-muted-foreground">
-              لا توجد اختبارات متاحة بعد. ستظهر هنا عند نشرها.
+              {q.empty}
             </p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
-          {quizzes.map((q) => (
-            <QuizCard key={q.id} quiz={q} />
+          {quizzes.map((quiz) => (
+            <QuizCard key={quiz.id} quiz={quiz} />
           ))}
         </div>
       )}
@@ -152,13 +152,13 @@ export default function Quizzes() {
       {evaluations.length > 0 && (
         <div className="space-y-3 pt-4">
           <div>
-            <h2 className="text-xl font-bold text-foreground">اختبارات المستوى</h2>
+            <h2 className="text-xl font-bold text-foreground">{q.levelTitle}</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              تُفتح بعد إكمال دروس المستوى، وتحدد انتقالك إلى المستوى التالي.
+              {q.levelBody}
             </p>
           </div>
-          {evaluations.map((q) => (
-            <QuizCard key={q.id} quiz={q} />
+          {evaluations.map((quiz) => (
+            <QuizCard key={quiz.id} quiz={quiz} />
           ))}
         </div>
       )}

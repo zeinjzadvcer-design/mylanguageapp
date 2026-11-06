@@ -71,7 +71,7 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
       currentCurriculum: null,
       currentLevel: null,
       nextLesson: null,
-      lessonStateCounts: { LOCKED: 0, AVAILABLE: 0, IN_PROGRESS: 0, COMPLETED: 0 },
+      lessonStateCounts: { locked: 0, available: 0, inProgress: 0, completed: 0 },
       lessons: [],
       totalLessonsCompleted: 0,
       totalLessonsInLevel: 0,
@@ -143,12 +143,22 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
       progressRow?.status,
     );
     lessonStateCounts[state]++;
+    // The full LessonSummary the spec promises. It used to stop at seven
+    // fields, so the dashboard read estimatedMinutes off nextLesson and showed
+    // "undefined minutes".
     return {
       id: lesson.id,
+      levelId: lesson.levelId,
+      levelCode: currentLevel?.code ?? "",
       title: lesson.title,
       titleAr: lesson.titleAr,
+      description: lesson.description ?? null,
+      descriptionAr: lesson.descriptionAr ?? null,
       order: lesson.order,
+      lessonType: lesson.lessonType,
+      estimatedMinutes: lesson.estimatedMinutes,
       state,
+      isUnlocked: state !== "LOCKED",
       isCompleted: state === "COMPLETED",
       bestScore: progressRow?.bestScore ?? null,
       xpReward: lesson.xpReward,
@@ -259,17 +269,15 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
           isCompleted: completedInLevel === allLessonsInLevel.length,
         }
       : null,
-    nextLesson: nextLesson
-      ? {
-          id: nextLesson.id,
-          title: nextLesson.title,
-          titleAr: nextLesson.titleAr,
-          order: nextLesson.order,
-          state: nextLesson.state,
-          xpReward: nextLesson.xpReward,
-        }
-      : null,
-    lessonStateCounts,
+    nextLesson: nextLesson ?? null,
+    // Keyed as the spec defines them. The internal tally is keyed by lesson
+    // state, and sending it as-is left every count on the dashboard blank.
+    lessonStateCounts: {
+      locked: lessonStateCounts.LOCKED,
+      available: lessonStateCounts.AVAILABLE,
+      inProgress: lessonStateCounts.IN_PROGRESS,
+      completed: lessonStateCounts.COMPLETED,
+    },
     lessons: lessonSummaries,
     totalLessonsCompleted: completedIds.size,
     totalLessonsInLevel: allLessonsInLevel.length,

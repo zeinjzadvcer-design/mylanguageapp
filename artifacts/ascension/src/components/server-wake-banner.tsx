@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Spinner } from '@/components/ui/spinner';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Wakes the API and tells the user when it is slow to answer.
@@ -27,6 +28,7 @@ type Status = 'idle' | 'waking' | 'failed';
 export function ServerWakeBanner() {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<Status>('idle');
+  const { t } = useI18n();
   const runId = useRef(0);
 
   const wake = useCallback(async () => {
@@ -91,17 +93,17 @@ export function ServerWakeBanner() {
       {status === 'waking' ? (
         <>
           <Spinner />
-          <span>Waking up the server — this can take up to a minute.</span>
+          <span>{t.common.serverWaking}</span>
         </>
       ) : (
         <>
-          <span>The server is not responding.</span>
+          <span>{t.common.serverDown}</span>
           <button
             type="button"
             onClick={() => void wake()}
             className="font-medium text-primary underline-offset-4 hover:underline"
           >
-            Try again
+            {t.common.retry}
           </button>
         </>
       )}

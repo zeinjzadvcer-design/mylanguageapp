@@ -878,6 +878,94 @@ export async function readSignals(
   }));
 }
 
+type IceServer = { urls: string | string[]; username?: string; credential?: string };
+
+/**
+ * Cloudflare Realtime TURN. Cloudflare issues no fixed username and password:
+ * the key below mints short-lived credentials through its API, and only that
+ * minted pair is ever handed to a browser — the key itself stays here.
+ */
+const CLOUDFLARE_TURN_KEY_ID = process.env.CLOUDFLARE_TURN_KEY_ID ?? "";
+const CLOUDFLARE_TURN_API_TOKEN = process.env.CLOUDFLARE_TURN_API_TOKEN ?? "";
+
+/** Lifetime of a minted credential. Shared by every call this process serves. */
+const CLOUDFLARE_TURN_TTL_S = 24 * 60 * 60;
+
+/**
+ * Mint a fresh credential once less than this remains, so one handed out can
+ * never expire part-way through the longest call the server allows.
+ */
+const CLOUDFLARE_TURN_REFRESH_MARGIN_MS = (MAX_CALL_MINUTES + 10) * 60_000;
+
+/** After a failed mint, wait this long before asking Cloudflare again. */
+const CLOUDFLARE_TURN_RETRY_MS = 30_000;
+
+let cloudflareTurn: { server: IceServer; expiresAt: number } | null = null;
+let cloudflareTurnPending: Promise<IceServer | null> | null = null;
+let cloudflareTurnRetryAt = 0;
+
+async function mintCloudflareTurn(): Promise<IceServer | null> {
+  const res = await fetch(
+    `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(CLOUDFLARE_TURN_KEY_ID)}/credentials/generate-ice-servers`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${CLOUDFLARE_TURN_API_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ttl: CLOUDFLARE_TURN_TTL_S }),
+      signal: AbortSignal.timeout(5_000),
+    },
+  );
+  if (!res.ok) throw new Error(`Cloudflare TURN answered ${res.status}`);
+
+  // Older responses carry one object, current ones a list with a STUN entry
+  // first. Only the entry with credentials is the relay.
+  const body = (await res.json()) as { iceServers?: IceServer | IceServer[] };
+  const list = Array.isArray(body.iceServers) ? body.iceServers : body.iceServers ? [body.iceServers] : [];
+  const relay = list.find((s) => s.username && s.credential);
+  if (!relay) throw new Error("Cloudflare TURN response had no credentials");
+
+  // Browsers refuse port 53, so that alternate only ever costs a timeout.
+  const urls = (Array.isArray(relay.urls) ? relay.urls : [relay.urls]).filter(
+    (u) => !/:53(\?|$)/.test(u),
+  );
+  return { urls, username: relay.username, credential: relay.credential };
+}
+
+/**
+ * The cached Cloudflare relay, minted on first use and again near expiry.
+ *
+ * A failure is logged and answered with null — the call then falls back to
+ * STUN, which still connects most pairs — rather than refusing to start calls
+ * because a third party is briefly unreachable.
+ */
+async function cloudflareTurnServer(): Promise<IceServer | null> {
+  const now = Date.now();
+  if (cloudflareTurn && cloudflareTurn.expiresAt - now > CLOUDFLARE_TURN_REFRESH_MARGIN_MS) {
+    return cloudflareTurn.server;
+  }
+  if (now < cloudflareTurnRetryAt) return cloudflareTurn?.server ?? null;
+
+  cloudflareTurnPending ??= mintCloudflareTurn()
+    .then((server) => {
+      if (server) {
+        cloudflareTurn = { server, expiresAt: Date.now() + CLOUDFLARE_TURN_TTL_S * 1000 };
+      }
+      return server;
+    })
+    .catch((err: unknown) => {
+      cloudflareTurnRetryAt = Date.now() + CLOUDFLARE_TURN_RETRY_MS;
+      logger.warn({ err }, "Cloudflare TURN credentials could not be minted; calls fall back to STUN");
+      // An older credential that has not yet expired is still better than none.
+      return cloudflareTurn && cloudflareTurn.expiresAt > Date.now() ? cloudflareTurn.server : null;
+    })
+    .finally(() => {
+      cloudflareTurnPending = null;
+    });
+  return cloudflareTurnPending;
+}
+
 /**
  * What the browser should hand to RTCPeerConnection.
  *
@@ -885,15 +973,18 @@ export async function readSignals(
  * can be added by setting environment variables, without shipping new client
  * code — and so TURN credentials never sit in a public JavaScript file.
  *
+ * Cloudflare is used when its key is set, a static relay when PRACTICE_TURN_URLS
+ * is; both may be.
+ *
  * With no TURN configured this is STUN only, and roughly one connection in five
  * will not establish. The client is told as much and says so plainly rather
  * than sitting on "connecting…".
  */
-export function iceServers(): {
-  iceServers: Array<{ urls: string | string[]; username?: string; credential?: string }>;
+export async function iceServers(): Promise<{
+  iceServers: IceServer[];
   hasTurn: boolean;
   connectTimeoutMs: number;
-} {
+}> {
   const stun = (process.env.PRACTICE_STUN_URLS ??
     "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302")
     .split(",")
@@ -903,9 +994,18 @@ export function iceServers(): {
   // An entry with an empty url list is not "no STUN", it is a malformed
   // configuration: RTCPeerConnection throws on construction and the call never
   // starts. Leave the entry out instead.
-  const servers: Array<{ urls: string | string[]; username?: string; credential?: string }> =
-    stun.length > 0 ? [{ urls: stun }] : [];
+  const servers: IceServer[] = stun.length > 0 ? [{ urls: stun }] : [];
+  let hasTurn = false;
 
+  if (CLOUDFLARE_TURN_KEY_ID && CLOUDFLARE_TURN_API_TOKEN) {
+    const relay = await cloudflareTurnServer();
+    if (relay) {
+      servers.push(relay);
+      hasTurn = true;
+    }
+  }
+
+  // A static relay (coturn, Metered) as well as, or instead of, Cloudflare.
   const turnUrls = (process.env.PRACTICE_TURN_URLS ?? "")
     .split(",")
     .map((u) => u.trim())
@@ -917,11 +1017,12 @@ export function iceServers(): {
       username: process.env.PRACTICE_TURN_USERNAME,
       credential: process.env.PRACTICE_TURN_CREDENTIAL,
     });
+    hasTurn = true;
   }
 
   return {
     iceServers: servers,
-    hasTurn: turnUrls.length > 0,
+    hasTurn,
     connectTimeoutMs: CONNECT_TIMEOUT_MS,
   };
 }

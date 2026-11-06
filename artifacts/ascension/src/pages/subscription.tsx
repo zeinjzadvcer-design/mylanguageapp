@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { CheckCircle2, Crown, Loader2, AlertTriangle, X } from "lucide-react";
 import { SubscriptionInputPlanCode, SubscriptionInputPaymentMethod } from "@workspace/api-client-react";
+import { useI18n } from "@/lib/i18n";
 
 /** localStorage key for rejection notices the student has closed. */
 const DISMISSED_KEY = "ascension:dismissed-payment-rejections";
@@ -31,6 +32,8 @@ export default function Subscription() {
   const { data: subscription, isLoading: subLoading, refetch } = useGetSubscription();
   const createSub = useCreateSubscription();
   const { toast } = useToast();
+  const { t, lang, pick } = useI18n();
+  const sb = t.subscription;
 
   /**
    * The student's payment submissions.
@@ -150,8 +153,8 @@ export default function Subscription() {
         onError: () => {
           toast({
             variant: "destructive",
-            title: "خطأ",
-            description: "حدث خطأ أثناء تقديم الطلب. يرجى المحاولة لاحقاً.",
+            title: sb.error,
+            description: sb.requestFailed,
           });
         }
       }
@@ -161,12 +164,12 @@ export default function Subscription() {
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500">
       <div className="text-center max-w-2xl mx-auto mb-12">
-        <div className="h-16 w-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
-          <Crown className="h-8 w-8 text-amber-500" />
+        <div className="h-16 w-16 bg-mint-soft rounded-full flex items-center justify-center mx-auto mb-6">
+          <Crown className="h-8 w-8 text-mint-foreground" />
         </div>
-        <h1 className="text-3xl font-bold text-foreground mb-4">الاشتراكات المميزة</h1>
+        <h1 className="text-3xl font-bold text-foreground mb-4">{sb.title}</h1>
         <p className="text-muted-foreground text-lg">
-          استثمر في مستقبلك بتكلفة مدروسة. طور لغتك الإنجليزية للعمل والدراسة.
+          {sb.subtitle}
         </p>
       </div>
 
@@ -246,7 +249,7 @@ export default function Subscription() {
             </div>
             <div>
               <h3 className="font-bold text-lg">
-                اشتراكك الحالي: {subscription.planNameAr}
+                {sb.currentPlan(pick(subscription.planNameAr, subscription.planName))}
               </h3>
               <p className="text-sm text-muted-foreground mt-1">
                 {subscription.expiresAt
@@ -269,20 +272,20 @@ export default function Subscription() {
               isPro ? "border-primary shadow-xl" : "border-border shadow-sm"
             }`}>
               {isPro && (
-                <div className="absolute top-0 right-1/2 translate-x-1/2 -translate-y-1/2 bg-amber-500 text-white px-4 py-1 rounded-full text-sm font-bold shadow-lg">
-                  الأفضل للموظفين
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-accent text-accent-foreground px-4 py-1 rounded-full text-sm font-bold shadow-lg whitespace-nowrap">
+                  {sb.bestForWork}
                 </div>
               )}
               
               <CardContent className="p-8 flex flex-col flex-1">
-                <h3 className="text-2xl font-bold mb-2">{plan.nameAr}</h3>
+                <h3 className="text-2xl font-bold mb-2">{pick(plan.nameAr, plan.name)}</h3>
                 <div className="text-4xl font-bold mb-6 text-primary">
                   ${plan.priceUsd}
-                  <span className="text-lg text-muted-foreground font-normal"> / شهرياً</span>
+                  <span className="text-lg text-muted-foreground font-normal">{t.common.perMonth}</span>
                 </div>
                 
                 <ul className="space-y-4 mb-8 flex-1">
-                  {plan.featuresAr?.map((feature, idx) => (
+                  {(lang === "en" && plan.features?.length ? plan.features : plan.featuresAr)?.map((feature, idx) => (
                     <li key={idx} className="flex items-start gap-3">
                       <CheckCircle2 className={`h-5 w-5 shrink-0 ${isPro ? "text-primary" : "text-muted-foreground"}`} />
                       <span className="text-sm font-medium">{feature}</span>
@@ -332,7 +335,7 @@ export default function Subscription() {
                 )}
                 {isFree && (
                   <Button variant="ghost" disabled className="w-full h-12 rounded-xl border border-dashed">
-                    الباقة الأساسية
+                    {sb.basicPlan}
                   </Button>
                 )}
               </CardContent>

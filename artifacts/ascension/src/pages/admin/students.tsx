@@ -7,15 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PlacementReview } from "@/components/placement-review";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { format } from "date-fns";
-import { ar } from "date-fns/locale";
-
-/** Arabic labels for the acquisition channels, keyed by the stored value. */
-const REFERRAL_LABELS: Record<string, string> = {
-  facebook: "فيسبوك", instagram: "إنستغرام", tiktok: "تيك توك",
-  youtube: "يوتيوب", whatsapp: "واتساب", friend: "صديق",
-  search: "بحث", advertisement: "إعلان", other: "أخرى",
-  unknown: "غير معروف",
-};
+import { useI18n } from "@/lib/i18n";
 
 export default function AdminStudents() {
   const [page, setPage] = useState(1);
@@ -23,6 +15,10 @@ export default function AdminStudents() {
   // own review, and expanding them all would be a query per row.
   const [openStudent, setOpenStudent] = useState<number | null>(null);
   const limit = 10;
+  const { t, dateLocale } = useI18n();
+  const as = t.admin.students;
+  const referralLabel = (source: string) =>
+    source === "unknown" ? as.unknown : t.auth.referral[source] ?? source;
   
   const [referralFilter, setReferralFilter] = useState<string | null>(null);
 
@@ -43,7 +39,7 @@ export default function AdminStudents() {
   if (error || !data) {
     return (
       <div className="p-8 text-center text-destructive">
-        حدث خطأ أثناء تحميل بيانات الطلاب
+        {as.loadError}
       </div>
     );
   }
@@ -51,9 +47,9 @@ export default function AdminStudents() {
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500">
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-foreground">الطلاب</h1>
+        <h1 className="text-3xl font-bold text-foreground">{as.title}</h1>
         <div className="text-sm font-medium text-muted-foreground bg-secondary px-3 py-1 rounded-full">
-          الإجمالي: {data.total}
+          {as.total(data.total)}
         </div>
       </div>
 
@@ -67,7 +63,7 @@ export default function AdminStudents() {
                 referralFilter === null ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
               }`}
             >
-              الكل ({referrals.total})
+              {as.all(referrals.total)}
             </button>
             {referrals.items.map((r) => (
               <button
@@ -77,7 +73,7 @@ export default function AdminStudents() {
                   referralFilter === r.source ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
                 }`}
               >
-                {REFERRAL_LABELS[r.source] ?? r.source} ({r.count})
+                {referralLabel(r.source)} ({r.count})
               </button>
             ))}
           </CardContent>
@@ -86,15 +82,15 @@ export default function AdminStudents() {
 
       <Card>
         <CardContent className="p-0">
-          <Table dir="rtl">
+          <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="text-right">الاسم</TableHead>
-                <TableHead className="text-right">البريد الإلكتروني</TableHead>
-                <TableHead className="text-right">البلد</TableHead>
-                <TableHead className="text-right">كيف تعرّف علينا</TableHead>
-                <TableHead className="text-right">تاريخ الانضمام</TableHead>
-                <TableHead className="text-right">المستوى</TableHead>
+                <TableHead className="text-start">{as.name}</TableHead>
+                <TableHead className="text-start">{as.email}</TableHead>
+                <TableHead className="text-start">{as.country}</TableHead>
+                <TableHead className="text-start">{as.referral}</TableHead>
+                <TableHead className="text-start">{as.joined}</TableHead>
+                <TableHead className="text-start">{as.level}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -106,11 +102,11 @@ export default function AdminStudents() {
                     <TableCell>{student.country || "-"}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {student.referralSource
-                        ? REFERRAL_LABELS[student.referralSource] ?? student.referralSource
+                        ? referralLabel(student.referralSource)
                         : "-"}
                     </TableCell>
                     <TableCell>
-                      {format(new Date(student.createdAt), "d MMM yyyy", { locale: ar })}
+                      {format(new Date(student.createdAt), "d MMM yyyy", { locale: dateLocale })}
                     </TableCell>
                     <TableCell>
                       <Button
@@ -126,7 +122,7 @@ export default function AdminStudents() {
                         ) : (
                           <ChevronDown className="h-3.5 w-3.5" />
                         )}
-                        مراجعة
+                        {as.review}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -142,7 +138,7 @@ export default function AdminStudents() {
               {data.students.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                    لا يوجد طلاب لعرضهم
+                    {as.empty}
                   </TableCell>
                 </TableRow>
               )}
@@ -158,17 +154,17 @@ export default function AdminStudents() {
             onClick={() => setPage(p => Math.max(1, p - 1))}
             disabled={page === 1}
           >
-            السابق
+            {t.quiz.prev}
           </Button>
           <span className="text-sm text-muted-foreground font-medium">
-            صفحة {page} من {Math.ceil(data.total / limit)}
+            {as.page(page, Math.ceil(data.total / limit))}
           </span>
           <Button 
             variant="outline" 
             onClick={() => setPage(p => p + 1)}
             disabled={page >= Math.ceil(data.total / limit)}
           >
-            التالي
+            {t.quiz.next}
           </Button>
         </div>
       )}

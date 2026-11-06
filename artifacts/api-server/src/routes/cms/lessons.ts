@@ -23,6 +23,7 @@ import {
 import { requireAdmin, requireContentManager, requireCMSAccess, requireReviewer } from "../../middlewares/auth";
 import { audit } from "../../services/cms-audit";
 import { invalidate, invalidatePrefix, CK } from "../../services/cache";
+import { toStudentContentBlocks } from "../../services/lesson-content";
 
 const router: IRouter = Router();
 
@@ -168,6 +169,27 @@ router.get("/cms/lessons/:id/preview", requireCMSAccess, async (req, res): Promi
       };
     }),
     vocabulary: vocab,
+    /**
+     * The blocks exactly as the student lesson route shapes them, so the
+     * preview can run the real player instead of an approximation of it.
+     * Inactive blocks are left out because a student never sees them.
+     */
+    studentBlocks: toStudentContentBlocks(
+      blocks.filter(b => b.isActive),
+      exercises,
+      allOptions,
+      vocab,
+    ),
+    /**
+     * Answer keys, which the student route withholds. The preview grades MCQ
+     * answers locally with these, so an author can check the marked answer
+     * without anything being recorded.
+     */
+    answerKeys: Object.fromEntries(exercises.map(e => [e.id, {
+      correctOptionId: e.correctOptionId || null,
+      explanation: e.explanation ?? null,
+      explanationAr: e.explanationAr ?? null,
+    }])),
   });
 });
 

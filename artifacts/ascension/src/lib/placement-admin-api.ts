@@ -86,13 +86,3 @@ export const overrideLevel = (studentId: number, levelId: number, note: string) 
     `/admin/students/${studentId}/level`,
     { levelId, note },
   );
-
-/** Arabic labels for the skills a placement reports. */
-export const SKILL_LABELS_AR: Record<string, string> = {
-  reading: "القراءة",
-  listening: "الاستماع",
-  vocabulary: "المفردات",
-  grammar: "القواعد",
-  comprehension: "الاستيعاب",
-  writing: "الكتابة",
-};

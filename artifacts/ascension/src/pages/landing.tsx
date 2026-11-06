@@ -1,13 +1,16 @@
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { BookOpen, Mic, Award, CheckCircle2, ChevronLeft, LogIn } from "lucide-react";
-import heroImg from "@assets/generated_images/landing-hero.jpg";
+import { BookOpen, Mic, Award, CheckCircle2, ChevronLeft, Target } from "lucide-react";
 import { useGetMe } from "@workspace/api-client-react";
 import { useEffect } from "react";
+import { BrandLogo, LanguageSwitcher, LOGO_FULL_SRC } from "@/components/brand";
+import { useI18n } from "@/lib/i18n";
 
 export default function Landing() {
   const { data: user } = useGetMe();
   const [, setLocation] = useLocation();
+  const { t } = useI18n();
+  const l = t.landing;
 
   useEffect(() => {
     if (user) {
@@ -16,23 +19,19 @@ export default function Landing() {
   }, [user, setLocation]);
 
   return (
-    <div dir="rtl" className="min-h-screen bg-background font-sans">
+    <div className="min-h-screen bg-background font-sans">
       {/* Header */}
       <header className="fixed top-0 w-full border-b border-border bg-background/80 backdrop-blur-md z-50">
-        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-             <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-                <BookOpen className="h-5 w-5 text-primary-foreground" />
-             </div>
-             <span className="font-bold text-2xl text-foreground">لغتي</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <Link href="/login" className="text-sm font-medium hover:text-primary transition-colors">
-              تسجيل الدخول
+        <div className="container mx-auto px-4 h-16 flex items-center justify-between gap-3">
+          <BrandLogo />
+          <div className="flex items-center gap-3 sm:gap-4">
+            <LanguageSwitcher />
+            <Link href="/login" className="hidden sm:inline text-sm font-medium hover:text-primary transition-colors">
+              {l.login}
             </Link>
             <Link href="/register">
-               <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-white rounded-full px-6">
-                 ابدأ مجاناً
+               <Button size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground rounded-full px-5 font-bold">
+                 {l.startFree}
                </Button>
             </Link>
           </div>
@@ -40,76 +39,95 @@ export default function Landing() {
       </header>
 
       {/* Hero */}
-      <section className="pt-28 pb-16 md:pt-40 md:pb-24">
-        <div className="container mx-auto px-4 grid md:grid-cols-2 gap-12 items-center">
+      <section className="relative overflow-hidden pt-28 pb-16 md:pt-36 md:pb-24">
+        {/* soft brand blobs */}
+        <div aria-hidden className="pointer-events-none absolute -top-24 end-[-10%] h-[28rem] w-[28rem] rounded-full bg-primary/15 blur-3xl" />
+        <div aria-hidden className="pointer-events-none absolute bottom-0 start-[-8%] h-80 w-80 rounded-full bg-mint/25 blur-3xl" />
+
+        <div className="container relative mx-auto px-4 grid md:grid-cols-2 gap-12 items-center">
           <div className="space-y-6">
-            <h1 className="text-4xl md:text-6xl font-bold leading-tight text-foreground">
-              تحدث الإنجليزية <br/> بثقة، من قلب دمشق.
+            <span className="inline-flex items-center gap-2 rounded-full bg-lavender px-3 py-1 text-sm font-semibold text-lavender-foreground">
+              <span className="h-2 w-2 rounded-full bg-mint" />
+              {t.common.tagline}
+            </span>
+            <h1 className="text-4xl md:text-6xl font-extrabold leading-tight text-foreground">
+              {l.heroTitle1} <br />
+              <span className="text-primary">{l.heroTitle2}</span>
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground max-w-lg leading-relaxed">
-              لغتي هي المنصة الأولى المصممة خصيصاً للمتعلم السوري. منهج متكامل يركز على المحادثة، النطق، والاستخدام الحقيقي للغة بعيداً عن حشو القواعد المعقدة.
+              {l.heroBody}
             </p>
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
               <Link href="/register">
-                <Button size="lg" className="w-full sm:w-auto text-lg h-14 px-8 rounded-xl bg-primary hover:bg-teal-800">
-                  ابدأ رحلتك الآن
-                  <ChevronLeft className="mr-2 h-5 w-5" />
+                <Button size="lg" className="w-full sm:w-auto text-lg h-14 px-8 rounded-2xl shadow-lg shadow-primary/20">
+                  {l.heroCta}
+                  <ChevronLeft className="ms-2 h-5 w-5 ltr:-scale-x-100" />
                 </Button>
               </Link>
               <Link href="/login">
-                <Button size="lg" variant="outline" className="w-full sm:w-auto text-lg h-14 px-8 rounded-xl border-border">
-                  لدي حساب سابق
+                <Button size="lg" variant="outline" className="w-full sm:w-auto text-lg h-14 px-8 rounded-2xl border-border bg-card/60">
+                  {l.haveAccount}
                 </Button>
               </Link>
             </div>
           </div>
-          <div className="relative rounded-3xl overflow-hidden shadow-2xl border border-border">
-            <div className="absolute inset-0 bg-primary/10 mix-blend-multiply z-10 rounded-3xl"></div>
-            <img 
-              src={heroImg} 
-              alt="شخص يدرس في دمشق" 
-              className="w-full h-full object-cover rounded-3xl aspect-[4/3]"
-            />
+
+          <div className="relative">
+            <div className="relative mx-auto max-w-md rounded-[2.5rem] border border-border bg-card/70 p-8 md:p-12 shadow-2xl shadow-primary/10 backdrop-blur-sm">
+              <img
+                src={LOGO_FULL_SRC}
+                alt={`${t.common.appName} — ${t.common.tagline}`}
+                className="w-full h-auto"
+              />
+            </div>
           </div>
         </div>
       </section>
 
+      {/* Steps */}
+      <section className="pb-20">
+        <div className="container mx-auto px-4">
+          <h2 className="text-center text-2xl font-bold text-foreground mb-10">{l.stepsTitle}</h2>
+          <ol className="grid gap-4 md:grid-cols-3 max-w-4xl mx-auto">
+            {[
+              { icon: Target, text: l.step1 },
+              { icon: BookOpen, text: l.step2 },
+              { icon: Mic, text: l.step3 },
+            ].map(({ icon: Icon, text }, i) => (
+              <li key={i} className="flex items-center gap-4 rounded-2xl border border-border bg-card p-5 shadow-sm">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground font-extrabold">
+                  {i + 1}
+                </span>
+                <span className="font-semibold text-foreground">{text}</span>
+                <Icon className="ms-auto h-5 w-5 text-mint-foreground" />
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
       {/* Benefits */}
-      <section className="py-20 bg-secondary/30">
+      <section className="py-20 bg-secondary/50">
         <div className="container mx-auto px-4">
           <div className="text-center max-w-2xl mx-auto mb-16">
-            <h2 className="text-3xl font-bold text-foreground mb-4">لماذا "لغتي"؟</h2>
-            <p className="text-muted-foreground text-lg">بنينا هذه المنصة لتجاوز العقبات التي تواجه المتعلم في بلدنا، بتكلفة مدروسة ومنهج عملي.</p>
+            <h2 className="text-3xl font-bold text-foreground mb-4">{l.whyTitle}</h2>
+            <p className="text-muted-foreground text-lg">{l.whyBody}</p>
           </div>
-          
+
           <div className="grid md:grid-cols-3 gap-8">
-            <div className="bg-card p-8 rounded-2xl border border-border shadow-sm hover:shadow-md transition-shadow">
-              <div className="h-14 w-14 rounded-xl bg-amber-100 flex items-center justify-center mb-6">
-                <Mic className="h-7 w-7 text-amber-600" />
+            {[
+              { icon: Mic, title: l.f1Title, body: l.f1Body, tile: "bg-mint-soft text-mint-foreground" },
+              { icon: BookOpen, title: l.f2Title, body: l.f2Body, tile: "bg-lavender text-lavender-foreground" },
+              { icon: Award, title: l.f3Title, body: l.f3Body, tile: "bg-mint-soft text-mint-foreground" },
+            ].map(({ icon: Icon, title, body, tile }) => (
+              <div key={title} className="bg-card p-8 rounded-3xl border border-border shadow-sm hover:shadow-md transition-shadow">
+                <div className={`h-14 w-14 rounded-2xl flex items-center justify-center mb-6 ${tile}`}>
+                  <Icon className="h-7 w-7" />
+                </div>
+                <h3 className="text-xl font-bold mb-3">{title}</h3>
+                <p className="text-muted-foreground leading-relaxed">{body}</p>
               </div>
-              <h3 className="text-xl font-bold mb-3">ركز على المحادثة</h3>
-              <p className="text-muted-foreground leading-relaxed">
-                من الدرس الأول وحتى المستوى المتقدم، نركز على قدرتك على صياغة الجمل ونطقها بثقة، لا مجرد قراءتها.
-              </p>
-            </div>
-            <div className="bg-card p-8 rounded-2xl border border-border shadow-sm hover:shadow-md transition-shadow">
-              <div className="h-14 w-14 rounded-xl bg-teal-100 flex items-center justify-center mb-6">
-                <BookOpen className="h-7 w-7 text-primary" />
-              </div>
-              <h3 className="text-xl font-bold mb-3">منهج متدرج وواضح</h3>
-              <p className="text-muted-foreground leading-relaxed">
-                من الصفر A1 وحتى الطلاقة C2، دروس قصيرة مركزة تتناسب مع وقتك وتمنحك تقدماً ملموساً كل يوم.
-              </p>
-            </div>
-            <div className="bg-card p-8 rounded-2xl border border-border shadow-sm hover:shadow-md transition-shadow">
-              <div className="h-14 w-14 rounded-xl bg-amber-100 flex items-center justify-center mb-6">
-                <Award className="h-7 w-7 text-amber-600" />
-              </div>
-              <h3 className="text-xl font-bold mb-3">تكلفة تناسب الجميع</h3>
-              <p className="text-muted-foreground leading-relaxed">
-                تعلم اللغة لم يعد رفاهية. نوفر اشتراكات رمزية تبدأ من ٢ دولار شهرياً، مع طرق دفع محلية قريباً.
-              </p>
-            </div>
+            ))}
           </div>
         </div>
       </section>
@@ -118,87 +136,73 @@ export default function Landing() {
       <section className="py-24">
         <div className="container mx-auto px-4">
           <div className="text-center max-w-2xl mx-auto mb-16">
-            <h2 className="text-3xl font-bold text-foreground mb-4">باقات الاشتراك</h2>
-            <p className="text-muted-foreground text-lg">اختر الباقة التي تناسب طموحك.</p>
+            <h2 className="text-3xl font-bold text-foreground mb-4">{l.pricingTitle}</h2>
+            <p className="text-muted-foreground text-lg">{l.pricingBody}</p>
           </div>
-          
+
           <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
             {/* Free */}
             <div className="bg-card p-8 rounded-3xl border border-border flex flex-col">
-              <h3 className="text-2xl font-bold mb-2">الباقة المجانية</h3>
-              <div className="text-4xl font-bold mb-6">$0<span className="text-lg text-muted-foreground font-normal"> / شهرياً</span></div>
+              <h3 className="text-2xl font-bold mb-2">{l.freeName}</h3>
+              <div className="text-4xl font-bold mb-6">$0<span className="text-lg text-muted-foreground font-normal">{t.common.perMonth}</span></div>
               <ul className="space-y-4 mb-8 flex-1">
-                <li className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-primary" /> <span>الوصول للمستوى الأول A1</span>
-                </li>
-                <li className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-primary" /> <span>تمارين القراءة والكتابة</span>
-                </li>
+                {[l.freeF1, l.freeF2].map((f) => (
+                  <li key={f} className="flex items-center gap-3">
+                    <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" /> <span>{f}</span>
+                  </li>
+                ))}
               </ul>
               <Link href="/register">
-                <Button variant="outline" className="w-full rounded-xl h-12 text-lg">ابدأ الآن</Button>
+                <Button variant="outline" className="w-full rounded-xl h-12 text-lg">{l.startNow}</Button>
               </Link>
             </div>
-            
+
             {/* General */}
-            <div className="bg-primary text-primary-foreground p-8 rounded-3xl shadow-xl relative transform md:-translate-y-4 flex flex-col">
-              <div className="absolute top-0 right-1/2 translate-x-1/2 -translate-y-1/2 bg-amber-500 text-white px-4 py-1 rounded-full text-sm font-bold shadow-lg">
-                الأكثر طلباً
+            <div className="bg-primary text-primary-foreground p-8 rounded-3xl shadow-xl shadow-primary/25 relative transform md:-translate-y-4 flex flex-col">
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-accent text-accent-foreground px-4 py-1 rounded-full text-sm font-bold shadow-lg whitespace-nowrap">
+                {l.popular}
               </div>
-              <h3 className="text-2xl font-bold mb-2 text-white">الإنجليزية العامة</h3>
-              <div className="text-4xl font-bold mb-6 text-white">$2<span className="text-lg text-primary-foreground/80 font-normal"> / شهرياً</span></div>
+              <h3 className="text-2xl font-bold mb-2">{l.generalName}</h3>
+              <div className="text-4xl font-bold mb-6">$2<span className="text-lg text-primary-foreground/80 font-normal">{t.common.perMonth}</span></div>
               <ul className="space-y-4 mb-8 flex-1">
-                <li className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-amber-400" /> <span className="text-white">الوصول لجميع المستويات (A1-C2)</span>
-                </li>
-                <li className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-amber-400" /> <span className="text-white">تمارين المحادثة والاستماع المتقدمة</span>
-                </li>
-                <li className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-amber-400" /> <span className="text-white">قاموس مفردات غير محدود</span>
-                </li>
+                {[l.generalF1, l.generalF2, l.generalF3].map((f) => (
+                  <li key={f} className="flex items-center gap-3">
+                    <CheckCircle2 className="h-5 w-5 shrink-0 text-mint" /> <span>{f}</span>
+                  </li>
+                ))}
               </ul>
               <Link href="/register">
-                <Button className="w-full rounded-xl h-12 text-lg bg-amber-500 hover:bg-amber-600 text-white">
-                  اشترك الآن
+                <Button className="w-full rounded-xl h-12 text-lg bg-accent hover:bg-accent/90 text-accent-foreground font-bold">
+                  {l.subscribeNow}
                 </Button>
               </Link>
             </div>
-            
+
             {/* Pro */}
             <div className="bg-card p-8 rounded-3xl border border-border flex flex-col">
-              <h3 className="text-2xl font-bold mb-2">الإنجليزية المهنية</h3>
-              <div className="text-4xl font-bold mb-6">$4<span className="text-lg text-muted-foreground font-normal"> / شهرياً</span></div>
+              <h3 className="text-2xl font-bold mb-2">{l.proName}</h3>
+              <div className="text-4xl font-bold mb-6">$4<span className="text-lg text-muted-foreground font-normal">{t.common.perMonth}</span></div>
               <ul className="space-y-4 mb-8 flex-1">
-                <li className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-primary" /> <span>كل ميزات الإنجليزية العامة</span>
-                </li>
-                <li className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-primary" /> <span>محتوى متخصص ببيئة العمل</span>
-                </li>
-                <li className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-primary" /> <span>شريك محادثة تفاعلي</span>
-                </li>
+                {[l.proF1, l.proF2, l.proF3].map((f) => (
+                  <li key={f} className="flex items-center gap-3">
+                    <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" /> <span>{f}</span>
+                  </li>
+                ))}
               </ul>
               <Link href="/register">
-                <Button variant="outline" className="w-full rounded-xl h-12 text-lg">اختر الباقة</Button>
+                <Button variant="outline" className="w-full rounded-xl h-12 text-lg">{l.choosePlan}</Button>
               </Link>
             </div>
           </div>
         </div>
       </section>
-      
+
       {/* Footer */}
       <footer className="border-t border-border bg-card py-12 text-center text-muted-foreground">
         <div className="container mx-auto px-4 flex flex-col items-center">
-          <div className="flex items-center gap-2 mb-4">
-             <div className="h-6 w-6 rounded-md bg-primary flex items-center justify-center">
-                <BookOpen className="h-4 w-4 text-primary-foreground" />
-             </div>
-             <span className="font-bold text-xl text-foreground">لغتي</span>
-          </div>
-          <p className="mb-6">بناء مستقبل أفضل عبر جسور اللغة.</p>
-          <p className="text-sm">© {new Date().getFullYear()} Ascension. جميع الحقوق محفوظة.</p>
+          <BrandLogo size="sm" className="mb-4" />
+          <p className="mb-6">{l.footerLine}</p>
+          <p className="text-sm">© {new Date().getFullYear()} EnStep. {l.rights}</p>
         </div>
       </footer>
     </div>
