@@ -95,6 +95,8 @@ export interface IceConfig {
   /** False means STUN only: some pairs will not connect at all. */
   hasTurn: boolean;
   connectTimeoutMs: number;
+  /** "relay" hides each student's IP address from the other. Absent on an older server. */
+  iceTransportPolicy?: RTCIceTransportPolicy;
 }
 
 export type SignalKind = "offer" | "answer" | "ice" | "bye";

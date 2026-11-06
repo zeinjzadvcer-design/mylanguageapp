@@ -249,7 +249,10 @@ export function useVoiceCall() {
         const config = await practiceApi.iceServers();
         setTurnAvailable(config.hasTurn);
         connectTimeoutMs = config.connectTimeoutMs;
-        pc = new RTCPeerConnection({ iceServers: config.iceServers });
+        pc = new RTCPeerConnection({
+          iceServers: config.iceServers,
+          iceTransportPolicy: config.iceTransportPolicy ?? "all",
+        });
       } catch {
         // A misconfigured ICE server list throws here rather than failing to
         // connect later. Either way the student gets the same honest screen
