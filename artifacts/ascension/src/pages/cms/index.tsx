@@ -39,11 +39,9 @@ export default function CMSDashboard() {
                   { key: "published", label: "Published", color: "bg-green-50 border-green-200" },
                   { key: "archived", label: "Archived", color: "bg-red-50 border-red-200" },
                 ].map(s => (
-                  <Link key={s.key} href={`/cms/lessons?status=${s.key}`}>
-                    <a className={`block rounded-lg border p-4 hover:shadow-sm transition-shadow ${s.color}`}>
-                      <div className="text-2xl font-bold text-gray-900">{stats.lessons[s.key as keyof typeof stats.lessons]}</div>
-                      <div className="text-xs text-gray-600 mt-0.5">{s.label}</div>
-                    </a>
+                  <Link key={s.key} href={`/cms/lessons?status=${s.key}`} className={`block rounded-lg border p-4 hover:shadow-sm transition-shadow ${s.color}`}>
+                    <div className="text-2xl font-bold text-gray-900">{stats.lessons[s.key as keyof typeof stats.lessons]}</div>
+                    <div className="text-xs text-gray-600 mt-0.5">{s.label}</div>
                   </Link>
                 ))}
               </div>
@@ -59,11 +57,9 @@ export default function CMSDashboard() {
                   { label: "Levels", value: stats.levels, href: "/cms/levels" },
                   { label: "Vocabulary", value: stats.vocabulary, href: "/cms/vocabulary" },
                 ].map(c => (
-                  <Link key={c.label} href={c.href}>
-                    <a className="block rounded-lg border border-gray-200 bg-white p-4 hover:border-indigo-300 transition-colors">
-                      <div className="text-2xl font-bold text-gray-900">{c.value}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">{c.label}</div>
-                    </a>
+                  <Link key={c.label} href={c.href} className="block rounded-lg border border-gray-200 bg-white p-4 hover:border-indigo-300 transition-colors">
+                    <div className="text-2xl font-bold text-gray-900">{c.value}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{c.label}</div>
                   </Link>
                 ))}
               </div>
@@ -75,16 +71,14 @@ export default function CMSDashboard() {
                 <h2 className="text-sm font-semibold text-gray-700 mb-3">Recently Modified</h2>
                 <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-100">
                   {stats.recentLessons.map(l => (
-                    <Link key={l.id} href={`/cms/lessons/${l.id}/edit`}>
-                      <a className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">{l.title}</div>
-                          <div className="text-xs text-gray-400 mt-0.5">
-                            {l.updatedAt ? new Date(l.updatedAt).toLocaleDateString() : ""}
-                          </div>
+                    <Link key={l.id} href={`/cms/lessons/${l.id}/edit`} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">{l.title}</div>
+                        <div className="text-xs text-gray-400 mt-0.5">
+                          {l.updatedAt ? new Date(l.updatedAt).toLocaleDateString() : ""}
                         </div>
-                        <StatusBadge status={l.status} />
-                      </a>
+                      </div>
+                      <StatusBadge status={l.status} />
                     </Link>
                   ))}
                 </div>

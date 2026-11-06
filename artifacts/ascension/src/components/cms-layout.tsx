@@ -65,34 +65,28 @@ export function CMSLayout({ children }: { children: ReactNode }) {
           {visibleItems.map(item => {
             const active = location === item.href || (item.href !== "/cms" && location.startsWith(item.href));
             return (
-              <Link key={item.href} href={item.href}>
-                <a className={cn(
+              <Link key={item.href} href={item.href} className={cn(
                   "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors",
                   active
                     ? "bg-indigo-50 text-indigo-700 font-medium"
                     : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                 )}>
-                  {item.icon}
-                  {item.label}
-                </a>
+                {item.icon}
+                {item.label}
               </Link>
             );
           })}
         </nav>
 
         <div className="p-2 border-t border-gray-200 space-y-0.5">
-          <Link href="/dashboard">
-            <a className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-gray-600 hover:bg-gray-100">
-              <Users className="h-4 w-4" />
-              Student App
-            </a>
+          <Link href="/dashboard" className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-gray-600 hover:bg-gray-100">
+            <Users className="h-4 w-4" />
+            Student App
           </Link>
           {isAdmin && (
-            <Link href="/admin">
-              <a className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-gray-600 hover:bg-gray-100">
-                <LayoutDashboard className="h-4 w-4" />
-                Admin Panel
-              </a>
+            <Link href="/admin" className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-gray-600 hover:bg-gray-100">
+              <LayoutDashboard className="h-4 w-4" />
+              Admin Panel
             </Link>
           )}
         </div>
