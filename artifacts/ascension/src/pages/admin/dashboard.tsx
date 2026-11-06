@@ -1,12 +1,30 @@
 import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { useGetAdminStats } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Users, CreditCard, BookOpen, TrendingUp, ChevronLeft } from "lucide-react";
+import { Users, CreditCard, BookOpen, TrendingUp, ChevronLeft, ShieldAlert } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+
+/**
+ * How many practice-call reports are waiting. Only the count is needed here;
+ * the queue itself lives in the CMS. A failure leaves the card without a
+ * number rather than breaking the dashboard.
+ */
+async function fetchOpenReportCount(): Promise<number | null> {
+  const base = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
+  const r = await fetch(`${base}/cms/practice/reports?status=open&limit=1`, { credentials: "include" });
+  if (!r.ok) return null;
+  const body = (await r.json()) as { counts?: { open?: number } };
+  return body.counts?.open ?? null;
+}
 
 export default function AdminDashboard() {
   const { data: stats, isLoading, error } = useGetAdminStats();
+  const { data: openReports } = useQuery({
+    queryKey: ["admin-open-practice-reports"],
+    queryFn: fetchOpenReportCount,
+  });
   const { t } = useI18n();
   const ad = t.admin;
 
@@ -111,6 +129,31 @@ export default function AdminDashboard() {
             </Link>
           </Card>
         ))}
+
+        {/* Reports students file from a peer practice call. The queue lives in
+            the CMS (Practice Reports); without this card an admin had no way
+            to find it from here, or to know anything was waiting. */}
+        <Card className={`hover:border-primary/50 transition-colors ${openReports ? "border-rose-200" : ""}`}>
+          <Link href="/cms/practice-reports" className="block h-full">
+            <CardHeader>
+              <CardTitle className="flex justify-between items-center text-xl">
+                <span className="flex items-center gap-2">
+                  <ShieldAlert className="h-5 w-5 text-rose-500" />
+                  {ad.reportsTitle}
+                  {!!openReports && (
+                    <span className="rounded-full bg-rose-100 text-rose-700 text-sm px-2.5 py-0.5 tabular-nums">
+                      {openReports}
+                    </span>
+                  )}
+                </span>
+                <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:-scale-x-100" />
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground">{ad.reportsBody}</p>
+            </CardContent>
+          </Link>
+        </Card>
       </div>
     </div>
   );

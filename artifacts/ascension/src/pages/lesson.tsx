@@ -16,10 +16,12 @@ import {
 import type {
   ContentBlock,
   LessonActivityResult,
+  LessonDetail,
   LessonProgress,
   LessonCompletionError,
 } from "@workspace/api-client-react";
 import { BlockMedia } from "@/components/block-media";
+import { FormattedText } from "@/components/formatted-text";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -43,6 +45,7 @@ import {
   Play,
   Square,
   AlertCircle,
+  Target,
 } from "lucide-react";
 
 // ──────────────────────────────────────────────────────────────────────
@@ -59,6 +62,96 @@ function genClientId(): string {
 function isUsableUrl(url?: string | null): boolean {
   if (!url) return false;
   return url.startsWith("http://") || url.startsWith("https://");
+}
+
+/**
+ * Blocks answered with a recording. A text block joins them when its author
+ * asked for it to be read aloud — the recording is matched word by word
+ * against the passage on the server. Only when there is an English passage:
+ * mirrors `isRecordingBlock` in the server's lesson-content service.
+ */
+function isRecordingBlock(block: ContentBlock): boolean {
+  return (
+    block.type === "speaking_prompt" ||
+    block.type === "pronunciation_guide" ||
+    (block.type === "text" && !!block.expectsReferenceReading && !!block.content?.trim())
+  );
+}
+
+type BlockItem = NonNullable<ContentBlock["questions"]>[number];
+
+/**
+ * The item on screen when a block holds several.
+ *
+ * Undefined for a single-item block, which keeps reading its text off the
+ * block the way it always has — the block-level fields carry fallbacks (to the
+ * exercise row, to legacy columns) that a lone item does not.
+ */
+function activeItem(block: ContentBlock, questionIndex: number): BlockItem | undefined {
+  const items = block.questions ?? [];
+  return items.length > 1 ? items[questionIndex] : undefined;
+}
+
+/**
+ * Runs of consecutive blocks that share a `groupId`, as lists of indexes.
+ *
+ * A block whose content lives on the block row — a pronunciation word, a
+ * listening clip, a reading passage — gets more items by becoming several
+ * blocks linked by a group id. Each is still a block of its own: it is
+ * submitted, scored and required on its own terms. Only the presentation joins
+ * them, so the student sees one activity with parts rather than a row of
+ * identical-looking blocks. A block without a group id is a group of one.
+ */
+function blockGroups(blocks: ContentBlock[]): number[][] {
+  const groups: number[][] = [];
+  blocks.forEach((block, i) => {
+    const prev = groups[groups.length - 1];
+    const prevBlock = prev ? blocks[prev[prev.length - 1]] : undefined;
+    if (prev && block.groupId && prevBlock?.groupId === block.groupId) prev.push(i);
+    else groups.push([i]);
+  });
+  return groups;
+}
+
+/** State is kept per item, so moving to a block's next prompt starts clean. */
+function stateKey(blockId: number, questionIndex: number): string {
+  return `${blockId}:${questionIndex}`;
+}
+
+/**
+ * Answer keys the CMS preview passes in. The student route never sends them;
+ * the preview uses them to mark an MCQ answer without recording anything.
+ */
+export type PreviewAnswerKeys = Record<
+  number,
+  { correctOptionId: string | null; explanation: string | null; explanationAr: string | null }
+>;
+
+export interface LessonPreviewOptions {
+  answerKeys: PreviewAnswerKeys;
+  /** Where "back" goes from the preview. */
+  exitHref: string;
+}
+
+/** "Question 2 of 3" — shown on any block holding more than one item. */
+function ItemCounter({ block, questionIndex }: { block: ContentBlock; questionIndex: number }) {
+  const { t } = useI18n();
+  const total = block.questions?.length ?? 0;
+  if (total <= 1) return null;
+  return (
+    <p className="text-center text-sm text-muted-foreground">
+      {block.type === "mcq" ? t.lesson.questionOf(questionIndex + 1, total) : t.lesson.activityOf(questionIndex + 1, total)}
+    </p>
+  );
+}
+
+/** Said wherever the preview stops short of what a student would get. */
+function PreviewNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
+      {children}
+    </div>
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -93,10 +186,22 @@ interface BlockState {
 // ──────────────────────────────────────────────────────────────────────
 // Block header (title, instructions, required badge, duration)
 // ──────────────────────────────────────────────────────────────────────
-function BlockHeader({ block }: { block: ContentBlock }) {
+/**
+ * Both languages of the instructions are shown when both were written.
+ *
+ * This used to show the Arabic OR the English, preferring Arabic, so an author
+ * who wrote both — the listening block asks for both — only ever had half of
+ * them reach the student. The Arabic leads, with the English following left-to-right as the wording
+ * the student is learning.
+ *
+ * An item on a multi-item block may carry instructions of its own, which then
+ * take the place of the block's.
+ */
+function BlockHeader({ block, item }: { block: ContentBlock; item?: BlockItem }) {
   const { t, pick } = useI18n();
   const title = pick(block.titleAr, block.title);
-  const instructions = pick(block.instructionsAr, block.instructions);
+  const instructionsAr = item?.instructionsAr || block.instructionsAr;
+  const instructionsEn = item?.instructions || block.instructions;
   return (
     <div className="space-y-2 mb-6">
       {title && (
@@ -112,8 +217,19 @@ function BlockHeader({ block }: { block: ContentBlock }) {
           <span className="text-xs text-muted-foreground">{t.common.minutes(block.estimatedMinutes)}</span>
         )}
       </div>
-      {instructions && (
-        <p className="text-sm text-muted-foreground leading-relaxed">{instructions}</p>
+      {instructionsAr && (
+        <FormattedText
+          text={instructionsAr}
+          dir="rtl"
+          className="text-sm text-muted-foreground leading-relaxed"
+        />
+      )}
+      {instructionsEn && instructionsEn !== instructionsAr && (
+        <FormattedText
+          text={instructionsEn}
+          dir="ltr"
+          className="text-sm text-muted-foreground leading-relaxed text-left"
+        />
       )}
     </div>
   );
@@ -271,13 +387,19 @@ function McqBlock({
 // ──────────────────────────────────────────────────────────────────────
 function OpenEndedBlock({
   block,
+  item,
   state,
+  preview = false,
   onChange,
   onRecordingDone,
   onUploadState,
 }: {
   block: ContentBlock;
+  /** The prompt on screen, when the block holds several. */
+  item?: BlockItem;
   state: BlockState;
+  /** CMS preview: record locally, never upload or grade. */
+  preview?: boolean;
   onChange: (text: string) => void;
   onRecordingDone: (durationSec: number) => void;
   onUploadState: (patch: {
@@ -295,6 +417,9 @@ function OpenEndedBlock({
   // student who can say it but not spell it should still be able to answer.
   const [mode, setMode] = useState<"text" | "voice">("text");
 
+  const prompt = item ? item.prompt : block.prompt;
+  const promptAr = item ? item.promptAr : block.promptAr;
+
   // Same upload-on-stop as the speaking block: the transfer happens while the
   // student reviews their playback, so Continue stays instant.
   useEffect(() => {
@@ -303,6 +428,7 @@ function OpenEndedBlock({
 
     let cancelled = false;
     onRecordingDone(mic.durationSec);
+    if (preview) return;
     onUploadState({ uploading: true, uploadError: undefined });
 
     uploadRecording(mic.blob, "lesson_activity", mic.durationSec)
@@ -328,21 +454,22 @@ function OpenEndedBlock({
 
   return (
     <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-      <BlockHeader block={block} />
+      <BlockHeader block={block} item={item} />
+      {item && <ItemCounter block={block} questionIndex={block.questions!.indexOf(item)} />}
 
       {block.contentAr && (
-        <p className="text-lg leading-relaxed text-foreground" dir="rtl">{block.contentAr}</p>
+        <FormattedText text={block.contentAr} dir="rtl" className="text-lg leading-relaxed text-foreground" />
       )}
       {block.content && (
         <div className="p-6 bg-secondary/50 rounded-2xl border border-border">
-          <p className="text-xl leading-relaxed font-serif text-foreground" dir="ltr">{block.content}</p>
+          <FormattedText text={block.content} dir="ltr" className="text-xl leading-relaxed font-serif text-foreground" />
         </div>
       )}
-      {block.promptAr && (
-        <p className="text-base font-medium text-foreground">{block.promptAr}</p>
+      {promptAr && (
+        <FormattedText text={promptAr} dir="rtl" className="text-base font-medium text-foreground" />
       )}
-      {block.prompt && (
-        <p className="text-sm text-muted-foreground" dir="ltr">{block.prompt}</p>
+      {prompt && (
+        <FormattedText text={prompt} dir="ltr" className="text-sm text-muted-foreground" />
       )}
 
       <BlockIllustration block={block} />
@@ -448,7 +575,13 @@ function OpenEndedBlock({
         </div>
       )}
 
-      {state.result && <OpenEndedVerdict result={state.result} />}
+      {preview && state.submitted ? (
+        <PreviewNote>
+          {ls.previewAnswer}
+        </PreviewNote>
+      ) : (
+        state.result && <OpenEndedVerdict result={state.result} />
+      )}
     </div>
   );
 }
@@ -537,12 +670,24 @@ function OpenEndedVerdict({ result }: { result: LessonActivityResult }) {
 // ──────────────────────────────────────────────────────────────────────
 function SpeakingBlock({
   block,
+  item,
   state,
+  preview = false,
+  passage,
   onRecordingDone,
   onUploadState,
 }: {
   block: ContentBlock;
+  /** The prompt on screen, when the block holds several. */
+  item?: BlockItem;
   state: BlockState;
+  /** CMS preview: record locally, never upload or assess. */
+  preview?: boolean;
+  /**
+   * What the student reads, in place of the prompt/content display. A text
+   * block read aloud passes its formatted passage here.
+   */
+  passage?: React.ReactNode;
   onRecordingDone: (durationSec: number) => void;
   onUploadState: (patch: {
     uploading?: boolean;
@@ -555,6 +700,9 @@ function SpeakingBlock({
   const ls = t.lesson;
   const sp = t.speaking;
 
+  const prompt = item ? item.prompt : block.prompt;
+  const promptAr = item ? item.promptAr : block.promptAr;
+
   // Upload as soon as the recording stops, rather than on submit: the student
   // is reviewing their playback anyway, so the transfer happens in time they
   // were already spending, and pressing Continue stays instant.
@@ -563,6 +711,7 @@ function SpeakingBlock({
 
     let cancelled = false;
     onRecordingDone(mic.durationSec);
+    if (preview) return;
     onUploadState({ uploading: true, uploadError: undefined });
 
     uploadRecording(mic.blob, "lesson_activity", mic.durationSec)
@@ -590,23 +739,28 @@ function SpeakingBlock({
 
   return (
     <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-      <BlockHeader block={block} />
+      <BlockHeader block={block} item={item} />
+      {item && <ItemCounter block={block} questionIndex={block.questions!.indexOf(item)} />}
 
-      {block.promptAr && (
-        <div className="text-center space-y-2 mb-4">
-          <h3 className="text-xl font-bold text-foreground">{block.promptAr}</h3>
-        </div>
-      )}
-      {block.prompt && (
-        <p className="text-muted-foreground text-center" dir="ltr">{block.prompt}</p>
-      )}
-      {block.contentAr && (
-        <p className="text-lg leading-relaxed text-foreground text-center" dir="rtl">{block.contentAr}</p>
-      )}
-      {block.content && (
-        <div className="p-6 bg-secondary/50 rounded-2xl border text-center">
-          <p className="text-2xl font-bold font-serif" dir="ltr">{block.content}</p>
-        </div>
+      {passage ?? (
+        <>
+          {promptAr && (
+            <div className="text-center space-y-2 mb-4">
+              <FormattedText text={promptAr} dir="rtl" className="text-xl font-bold text-foreground" />
+            </div>
+          )}
+          {prompt && (
+            <FormattedText text={prompt} dir="ltr" className="text-muted-foreground text-center" />
+          )}
+          {block.contentAr && (
+            <FormattedText text={block.contentAr} dir="rtl" className="text-lg leading-relaxed text-foreground text-center" />
+          )}
+          {block.content && (
+            <div className="p-6 bg-secondary/50 rounded-2xl border text-center">
+              <FormattedText text={block.content} dir="ltr" className="text-2xl font-bold font-serif" />
+            </div>
+          )}
+        </>
       )}
 
       <BlockIllustration block={block} />
@@ -629,9 +783,15 @@ function SpeakingBlock({
           which case the attempt stays pending for a teacher — so this does not
           promise a score, it says the recording is kept and assessed when it
           can be. The actual outcome is reported below by SpeechVerdictCard. */}
-      <div className="text-xs text-muted-foreground bg-secondary/50 border border-border rounded-lg p-3 leading-relaxed">
-        {ls.speakingNote}
-      </div>
+      {preview ? (
+        <PreviewNote>
+          {ls.previewSpeaking}
+        </PreviewNote>
+      ) : (
+        <div className="text-xs text-muted-foreground bg-secondary/50 border border-border rounded-lg p-3 leading-relaxed">
+          {ls.speakingNote}
+        </div>
+      )}
 
       {state.uploading && (
         <p className="text-xs text-center text-muted-foreground">{sp.uploading}</p>
@@ -864,23 +1024,36 @@ function VocabularyBlock({ block }: { block: ContentBlock }) {
 // ──────────────────────────────────────────────────────────────────────
 // Passive text-like blocks (text, dialogue, explanation, pronunciation_guide, review, spelling)
 // ──────────────────────────────────────────────────────────────────────
+/** The passage of a text block, shared by the passive and read-aloud forms. */
+function TextPassage({ block }: { block: ContentBlock }) {
+  return (
+    <>
+      {block.contentAr && (
+        <FormattedText
+          text={block.contentAr}
+          dir="rtl"
+          className="text-lg md:text-xl leading-relaxed text-foreground text-right"
+        />
+      )}
+      {block.content && (
+        <div className="p-6 bg-secondary/50 rounded-2xl border border-border">
+          <FormattedText
+            text={block.content}
+            dir="ltr"
+            className="text-xl md:text-2xl leading-relaxed text-foreground font-serif text-left"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
 function TextBlock({ block }: { block: ContentBlock }) {
   return (
     <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
       <BlockHeader block={block} />
       <BlockIllustration block={block} />
-      {block.contentAr && (
-        <p className="text-lg md:text-xl leading-relaxed text-foreground text-start" dir="rtl">
-          {block.contentAr}
-        </p>
-      )}
-      {block.content && (
-        <div className="p-6 bg-secondary/50 rounded-2xl border border-border">
-          <p className="text-xl md:text-2xl leading-relaxed text-foreground font-serif text-left" dir="ltr">
-            {block.content}
-          </p>
-        </div>
-      )}
+      <TextPassage block={block} />
       {isUsableUrl(block.audioUrl) ? (
         <AudioWidget url={block.audioUrl!} label={block.audioNote ?? undefined} />
       ) : (
@@ -918,11 +1091,80 @@ function AudioPlaceholderBlock({ block }: { block: ContentBlock }) {
         </Card>
       )}
       {block.contentAr && (
-        <p className="text-lg leading-relaxed text-foreground" dir="rtl">{block.contentAr}</p>
+        <FormattedText text={block.contentAr} dir="rtl" className="text-lg leading-relaxed text-foreground" />
       )}
       {block.content && (
-        <p className="text-lg leading-relaxed text-foreground font-serif" dir="ltr">{block.content}</p>
+        <FormattedText text={block.content} dir="ltr" className="text-lg leading-relaxed text-foreground font-serif" />
       )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Lesson objectives — the first thing a student sees
+// ──────────────────────────────────────────────────────────────────────
+
+/** Authors type objectives one per line and sometimes keep their own bullet. */
+function cleanObjectives(list: string[] | null | undefined): string[] {
+  return (list ?? [])
+    .map((o) => o.replace(/^\s*[-*•–·]\s+/, "").trim())
+    .filter(Boolean);
+}
+
+function hasObjectives(lesson: LessonDetail): boolean {
+  return cleanObjectives(lesson.objectivesAr).length > 0 || cleanObjectives(lesson.objectives).length > 0;
+}
+
+/**
+ * What the lesson will teach, before any of it starts.
+ *
+ * Authors write objectives for every lesson and they never reached a student —
+ * they were stored, edited, duplicated and then shown nowhere. Knowing where a
+ * lesson is going is the cheapest help there is, so they open it.
+ */
+function LessonIntro({ lesson }: { lesson: LessonDetail }) {
+  const { t, lang, pick } = useI18n();
+  const objectivesAr = cleanObjectives(lesson.objectivesAr);
+  const objectivesEn = cleanObjectives(lesson.objectives);
+  const description = pick(lesson.descriptionAr, lesson.description);
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <div className="space-y-2">
+        <h1 className="text-2xl font-bold text-foreground">{pick(lesson.titleAr, lesson.title)}</h1>
+        {lang === "ar" && lesson.titleAr && lesson.title && lesson.title !== lesson.titleAr && (
+          <p className="text-muted-foreground text-right" dir="ltr">{lesson.title}</p>
+        )}
+        {description && (
+          <FormattedText text={description} className="text-sm text-muted-foreground leading-relaxed" />
+        )}
+      </div>
+
+      <Card className="border-2 border-primary/20">
+        <CardContent className="p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <Target className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-bold text-foreground">{t.lesson.objectives}</h2>
+          </div>
+          {objectivesAr.length > 0 && (
+            <ul className="list-disc ps-6 space-y-2 text-foreground leading-relaxed" dir="rtl">
+              {objectivesAr.map((o, i) => <li key={i}>{o}</li>)}
+            </ul>
+          )}
+          {objectivesEn.length > 0 && (
+            <ul
+              dir="ltr"
+              className={`list-disc ps-6 space-y-1 text-left leading-relaxed ${
+                objectivesAr.length > 0
+                  ? "text-sm text-muted-foreground border-t border-border pt-3"
+                  : "text-foreground"
+              }`}
+            >
+              {objectivesEn.map((o, i) => <li key={i}>{o}</li>)}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -933,32 +1175,8 @@ function AudioPlaceholderBlock({ block }: { block: ContentBlock }) {
 export default function Lesson({ params }: { params: { lessonId: string } }) {
   const lessonId = parseInt(params.lessonId, 10);
   const { data: lesson, isLoading, error } = useGetLesson(lessonId);
-  const startLesson = useStartLesson();
-  const submitActivity = useSubmitLessonActivity();
-  const completeLesson = useCompleteLesson();
-  const [, setLocation] = useLocation();
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const { t, lang, pick } = useI18n();
+  const { t } = useI18n();
   const ls = t.lesson;
-
-  // All hooks must be unconditional
-  const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
-  /** Which question of a multi-question block is on screen. */
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [blockStates, setBlockStates] = useState<Record<number, BlockState>>({});
-  const [finishResult, setFinishResult] = useState<LessonProgress | null>(null);
-  const [startTime] = useState(Date.now());
-  const initialized = useRef(false);
-
-  useEffect(() => {
-    if (lesson && !initialized.current) {
-      initialized.current = true;
-      startLesson.mutate({ lessonId });
-    }
-  // startLesson is stable (from useMutation), lessonId is a primitive
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lesson, lessonId]);
 
   // ── Loading / error guards ────────────────────────────────────────
   if (isLoading) {
@@ -981,14 +1199,76 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     );
   }
 
+  return <LessonPlayer lesson={lesson} />;
+}
+
+/**
+ * The lesson as a student takes it.
+ *
+ * Also mounted by the CMS preview with `preview` set, so an author checks their
+ * lesson in the real player — the same screens, images, audio and formatting —
+ * rather than in a separate rendering that drifts from it. In preview nothing
+ * reaches the server: answers are marked locally from the answer keys the CMS
+ * supplies, recordings stay in the browser, and the AI tutor is not started.
+ */
+export function LessonPlayer({
+  lesson,
+  preview,
+}: {
+  lesson: LessonDetail;
+  preview?: LessonPreviewOptions;
+}) {
+  const lessonId = lesson.id;
+  const isPreview = !!preview;
+  const startLesson = useStartLesson();
+  const submitActivity = useSubmitLessonActivity();
+  const completeLesson = useCompleteLesson();
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { t, lang, dir, pick } = useI18n();
+  const ls = t.lesson;
+
+  const hasIntro = hasObjectives(lesson);
+
+  // All hooks must be unconditional
+  const [showIntro, setShowIntro] = useState(hasIntro);
+  const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
+  /** Which item of a multi-item block is on screen. */
+  const [questionIndex, setQuestionIndex] = useState(0);
+  /** Keyed by `stateKey(blockId, questionIndex)`: each item keeps its own answer. */
+  const [blockStates, setBlockStates] = useState<Record<string, BlockState>>({});
+  const [finishResult, setFinishResult] = useState<LessonProgress | null>(null);
+  const [previewFinished, setPreviewFinished] = useState(false);
+  const [startTime] = useState(Date.now());
+  const initialized = useRef(false);
+
+  useEffect(() => {
+    if (!isPreview && !initialized.current) {
+      initialized.current = true;
+      startLesson.mutate({ lessonId });
+    }
+  // startLesson is stable (from useMutation), lessonId is a primitive
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, isPreview]);
+
   const blocks = lesson.contentBlocks ?? [];
   const currentBlock = blocks[currentBlockIndex] ?? null;
+  const currentKey = currentBlock ? stateKey(currentBlock.id, questionIndex) : "";
   const isLastBlock = currentBlockIndex === blocks.length - 1;
-  const progress = blocks.length > 0 ? ((currentBlockIndex + 1) / blocks.length) * 100 : 100;
+  const progress = showIntro
+    ? 0
+    : blocks.length > 0 ? ((currentBlockIndex + 1) / blocks.length) * 100 : 100;
+  // The step counter counts groups, so an activity with three parts is one
+  // step to the student, the way the author built it.
+  const groups = blockGroups(blocks);
+  const currentGroupIndex = Math.max(0, groups.findIndex((g) => g.includes(currentBlockIndex)));
+  const currentGroup = groups[currentGroupIndex] ?? [];
+  const partOfGroup = currentGroup.indexOf(currentBlockIndex);
 
-  // ── Per-block helpers ──────────────────────────────────────────────
-  const getBlockState = (blockId: number): BlockState =>
-    blockStates[blockId] ?? { submitted: false, submitting: false, result: null };
+  // ── Per-item helpers ───────────────────────────────────────────────
+  const getBlockState = (key: string): BlockState =>
+    blockStates[key] ?? { submitted: false, submitting: false, result: null };
 
   // Patches merge onto `prev`, never onto the render-time `blockStates`.
   // A finished recording calls this twice in the same tick — once to record
@@ -996,11 +1276,11 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
   // snapshot meant the second call overwrote `hasRecording` with the value
   // from before the first. Continue then refused a recording that had in fact
   // uploaded fine.
-  const setBlockField = (blockId: number, patch: Partial<BlockState>) => {
+  const setBlockField = (key: string, patch: Partial<BlockState>) => {
     setBlockStates(prev => ({
       ...prev,
-      [blockId]: {
-        ...(prev[blockId] ?? { submitted: false, submitting: false, result: null }),
+      [key]: {
+        ...(prev[key] ?? { submitted: false, submitting: false, result: null }),
         ...patch,
       },
     }));
@@ -1020,6 +1300,9 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
    * submitting it OPENS THE AI TUTOR. Advancing past it automatically would
    * skip the conversation the block exists for.
    *
+   * Any block answered with a recording belongs here too — including a text
+   * block read aloud — because its verdict is what the second click waits on.
+   *
    * Related to but not the same as SKIPPABLE_TYPES below, which also contains
    * `dialogue` — a student may decline an optional conversation, but may not be
    * carried past one they did start.
@@ -1031,10 +1314,51 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     "pronunciation_guide",
     "dialogue",
   ];
+  const needsSecondClick = (block: ContentBlock) =>
+    AUTO_ADVANCE_EXEMPT.includes(block.type) || isRecordingBlock(block);
 
-  const doSubmitBlock = (block: ContentBlock, extraPatch?: Partial<BlockState>) => {
-    const st = { ...getBlockState(block.id), ...(extraPatch ?? {}) };
-    setBlockField(block.id, { submitting: true });
+  const doSubmitBlock = (block: ContentBlock) => {
+    const key = stateKey(block.id, questionIndex);
+    const st = getBlockState(key);
+    const item = block.questions?.[questionIndex];
+    setBlockField(key, { submitting: true });
+
+    // A block the student answered shows them a verdict, so the first click
+    // submits and a second one moves on. A passive block has no verdict to
+    // show — marking it read IS the whole interaction — so stopping there just
+    // asks for the same click twice with nothing happening in between.
+    // A recording block submitted WITHOUT a recording — an optional one the
+    // student chose to pass — has no verdict coming either, so it moves on
+    // rather than asking for a second identical click.
+    const advancesImmediately =
+      !needsSecondClick(block) || (isRecordingBlock(block) && !st.hasRecording);
+
+    // Preview: mark locally and record nothing. An MCQ answer is checked
+    // against the answer key the CMS supplied, so the author sees the verdict
+    // and explanation their student would.
+    if (preview) {
+      let result: LessonActivityResult | null = null;
+      if (block.type === "mcq" && st.selectedOptionId) {
+        const exerciseId = item?.exerciseId ?? block.exerciseId;
+        const answer = exerciseId != null ? preview.answerKeys[exerciseId] : undefined;
+        const correct = answer?.correctOptionId
+          ? answer.correctOptionId === st.selectedOptionId
+          : null;
+        result = {
+          attemptId: 0,
+          blockId: block.id,
+          completed: true,
+          correct,
+          score: correct === null ? null : correct ? 100 : 0,
+          explanation: answer?.explanation ?? null,
+          explanationAr: answer?.explanationAr ?? null,
+          evaluationStatus: "graded",
+        };
+      }
+      setBlockField(key, { submitted: true, submitting: false, result });
+      if (advancesImmediately) moveNext();
+      return;
+    }
 
     const payload: {
       clientSubmissionId: string;
@@ -1045,12 +1369,12 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
       mediaId?: number;
     } = { clientSubmissionId: genClientId() };
 
+    // Name the item when the block holds one, or the server would grade every
+    // answer against the block's first question.
+    if (item) payload.exerciseId = item.exerciseId;
+
     if (block.type === "mcq" && st.selectedOptionId) {
       payload.selectedOptionId = st.selectedOptionId;
-      // Name the question when the block holds more than one, or the server
-      // would grade the answer against the first every time.
-      const q = block.questions?.[questionIndex];
-      if (q) payload.exerciseId = q.exerciseId;
     } else if (block.type === "open_ended") {
       // Either form counts, and an open-ended answer can be spoken: the server
       // transcribes the recording into the same answer a typed one would have
@@ -1062,10 +1386,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
         payload.recordingDurationSeconds = st.recordingDurationSeconds;
       }
       if (st.mediaId !== undefined) payload.mediaId = st.mediaId;
-    } else if (
-      (block.type === "speaking_prompt" || block.type === "pronunciation_guide") &&
-      st.recordingDurationSeconds !== undefined
-    ) {
+    } else if (isRecordingBlock(block) && st.recordingDurationSeconds !== undefined) {
       payload.recordingDurationSeconds = st.recordingDurationSeconds;
       // Only sent once the upload was confirmed; the server rejects an id that
       // is not a finished recording of this student's.
@@ -1073,17 +1394,11 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     }
     // passive blocks: just clientSubmissionId
 
-    // A block the student answered shows them a verdict, so the first click
-    // submits and a second one moves on. A passive block has no verdict to
-    // show — marking it read IS the whole interaction — so stopping there just
-    // asks for the same click twice with nothing happening in between.
-    const advancesImmediately = !AUTO_ADVANCE_EXEMPT.includes(block.type);
-
     submitActivity.mutate(
       { lessonId, blockId: block.id, data: payload },
       {
         onSuccess: (result) => {
-          setBlockField(block.id, { submitted: true, submitting: false, result });
+          setBlockField(key, { submitted: true, submitting: false, result });
           // Invalidate lesson detail so completedBlockIds updates
           queryClient.invalidateQueries({ queryKey: getGetLessonQueryKey(lessonId) });
 
@@ -1091,9 +1406,9 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           // can only say "pending". Without this the student would record,
           // upload, and never find out how they did.
           if (result.evaluationStatus === "pending" && payload.mediaId !== undefined) {
-            setBlockField(block.id, { awaitingVerdict: true });
+            setBlockField(key, { awaitingVerdict: true });
             void pollAttemptVerdict(lessonId, result.attemptId).then((verdict) => {
-              setBlockField(block.id, {
+              setBlockField(key, {
                 awaitingVerdict: false,
                 ...(verdict ? { speechVerdict: verdict } : {}),
               });
@@ -1105,7 +1420,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           if (advancesImmediately) moveNext();
         },
         onError: (err: unknown) => {
-          setBlockField(block.id, { submitting: false });
+          setBlockField(key, { submitting: false });
 
           // Running out of attempts is not an error the student should be told
           // to retry — "try again" is exactly the wrong advice when the
@@ -1118,7 +1433,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           };
           if (apiError?.data?.code === "ATTEMPT_LIMIT_REACHED") {
             const max = apiError.data.maxAttempts ?? 3;
-            setBlockField(block.id, { submitted: true, attemptsExhausted: true });
+            setBlockField(key, { submitted: true, attemptsExhausted: true });
             toast({
               title: ls.attemptsUsedTitle,
               description: ls.attemptsUsedBody(max),
@@ -1143,7 +1458,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
       return;
     }
 
-    const st = getBlockState(currentBlock.id);
+    const st = getBlockState(currentKey);
 
     // If already submitted, just move
     if (st.submitted) {
@@ -1166,10 +1481,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           return;
         }
       }
-      if (
-        (currentBlock.type === "speaking_prompt" || currentBlock.type === "pronunciation_guide") &&
-        !st.hasRecording
-      ) {
+      if (isRecordingBlock(currentBlock) && !st.hasRecording) {
         toast({ variant: "destructive", title: ls.recordFirst });
         return;
       }
@@ -1179,14 +1491,12 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
   };
 
   const moveNext = () => {
-    // Work through the questions on this block before leaving it.
+    // Work through the items on this block before leaving it. Each item keeps
+    // its own state, so the next one starts clean without erasing the verdict
+    // the previous one earned.
     const total = currentBlock?.questions?.length ?? 0;
     if (total > 1 && questionIndex < total - 1) {
       setQuestionIndex(i => i + 1);
-      // Each question collects its own answer, so clear the previous verdict.
-      setBlockField(currentBlock.id, {
-        submitted: false, submitting: false, result: null, selectedOptionId: undefined,
-      });
       return;
     }
     setQuestionIndex(0);
@@ -1197,15 +1507,40 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     }
   };
 
+  /** Back one item, then one block, then to the objectives. */
+  const moveBack = () => {
+    if (questionIndex > 0) {
+      setQuestionIndex(i => i - 1);
+      return;
+    }
+    if (currentBlockIndex === 0) {
+      if (hasIntro) setShowIntro(true);
+      return;
+    }
+    setCurrentBlockIndex(prev => prev - 1);
+  };
+
   // After submission the user clicks Continue again to advance.
-  // Goes through moveNext so a block holding several questions steps to the
-  // next question rather than jumping straight out of the block.
+  // Goes through moveNext so a block holding several items steps to the
+  // next one rather than jumping straight out of the block.
   const handleContinueAfterSubmit = () => {
     moveNext();
   };
 
+  const restartPreview = () => {
+    setBlockStates({});
+    setCurrentBlockIndex(0);
+    setQuestionIndex(0);
+    setShowIntro(hasIntro);
+    setPreviewFinished(false);
+  };
+
   // ── Finish lesson ──────────────────────────────────────────────────
   const handleFinish = () => {
+    if (isPreview) {
+      setPreviewFinished(true);
+      return;
+    }
     const timeSpentSeconds = Math.floor((Date.now() - startTime) / 1000);
     completeLesson.mutate(
       { lessonId, data: { timeSpentSeconds } },
@@ -1238,7 +1573,10 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
             });
             // Navigate to first missing block
             const firstMissingIdx = blocks.findIndex(b => ids.includes(b.id));
-            if (firstMissingIdx >= 0) setCurrentBlockIndex(firstMissingIdx);
+            if (firstMissingIdx >= 0) {
+              setQuestionIndex(0);
+              setCurrentBlockIndex(firstMissingIdx);
+            }
           } else {
             toast({
               variant: "destructive",
@@ -1250,6 +1588,25 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
       }
     );
   };
+
+  // ── Preview finish screen ──────────────────────────────────────────
+  if (preview && previewFinished) {
+    return (
+      <div className="rounded-xl border border-border bg-background py-16 px-6 text-center space-y-4">
+        <CheckCircle2 className="h-12 w-12 text-mint-foreground mx-auto" />
+        <h2 className="text-2xl font-bold text-foreground">{ls.previewDone}</h2>
+        <p className="text-sm text-muted-foreground">
+          {ls.previewDoneBody}
+        </p>
+        <div className="flex justify-center gap-3 pt-2">
+          <Button onClick={restartPreview}>{ls.restartPreview}</Button>
+          <Link href={preview.exitHref}>
+            <Button variant="outline">{ls.backToEditor}</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   // ── Finish screen ──────────────────────────────────────────────────
   if (finishResult) {
@@ -1268,12 +1625,21 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
      * student kept working, and the ones still in flight.
      *
      * Read from block state rather than refetched: `pollAttemptVerdict` writes
-     * each result into the block it belongs to as it lands, and that continues
-     * while the student moves through the lesson.
+     * each result into the item it belongs to as it lands, and that continues
+     * while the student moves through the lesson. One entry per item, so a
+     * block holding three speaking prompts reports all three.
      */
-    const speechBlocks = blocks
-      .filter((b) => b.type === "speaking_prompt" || b.type === "pronunciation_guide")
-      .map((b) => ({ block: b, state: getBlockState(b.id) }))
+    const speechItems = blocks
+      .filter(isRecordingBlock)
+      .flatMap((b) => {
+        const count = Math.max(1, b.questions?.length ?? 0);
+        return Array.from({ length: count }, (_, qi) => ({
+          block: b,
+          qi,
+          count,
+          state: getBlockState(stateKey(b.id, qi)),
+        }));
+      })
       .filter((x) => x.state.speechVerdict || x.state.awaitingVerdict);
 
     return (
@@ -1307,14 +1673,15 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
             {/* Pronunciation feedback, including anything that finished after
                 the student moved on. This is the promise the waiting panel
                 makes, kept. */}
-            {speechBlocks.length > 0 && (
+            {speechItems.length > 0 && (
               <div className="space-y-3 border-t pt-5 text-start">
                 <h3 className="text-sm font-bold text-foreground">{ls.pronunciationReview}</h3>
-                {speechBlocks.map(({ block, state }) => (
-                  <div key={block.id} className="space-y-1.5">
-                    {(block.titleAr || block.title) && (
+                {speechItems.map(({ block, qi, count, state }) => (
+                  <div key={stateKey(block.id, qi)} className="space-y-1.5">
+                    {(block.titleAr || block.title || count > 1) && (
                       <p className="text-xs text-muted-foreground">
                         {pick(block.titleAr, block.title)}
+                        {count > 1 && ` (${qi + 1}/${count})`}
                       </p>
                     )}
                     {state.speechVerdict ? (
@@ -1349,6 +1716,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
                   variant="outline"
                   onClick={() => {
                     setFinishResult(null);
+                    setQuestionIndex(0);
                     setCurrentBlockIndex(0);
                   }}
                   className="flex-1 h-14 text-lg rounded-xl"
@@ -1364,13 +1732,13 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
   }
 
   // ── Determine if Continue is disabled ─────────────────────────────
-  const currentState = currentBlock ? getBlockState(currentBlock.id) : null;
+  const currentState = currentBlock ? getBlockState(currentKey) : null;
   const isSubmitting = currentState?.submitting ?? false;
   const isAlreadySubmitted = currentState?.submitted ?? false;
 
   // Continue is disabled during submit or if MCQ required and nothing selected yet
   let isContinueDisabled = isSubmitting || completeLesson.isPending;
-  if (currentBlock && !isAlreadySubmitted && !isSubmitting) {
+  if (!showIntro && currentBlock && !isAlreadySubmitted && !isSubmitting) {
     if (currentBlock.type === "mcq" && currentBlock.isRequired && !currentState?.selectedOptionId) {
       isContinueDisabled = true;
     }
@@ -1386,7 +1754,8 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
    * Blocks that ask the student to DO something, so an optional one needs a way
    * past it. Truly passive blocks — a reading passage, a vocabulary list — are
    * left out because their "Continue" already advances and a second button
-   * offering to skip reading would be noise.
+   * offering to skip reading would be noise. A passage the student is asked to
+   * read ALOUD is not passive, so it joins them via `isRecordingBlock`.
    *
    * `dialogue` belongs here even though the server records it as a passive
    * attempt: it carries the AI tutor, so an optional conversation a student does
@@ -1404,25 +1773,31 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     "dialogue",
   ];
   const canSkipCurrentBlock =
+    !showIntro &&
     !!currentBlock &&
     !currentBlock.isRequired &&
     !isAlreadySubmitted &&
-    SKIPPABLE_TYPES.includes(currentBlock.type);
+    (SKIPPABLE_TYPES.includes(currentBlock.type) || isRecordingBlock(currentBlock));
 
   // Label for continue button
   const continueLabel = () => {
+    if (showIntro) return t.dashboard.startLesson;
     if (completeLesson.isPending || isSubmitting) {
       return <Loader2 className="h-5 w-5 animate-spin" />;
     }
-    // Questions left on this block means Continue, even on the last block —
-    // otherwise it offers to finish the lesson mid-way through the questions.
+    // Items left on this block means Continue, even on the last block —
+    // otherwise it offers to finish the lesson mid-way through the items.
     const totalQuestions = currentBlock?.questions?.length ?? 0;
     const moreQuestionsHere = totalQuestions > 1 && questionIndex < totalQuestions - 1;
-    if (isLastBlock && !moreQuestionsHere) return ls.finish;
+    if (isLastBlock && !moreQuestionsHere) return isPreview ? ls.finishPreview : ls.finish;
     return t.common.continue;
   };
 
   const handleContinueBtn = () => {
+    if (showIntro) {
+      setShowIntro(false);
+      return;
+    }
     if (isAlreadySubmitted) {
       handleContinueAfterSubmit();
     } else {
@@ -1433,10 +1808,40 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
   // ── Block renderer ─────────────────────────────────────────────────
   const renderBlock = () => {
     if (!currentBlock) return null;
-    const st = getBlockState(currentBlock.id);
+    const key = currentKey;
+    const st = getBlockState(key);
+    const item = activeItem(currentBlock, questionIndex);
+    const onRecordingDone = (dur: number) =>
+      setBlockField(key, { recordingDurationSeconds: dur, hasRecording: true });
+    const onUploadState = (patch: Partial<BlockState>) => setBlockField(key, patch);
 
     switch (currentBlock.type) {
       case "text":
+        // A passage the author asked to be read aloud. The recording is
+        // matched word by word against the English text on the server — a
+        // speech recogniser and arithmetic, no language model marking it.
+        if (isRecordingBlock(currentBlock)) {
+          return (
+            <SpeakingBlock
+              key={key}
+              block={currentBlock}
+              state={st}
+              preview={isPreview}
+              passage={
+                <>
+                  <p className="text-sm font-medium text-primary">
+                    {ls.readAloud}
+                  </p>
+                  <TextPassage block={currentBlock} />
+                </>
+              }
+              onRecordingDone={onRecordingDone}
+              onUploadState={onUploadState}
+            />
+          );
+        }
+        return <TextBlock block={currentBlock} />;
+
       case "explanation":
       case "review":
         return <TextBlock block={currentBlock} />;
@@ -1456,12 +1861,29 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
             {isUsableUrl(currentBlock.audioUrl) && <AudioWidget url={currentBlock.audioUrl!} label={currentBlock.audioNote ?? undefined} />}
 
             {/* The tutor itself. Bounded by the block's configuration — the
-                student sees the remaining turns and minutes throughout. */}
-            <ConversationBlock
-              lessonId={lessonId}
-              blockId={currentBlock.id}
-              prompt={currentBlock.promptAr ?? currentBlock.prompt}
-            />
+                student sees the remaining turns and minutes throughout. Not
+                started in preview: every turn is a model call. */}
+            {isPreview ? (
+              <>
+                <FormattedText
+                  text={pick(currentBlock.promptAr, currentBlock.prompt)}
+                  className="text-base text-foreground"
+                />
+                <PreviewNote>
+                  {ls.previewDialogue}
+                </PreviewNote>
+              </>
+            ) : (
+              <ConversationBlock
+                // Keyed: two dialogue parts in a row sit at the same place in
+                // the tree, and without a key React reused part 1's component —
+                // its turns, its session — for part 2.
+                key={currentBlock.id}
+                lessonId={lessonId}
+                blockId={currentBlock.id}
+                prompt={currentBlock.promptAr ?? currentBlock.prompt}
+              />
+            )}
           </div>
         );
 
@@ -1469,10 +1891,13 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
         // Read-aloud: listen to the reference, then record an attempt.
         return (
           <SpeakingBlock
+            key={key}
             block={currentBlock}
+            item={item}
             state={st}
-            onRecordingDone={(dur) => setBlockField(currentBlock.id, { recordingDurationSeconds: dur, hasRecording: true })}
-            onUploadState={(patch) => setBlockField(currentBlock.id, patch)}
+            preview={isPreview}
+            onRecordingDone={onRecordingDone}
+            onUploadState={onUploadState}
           />
         );
 
@@ -1481,7 +1906,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
             <BlockHeader block={currentBlock} />
             {currentBlock.contentAr && (
-              <p className="text-lg leading-relaxed text-foreground" dir="rtl">{currentBlock.contentAr}</p>
+              <FormattedText text={currentBlock.contentAr} dir="rtl" className="text-lg leading-relaxed text-foreground" />
             )}
             {/* The CMS labels this field "Word to spell" and saves it to
                 `prompt`; `content` is the older home for the same thing. In a
@@ -1509,23 +1934,21 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
             block={currentBlock}
             state={st}
             questionIndex={questionIndex}
-            onSelect={(optionId) => setBlockField(currentBlock.id, { selectedOptionId: optionId })}
+            onSelect={(optionId) => setBlockField(key, { selectedOptionId: optionId })}
           />
         );
 
       case "open_ended":
         return (
           <OpenEndedBlock
+            key={key}
             block={currentBlock}
+            item={item}
             state={st}
-            onChange={(text) => setBlockField(currentBlock.id, { responseText: text })}
-            onRecordingDone={(dur) =>
-              setBlockField(currentBlock.id, {
-                recordingDurationSeconds: dur,
-                hasRecording: true,
-              })
-            }
-            onUploadState={(patch) => setBlockField(currentBlock.id, patch)}
+            preview={isPreview}
+            onChange={(text) => setBlockField(key, { responseText: text })}
+            onRecordingDone={onRecordingDone}
+            onUploadState={onUploadState}
           />
         );
 
@@ -1535,10 +1958,13 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
         // accuracy score; an open speaking prompt is scored on fluency alone.
         return (
           <SpeakingBlock
+            key={key}
             block={currentBlock}
+            item={item}
             state={st}
-            onRecordingDone={(dur) => setBlockField(currentBlock.id, { recordingDurationSeconds: dur, hasRecording: true })}
-            onUploadState={(patch) => setBlockField(currentBlock.id, patch)}
+            preview={isPreview}
+            onRecordingDone={onRecordingDone}
+            onUploadState={onUploadState}
           />
         );
 
@@ -1556,12 +1982,29 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     }
   };
 
+  const backDisabled =
+    isSubmitting ||
+    (currentBlockIndex === 0 && questionIndex === 0 && (!hasIntro || showIntro));
+
   // ── Layout ─────────────────────────────────────────────────────────
+  // The preview sits inside the CMS page, so it is a bordered panel with a
+  // sticky control bar rather than a full-screen page with a fixed one — fixed
+  // positioning was laid out around the STUDENT sidebar and would sit over
+  // the CMS one.
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-background">
+    // Explicit so the CMS preview, mounted inside the LTR CMS, still shows
+    // the student's layout for the selected language.
+    <div
+      dir={dir}
+      className={
+        isPreview
+          ? "flex flex-col bg-background rounded-xl border border-border"
+          : "min-h-[100dvh] flex flex-col bg-background"
+      }
+    >
       {/* Top Bar */}
       <header className="h-16 border-b border-border flex items-center px-4 md:px-8 shrink-0">
-        <Link href={`/learn/${lesson.levelId}`}>
+        <Link href={preview ? preview.exitHref : `/learn/${lesson.levelId}`}>
           <Button variant="ghost" size="icon" className="shrink-0">
             <ArrowRight className="h-5 w-5 ltr:-scale-x-100" />
           </Button>
@@ -1570,19 +2013,28 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           <Progress value={progress} className="h-2" />
         </div>
         <span className="text-sm text-muted-foreground shrink-0">
-          {currentBlockIndex + 1}/{blocks.length}
+          {showIntro ? `0/${groups.length}` : `${currentGroupIndex + 1}/${groups.length}`}
         </span>
       </header>
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto">
+      <main className={isPreview ? "flex-1" : "flex-1 overflow-y-auto"}>
         {/* Bottom padding clears the fixed controls — and on mobile the bottom
             nav underneath them too, or the last option cannot be scrolled to. */}
-        <div className="max-w-2xl mx-auto w-full p-4 md:p-8 pb-56 md:pb-40">
-          {blocks.length === 0 ? (
+        <div className={`max-w-2xl mx-auto w-full p-4 md:p-8 ${isPreview ? "pb-8" : "pb-56 md:pb-40"}`}>
+          {showIntro ? (
+            <LessonIntro lesson={lesson} />
+          ) : blocks.length === 0 ? (
             <div className="text-center py-20 text-muted-foreground">{ls.empty}</div>
           ) : (
-            renderBlock()
+            <>
+              {currentGroup.length > 1 && (
+                <p className="text-center text-sm text-muted-foreground mb-4">
+                  {ls.partOf(partOfGroup + 1, currentGroup.length)}
+                </p>
+              )}
+              {renderBlock()}
+            </>
           )}
         </div>
       </main>
@@ -1591,12 +2043,18 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
       {/* The sidebar sits on the inline-start side (right in Arabic, left in
           English), so the bar is inset from that side on desktop.
           On mobile it sits above the 16-unit bottom nav rather than beneath it. */}
-      <div className="fixed bottom-16 md:bottom-0 end-0 start-0 md:start-64 p-4 border-t border-border bg-card/80 backdrop-blur-md shrink-0 z-10">
+      <div
+        className={
+          isPreview
+            ? "sticky bottom-0 p-4 border-t border-border bg-card/80 backdrop-blur-md shrink-0 z-10 rounded-b-xl"
+            : "fixed bottom-16 md:bottom-0 end-0 start-0 md:start-64 p-4 border-t border-border bg-card/80 backdrop-blur-md shrink-0 z-10"
+        }
+      >
         <div className="max-w-2xl mx-auto w-full flex justify-between items-center gap-4">
           <Button
             variant="ghost"
-            onClick={() => { setQuestionIndex(0); setCurrentBlockIndex(prev => prev - 1); }}
-            disabled={currentBlockIndex === 0 || isSubmitting}
+            onClick={moveBack}
+            disabled={backDisabled}
             className="text-muted-foreground"
           >
             {t.quiz.prev}
@@ -1619,7 +2077,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
             size="lg"
             className="flex-1 md:flex-none md:w-48 h-14 rounded-xl text-lg font-bold shadow-md"
             onClick={handleContinueBtn}
-            disabled={isContinueDisabled}
+            disabled={!showIntro && isContinueDisabled}
           >
             {continueLabel()}
           </Button>

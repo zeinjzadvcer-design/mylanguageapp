@@ -20,6 +20,7 @@ import {
   quizAttemptsTable,
   quizzesTable,
   contentBlocksTable,
+  exercisesTable,
   learningActivityAttemptsTable,
   lessonsTable,
   usersTable,
@@ -95,7 +96,10 @@ router.get("/cms/grading/queue", requireCMSAccess, async (req, res): Promise<voi
       kind: sql<string>`'lesson_activity'`,
       attemptId: learningActivityAttemptsTable.id,
       blockType: contentBlocksTable.type,
-      prompt: contentBlocksTable.prompt,
+      // A speaking block can hold several prompts, one per exercise; the
+      // block's own prompt is only the first. Show the one this recording
+      // answered, falling back to the block for blocks without exercises.
+      prompt: sql<string | null>`coalesce(nullif(${exercisesTable.prompt}, ''), nullif(${exercisesTable.question}, ''), ${contentBlocksTable.prompt})`,
       expectsReferenceReading: contentBlocksTable.expectsReferenceReading,
       referenceText: contentBlocksTable.content,
       response: sql<unknown>`to_jsonb(${learningActivityAttemptsTable.responseText})`,
@@ -110,6 +114,7 @@ router.get("/cms/grading/queue", requireCMSAccess, async (req, res): Promise<voi
     })
     .from(learningActivityAttemptsTable)
     .innerJoin(contentBlocksTable, eq(contentBlocksTable.id, learningActivityAttemptsTable.blockId))
+    .leftJoin(exercisesTable, eq(exercisesTable.id, learningActivityAttemptsTable.exerciseId))
     .innerJoin(lessonsTable, eq(lessonsTable.id, learningActivityAttemptsTable.lessonId))
     .innerJoin(usersTable, eq(usersTable.id, learningActivityAttemptsTable.userId))
     .where(and(eq(learningActivityAttemptsTable.evaluationStatus, "pending"), activityFilter))

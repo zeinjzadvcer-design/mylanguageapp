@@ -2646,6 +2646,17 @@ components:
           type: ["string", "null"]
         audioUrl:
           type: ["string", "null"]
+        groupId:
+          description: >-
+            Consecutive blocks sharing this id are items of one block, shown to
+            the student as "item 2 of 3". Null for a block on its own.
+          type: ["string", "null"]
+        expectsReferenceReading:
+          description: >-
+            The student reads the passage aloud and the recording is scored by
+            matching their words against it. On a text block this turns a
+            passage to read into an exercise.
+          type: boolean
         # vocabulary list embedded ref
         vocabularyItems:
           type: ["array", "null"]
@@ -2702,6 +2713,15 @@ components:
                       type: string
                     textAr:
                       type: ["string", "null"]
+              prompt:
+                description: What a speaking or open-ended item asks.
+                type: ["string", "null"]
+              promptAr:
+                type: ["string", "null"]
+              instructions:
+                type: ["string", "null"]
+              instructionsAr:
+                type: ["string", "null"]
         # speaking / pronunciation
         prompt:
           type: ["string", "null"]
@@ -4008,6 +4028,11 @@ components:
         sessionId:
           type: number
         lessonId:
+          type: ["number", "null"]
+        blockId:
+          description: >-
+            The dialogue block the conversation belongs to. A lesson can hold
+            several, so the lesson alone does not say which one to resume.
           type: ["number", "null"]
         turns:
           description: The exchange so far, oldest first.

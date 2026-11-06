@@ -852,6 +852,8 @@ export async function getActiveSession(userId: number) {
   return {
     sessionId: session.id,
     lessonId: session.lessonId,
+    /** Lets a lesson with several dialogue parts resume the right one. */
+    blockId: session.blockId,
     turns,
     turnsUsed: session.turnCount,
     turnsRemaining: Math.max(0, session.maxTurns - session.turnCount),

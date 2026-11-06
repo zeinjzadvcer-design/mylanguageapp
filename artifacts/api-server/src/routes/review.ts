@@ -5,10 +5,10 @@ import {
   lessonProgressTable,
   lessonsTable,
   levelsTable,
-  studentSubscriptionsTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { getWeaknessReport } from "../services/weakness";
+import { resolvePlanCode } from "../services/ai-quota";
 
 const router: IRouter = Router();
 
@@ -117,20 +117,10 @@ router.get("/review/skills", requireAuth, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
   const withAdvice = req.query.advice === "true";
 
-  const [sub] = await db
-    .select({ planCode: studentSubscriptionsTable.planCode })
-    .from(studentSubscriptionsTable)
-    .where(
-      and(
-        eq(studentSubscriptionsTable.userId, userId),
-        eq(studentSubscriptionsTable.status, "active"),
-      ),
-    )
-    .limit(1);
-
   res.json(
     await getWeaknessReport(userId, {
-      subscriptionPlan: sub?.planCode ?? "free",
+      // Shared with every other AI feature, so an admin is unlimited here too.
+      subscriptionPlan: await resolvePlanCode(userId),
       withAdvice,
     }),
   );

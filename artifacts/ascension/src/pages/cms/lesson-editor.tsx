@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { cmsApi, type CMSLesson, type CMSBlock, type CMSExercise, type CMSOption } from "@/lib/cms-api";
@@ -30,6 +30,44 @@ const BLOCK_TYPES = [
   { value: "spelling", label: "Spelling" },
   { value: "review", label: "Review" },
 ];
+
+/**
+ * Types whose content lives on the block row itself — the word, the passage,
+ * the audio clip — so a second item is a second block, linked to the first by
+ * a `groupId` in `config`. MCQ, speaking and open-ended blocks are absent:
+ * their items are exercises inside one block (ExerciseListEditor). A
+ * vocabulary list is absent because it always shows the whole lesson's words.
+ */
+const GROUPABLE_TYPES = [
+  "text", "explanation", "review", "pronunciation_guide",
+  "audio_placeholder", "spelling", "dialogue",
+];
+
+function groupIdOf(block: CMSBlock): string | undefined {
+  const id = (block.config as { groupId?: unknown } | null | undefined)?.groupId;
+  return typeof id === "string" && id !== "" ? id : undefined;
+}
+
+/**
+ * Consecutive blocks sharing a group id. Every block written before grouping
+ * existed has none, so it is a group of one and looks exactly as it did.
+ */
+function groupBlocks(sorted: CMSBlock[]): CMSBlock[][] {
+  const groups: CMSBlock[][] = [];
+  for (const block of sorted) {
+    const prev = groups[groups.length - 1];
+    const id = groupIdOf(block);
+    if (prev && id && groupIdOf(prev[prev.length - 1]) === id) prev.push(block);
+    else groups.push([block]);
+  }
+  return groups;
+}
+
+function newGroupId(): string {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 const LESSON_TYPES = ["general", "reading", "pronunciation", "speaking", "vocabulary", "grammar", "conversation", "assessment"];
 const DIFFICULTIES = ["beginner", "elementary", "intermediate", "upper_intermediate", "advanced"];
@@ -100,12 +138,19 @@ export default function LessonEditor({ lessonId }: Props) {
   const saveMeta = async () => {
     setSaving(true);
     try {
+      const clean = (lines?: string[] | null) =>
+        lines ? lines.map(l => l.trim()).filter(Boolean) : lines;
+      const payload = {
+        ...form,
+        objectives: clean(form.objectives),
+        objectivesAr: clean(form.objectivesAr),
+      };
       if (isNew) {
-        const result = await cmsApi.lessons.create(form);
+        const result = await cmsApi.lessons.create(payload);
         toast({ title: "Lesson created" });
         setLocation(`/cms/lessons/${result.id}/edit`);
       } else {
-        await cmsApi.lessons.update(lessonId!, form);
+        await cmsApi.lessons.update(lessonId!, payload);
         qc.invalidateQueries({ queryKey: ["cms-lesson", lessonId] });
         toast({ title: "Saved" });
       }
@@ -133,12 +178,17 @@ export default function LessonEditor({ lessonId }: Props) {
     if (!lessonId) { toast({ description: "Save lesson metadata first" }); return; }
     const maxOrder = blocks.length > 0 ? Math.max(...blocks.map(b => b.order)) : 0;
     // Recording blocks start optional: required + unconfigured strands the student.
-    const startsOptional = type === "speaking_prompt" || type === "pronunciation_guide";
+    // A reading block counts — it is read aloud by default (below), and a
+    // student with no working microphone must still be able to get past it.
+    const startsOptional =
+      type === "speaking_prompt" || type === "pronunciation_guide" || type === "text";
     const block = await cmsApi.blocks.create(lessonId, {
       type,
       order: maxOrder + 1,
       isRequired: !startsOptional,
       isActive: true,
+      // A reading block is read aloud and scored unless the author unticks it.
+      ...(type === "text" ? { expectsReferenceReading: true } : {}),
     });
     setBlocks(prev => [...prev, block]);
     setExpandedBlocks(prev => new Set([...prev, block.id]));
@@ -162,6 +212,67 @@ export default function LessonEditor({ lessonId }: Props) {
     await refetchBlocks();
   };
 
+  /** Moves a whole group, so its items stay together. */
+  const moveGroup = async (groupIndex: number, dir: -1 | 1) => {
+    if (!lessonId) return;
+    const groups = groupBlocks([...blocks].sort((a, b) => a.order - b.order));
+    const target = groupIndex + dir;
+    if (target < 0 || target >= groups.length) return;
+    [groups[groupIndex], groups[target]] = [groups[target], groups[groupIndex]];
+    await cmsApi.blocks.reorder(lessonId, groups.flat().map(b => b.id));
+    await refetchBlocks();
+  };
+
+  /**
+   * Adds an item to a block: a new block of the same type, placed straight
+   * after the group and linked to it. The first item is given a group id the
+   * first time this happens, which is the only change made to an existing
+   * block — its own content and settings are left as they were.
+   *
+   * The new item starts with the group's title and instructions, so the
+   * student sees one activity; it takes Required from the last item, and
+   * every item keeps its own Required / Active from then on.
+   */
+  const addItem = async (group: CMSBlock[]) => {
+    if (!lessonId) return;
+    const first = group[0];
+    const last = group[group.length - 1];
+    const baseConfig = (first.config && typeof first.config === "object" ? first.config : {}) as Record<string, unknown>;
+    let groupId = groupIdOf(first);
+    let createdId: number | null = null;
+    try {
+      if (!groupId) {
+        groupId = newGroupId();
+        await cmsApi.blocks.update(lessonId, first.id, { config: { ...baseConfig, groupId } });
+      }
+      const created = await cmsApi.blocks.create(lessonId, {
+        type: first.type,
+        order: last.order + 1,
+        title: first.title, titleAr: first.titleAr,
+        instructions: first.instructions, instructionsAr: first.instructionsAr,
+        isRequired: last.isRequired,
+        isActive: true,
+        expectsReferenceReading: first.expectsReferenceReading,
+        config: { ...baseConfig, groupId },
+      });
+      createdId = created.id;
+      // Insert right after the group rather than at the end of the lesson.
+      const ids = [...blocks].sort((a, b) => a.order - b.order).map(b => b.id);
+      ids.splice(ids.indexOf(last.id) + 1, 0, created.id);
+      await cmsApi.blocks.reorder(lessonId, ids);
+      setExpandedBlocks(prev => new Set([...prev, created.id]));
+      await refetchBlocks();
+    } catch (e: any) {
+      // Created but not placed: its order collides with the next block's, which
+      // can split the group. Remove it rather than leave it half-placed.
+      if (createdId !== null) {
+        await cmsApi.blocks.delete(lessonId, createdId).catch(() => {});
+      }
+      toast({ title: "Could not add item", description: e.message, variant: "destructive" });
+      await refetchBlocks();
+    }
+  };
+
   const updateBlock = async (id: number, update: Partial<CMSBlock>) => {
     if (!lessonId) return;
     const updated = await cmsApi.blocks.update(lessonId, id, update);
@@ -177,6 +288,7 @@ export default function LessonEditor({ lessonId }: Props) {
   };
 
   const sortedBlocks = [...blocks].sort((a, b) => a.order - b.order);
+  const blockGroupList = groupBlocks(sortedBlocks);
   const currentStatus = form.status ?? lesson?.status ?? "draft";
 
   return (
@@ -314,16 +426,26 @@ export default function LessonEditor({ lessonId }: Props) {
                 <Textarea rows={2} placeholder="Internal notes — not shown to students" value={form.teacherNotes ?? ""} onChange={e => setForm(f => ({ ...f, teacherNotes: e.target.value }))} />
               </Field>
 
-              <Field label="Learning Objectives (one per line)">
-                <Textarea rows={3} value={(form.objectives ?? []).join("\n")} onChange={e => setForm(f => ({ ...f, objectives: e.target.value.split("\n").filter(Boolean) }))} />
+              {/* Shown to the student before the first block, Arabic first.
+                  Blank lines are kept while typing and dropped on save:
+                  filtering them on every keystroke swallowed the Enter key,
+                  so a second objective could not be typed at all. */}
+              <Field label="Learning Objectives — English (one per line)">
+                <Textarea rows={3} value={(form.objectives ?? []).join("\n")} onChange={e => setForm(f => ({ ...f, objectives: e.target.value.split("\n") }))} />
               </Field>
+              <Field label="Learning Objectives — Arabic (one per line)">
+                <Textarea rows={3} dir="rtl" value={(form.objectivesAr ?? []).join("\n")} onChange={e => setForm(f => ({ ...f, objectivesAr: e.target.value.split("\n") }))} />
+              </Field>
+              <p className="text-xs text-gray-400 -mt-1">
+                Students see these first, before the lesson starts.
+              </p>
             </div>
           </div>
 
           {/* Content blocks panel */}
           <div className="md:col-span-2 space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-700">Content Blocks ({sortedBlocks.length})</h2>
+              <h2 className="text-sm font-semibold text-gray-700">Content Blocks ({blockGroupList.length})</h2>
               {isContentManager && !isNew && (
                 <BlockTypeMenu onSelect={addBlock} />
               )}
@@ -335,23 +457,86 @@ export default function LessonEditor({ lessonId }: Props) {
               </div>
             )}
 
-            {sortedBlocks.map((block, idx) => (
-              <BlockCard
-                key={block.id}
-                block={block}
-                index={idx}
-                total={sortedBlocks.length}
-                expanded={expandedBlocks.has(block.id)}
-                onToggle={() => toggleBlock(block.id)}
-                onMoveUp={() => moveBlock(block.id, -1)}
-                onMoveDown={() => moveBlock(block.id, 1)}
-                onDelete={() => removeBlock(block.id)}
-                onUpdate={(u: Partial<CMSBlock>) => updateBlock(block.id, u)}
-                lessonId={lessonId!}
-                isEditable={isContentManager}
-                qc={qc}
-              />
-            ))}
+            {blockGroupList.map((group, gi) => {
+              const typeLabel = BLOCK_TYPES.find(t => t.value === group[0].type)?.label ?? group[0].type;
+              const addItemButton = isContentManager && GROUPABLE_TYPES.includes(group[0].type) && (
+                <div className="flex items-center gap-3">
+                  <Button size="sm" variant="outline" onClick={() => addItem(group)}>
+                    <Plus className="mr-1 h-3.5 w-3.5" /> Add item
+                  </Button>
+                  <span className="text-xs text-gray-400">
+                    Another {typeLabel.toLowerCase()} inside this same block.
+                  </span>
+                </div>
+              );
+
+              if (group.length === 1) {
+                const block = group[0];
+                return (
+                  <BlockCard
+                    key={block.id}
+                    block={block}
+                    index={gi}
+                    canMoveUp={gi > 0}
+                    canMoveDown={gi < blockGroupList.length - 1}
+                    expanded={expandedBlocks.has(block.id)}
+                    onToggle={() => toggleBlock(block.id)}
+                    onMoveUp={() => moveGroup(gi, -1)}
+                    onMoveDown={() => moveGroup(gi, 1)}
+                    onDelete={() => removeBlock(block.id)}
+                    onUpdate={(u: Partial<CMSBlock>) => updateBlock(block.id, u)}
+                    lessonId={lessonId!}
+                    isEditable={isContentManager}
+                    qc={qc}
+                    footer={addItemButton}
+                  />
+                );
+              }
+
+              return (
+                <div key={group[0].id} className="rounded-lg border border-indigo-200 bg-white overflow-hidden">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50 border-b border-indigo-200">
+                    <span className="flex-1 text-sm font-medium text-gray-700">
+                      <span className="text-xs text-gray-400 mr-1.5">#{gi + 1}</span>
+                      {typeLabel}
+                      <span className="ml-2 text-xs text-indigo-600">{group.length} items</span>
+                    </span>
+                    {isContentManager && (
+                      <div className="flex items-center gap-0.5">
+                        <button onClick={() => moveGroup(gi, -1)} disabled={gi === 0} className="p-1 rounded hover:bg-indigo-100 disabled:opacity-30" title="Move block up">
+                          <ArrowUp className="h-3 w-3" />
+                        </button>
+                        <button onClick={() => moveGroup(gi, 1)} disabled={gi === blockGroupList.length - 1} className="p-1 rounded hover:bg-indigo-100 disabled:opacity-30" title="Move block down">
+                          <ArrowDown className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-3 space-y-2">
+                    {group.map((block, ii) => (
+                      <BlockCard
+                        key={block.id}
+                        block={block}
+                        heading={`Item ${ii + 1}`}
+                        canMoveUp={ii > 0}
+                        canMoveDown={ii < group.length - 1}
+                        expanded={expandedBlocks.has(block.id)}
+                        onToggle={() => toggleBlock(block.id)}
+                        // Within the group the neighbour is always a sibling.
+                        onMoveUp={() => moveBlock(block.id, -1)}
+                        onMoveDown={() => moveBlock(block.id, 1)}
+                        onDelete={() => { if (confirm(`Delete item ${ii + 1}?`)) removeBlock(block.id); }}
+                        onUpdate={(u: Partial<CMSBlock>) => updateBlock(block.id, u)}
+                        lessonId={lessonId!}
+                        isEditable={isContentManager}
+                        qc={qc}
+                      />
+                    ))}
+                    {addItemButton}
+                  </div>
+                </div>
+              );
+            })}
 
             {lessonId && sortedBlocks.length === 0 && (
               <div className="rounded-lg border-2 border-dashed border-gray-200 p-8 text-center text-sm text-gray-400">
@@ -395,8 +580,12 @@ function BlockTypeMenu({ onSelect }: { onSelect: (type: string) => void }) {
   );
 }
 
-function BlockCard({ block, index, total, expanded, onToggle, onMoveUp, onMoveDown, onDelete, onUpdate, lessonId, isEditable, qc }: any) {
-  const label = BLOCK_TYPES.find(t => t.value === block.type)?.label ?? block.type;
+/**
+ * One block, or one item of a grouped block when `heading` is given. Required
+ * and Active are edited here per item, so a grouped block can mix them.
+ */
+function BlockCard({ block, index, heading, canMoveUp, canMoveDown, expanded, onToggle, onMoveUp, onMoveDown, onDelete, onUpdate, lessonId, isEditable, qc, footer }: any) {
+  const label = heading ?? BLOCK_TYPES.find(t => t.value === block.type)?.label ?? block.type;
   const { toast } = useToast();
 
   return (
@@ -404,17 +593,17 @@ function BlockCard({ block, index, total, expanded, onToggle, onMoveUp, onMoveDo
       <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
         <button onClick={onToggle} className="flex items-center gap-1.5 flex-1 text-left text-sm font-medium text-gray-700">
           {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          <span className="text-xs text-gray-400 mr-0.5">#{index + 1}</span>
+          {heading === undefined && <span className="text-xs text-gray-400 mr-0.5">#{index + 1}</span>}
           {label}
           {!block.isRequired && <span className="text-xs text-gray-400 ml-1">(optional)</span>}
           {!block.isActive && <span className="text-xs text-red-400 ml-1">(inactive)</span>}
         </button>
         {isEditable && (
           <div className="flex items-center gap-0.5">
-            <button onClick={onMoveUp} disabled={index === 0} className="p-1 rounded hover:bg-gray-200 disabled:opacity-30">
+            <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1 rounded hover:bg-gray-200 disabled:opacity-30">
               <ArrowUp className="h-3 w-3" />
             </button>
-            <button onClick={onMoveDown} disabled={index === total - 1} className="p-1 rounded hover:bg-gray-200 disabled:opacity-30">
+            <button onClick={onMoveDown} disabled={!canMoveDown} className="p-1 rounded hover:bg-gray-200 disabled:opacity-30">
               <ArrowDown className="h-3 w-3" />
             </button>
             <button onClick={onDelete} className="p-1 rounded hover:bg-red-50 text-red-400">
@@ -429,6 +618,7 @@ function BlockCard({ block, index, total, expanded, onToggle, onMoveUp, onMoveDo
           <BlockEditor block={block} onUpdate={onUpdate} lessonId={lessonId} isEditable={isEditable} qc={qc} />
         </div>
       )}
+      {footer && <div className="px-4 py-2 border-t border-gray-100">{footer}</div>}
     </div>
   );
 }
@@ -452,12 +642,46 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [localBlock, setLocalBlock] = useState(block);
+  /** The server copy the form was last synced to — what "unsaved" is measured against. */
+  const syncedBlock = useRef(block);
 
   // Adopt server state when this block changes underneath us (a reorder, or a
   // refetch after another edit) so the form never drifts from what was stored.
+  //
+  // Fields edited here but not yet saved are kept. Replacing the whole form
+  // used to throw them away: saving a speaking prompt or attaching media
+  // patches the block, the refetch landed here, and whatever else the author
+  // had typed — or an image picked a moment earlier — vanished without a word.
   useEffect(() => {
-    setLocalBlock(block);
+    const previous = syncedBlock.current;
+    syncedBlock.current = block;
+    setLocalBlock((local: any) => {
+      if (local.id !== block.id) return block;
+      const merged: any = { ...block };
+      for (const key of EDITABLE_BLOCK_FIELDS) {
+        if (local[key] !== previous[key]) merged[key] = local[key];
+      }
+      return merged;
+    });
   }, [block.id, block.order, block.updatedAt]);
+
+  /**
+   * Attach or remove illustration media, saved to the block at once.
+   *
+   * The picker uploads straight away and says "Media attached", so an author
+   * reasonably took that as done — but the choice sat in this form until Save
+   * Block, which speaking, open-ended and MCQ blocks hide below their own save
+   * button. The image was in the library and on no block, and the preview, like
+   * the student, never showed it.
+   */
+  const saveMedia = async (patch: Record<string, unknown>) => {
+    setLocalBlock((b: any) => ({ ...b, ...patch }));
+    try {
+      await onUpdate(patch);
+    } catch (e: any) {
+      toast({ title: "Media not saved", description: e.message, variant: "destructive" });
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -550,7 +774,7 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
       <div className="space-y-3 border-t border-gray-200 p-3">
         <p className="text-xs text-gray-500">
           Optional. Shown to the student when taking the lesson. Does not affect
-          grading.
+          grading. Saved to the block as soon as it is attached or removed.
         </p>
         <MediaPicker
           label="Image"
@@ -559,11 +783,7 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
           value={localBlock.imageMediaKey}
           disabled={!isEditable}
           onChange={(key, mediaId) =>
-            setLocalBlock((b: any) => ({
-              ...b,
-              imageMediaKey: key ?? "",
-              imageMediaId: mediaId,
-            }))
+            saveMedia({ imageMediaKey: key ?? "", imageMediaId: mediaId })
           }
         />
         <MediaPicker
@@ -572,11 +792,7 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
           value={localBlock.audioMediaKey}
           disabled={!isEditable}
           onChange={(key, mediaId) =>
-            setLocalBlock((b: any) => ({
-              ...b,
-              audioMediaKey: key ?? "",
-              audioMediaId: mediaId,
-            }))
+            saveMedia({ audioMediaKey: key ?? "", audioMediaId: mediaId })
           }
         />
       </div>
@@ -598,6 +814,26 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
             <Label className="text-xs text-gray-500">Content (Arabic)</Label>
             <Textarea rows={5} dir="rtl" value={localBlock.contentAr ?? ""} onChange={e => setLocalBlock((b: any) => ({ ...b, contentAr: e.target.value }))} className="text-sm" />
           </div>
+          <p className="text-xs text-gray-400">
+            Lists show as lists: start lines with "-" or "1.". Leave a blank line between paragraphs.
+          </p>
+          {/* Read-aloud scoring is a speech recogniser plus word matching
+              against the English content — no language model marks it. */}
+          {block.type === "text" && (
+            <label className="flex items-start gap-2 rounded-md border border-gray-200 p-2">
+              <Checkbox
+                checked={!!localBlock.expectsReferenceReading}
+                disabled={!isEditable}
+                onCheckedChange={v => setLocalBlock((b: any) => ({ ...b, expectsReferenceReading: !!v }))}
+              />
+              <span className="text-xs text-gray-600">
+                <strong>Student reads this text aloud, and is scored.</strong>{" "}
+                The recording is transcribed and matched word by word against
+                the English content above (no AI marking). Unticked, the text is
+                only shown to read.
+              </span>
+            </label>
+          )}
         </>
       )}
 
@@ -625,9 +861,14 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
               setLocalBlock((b: any) => ({ ...b, audioNote: key ?? "", referenceMediaId: mediaId }))
             }
           />
+          {/* Both are shown to the student, Arabic first. */}
           <div className="space-y-1">
-            <Label className="text-xs text-gray-500">Instructions</Label>
+            <Label className="text-xs text-gray-500">Instructions (English)</Label>
             <Textarea rows={2} value={localBlock.instructions ?? ""} onChange={e => setLocalBlock((b: any) => ({ ...b, instructions: e.target.value }))} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-500">Instructions (Arabic)</Label>
+            <Textarea rows={2} dir="rtl" value={localBlock.instructionsAr ?? ""} onChange={e => setLocalBlock((b: any) => ({ ...b, instructionsAr: e.target.value }))} className="text-sm" />
           </div>
         </>
       )}
@@ -640,30 +881,61 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
       )}
 
       {block.type === "mcq" && (
-        <MCQListEditor
+        <ExerciseListEditor
           block={block}
-          onSave={updateExercise}
+          noun="question"
           onDelete={deleteExercise}
-          saving={saving}
           isEditable={isEditable}
+          renderEditor={(ex: any, _isFirst: boolean, onCreated?: () => void) => (
+            <MCQEditor
+              exercise={ex}
+              options={ex?.options ?? []}
+              blockId={block.id}
+              onSave={async (data: any) => { await updateExercise(data, ex ? ex.id : null); onCreated?.(); }}
+              saving={saving}
+              isEditable={isEditable}
+            />
+          )}
         />
       )}
 
-      {(block.type === "speaking_prompt") && (
-        <SpeakingEditor
+      {block.type === "speaking_prompt" && (
+        <ExerciseListEditor
           block={block}
-          onSave={updateExercise}
-          // Carries the shared Required / Active checkboxes edited above, which
-          // this type's own Save button is otherwise the only way to persist.
-          onSaveBlock={(patch: Record<string, unknown>) =>
+          noun="speaking prompt"
+          startWithEditor
+          onDelete={deleteExercise}
+          // The first prompt is mirrored onto the block (see SpeakingEditor).
+          // When it is deleted, the next one takes its place there, or the
+          // student would keep seeing the prompt that was just removed.
+          onFirstDeleted={(next: any) =>
             onUpdate({
-              isRequired: localBlock.isRequired,
-              isActive: localBlock.isActive,
-              ...patch,
+              prompt: next.prompt ?? next.question ?? "",
+              promptAr: next.promptAr ?? "",
+              instructions: next.instructionsText ?? "",
+              instructionsAr: next.instructionsAr ?? "",
             })
           }
-          saving={saving}
           isEditable={isEditable}
+          renderEditor={(ex: any, isFirst: boolean, onCreated?: () => void) => (
+            <SpeakingEditor
+              block={block}
+              exercise={ex}
+              isFirst={isFirst}
+              onSave={async (data: any) => { await updateExercise(data, ex ? ex.id : null); onCreated?.(); }}
+              // Carries the shared Required / Active checkboxes edited above, which
+              // this type's own Save button is otherwise the only way to persist.
+              onSaveBlock={(patch: Record<string, unknown>) =>
+                onUpdate({
+                  isRequired: localBlock.isRequired,
+                  isActive: localBlock.isActive,
+                  ...patch,
+                })
+              }
+              saving={saving}
+              isEditable={isEditable}
+            />
+          )}
         />
       )}
 
@@ -711,20 +983,29 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
       )}
 
       {block.type === "open_ended" && (
-        <OpenEndedEditor
+        <ExerciseListEditor
           block={block}
-          onSave={updateExercise}
-          // Carries the shared Required / Active checkboxes, which live on the
-          // block rather than on the exercise this editor saves.
-          onSaveBlock={(patch: Record<string, unknown>) =>
-            onUpdate({
-              isRequired: localBlock.isRequired,
-              isActive: localBlock.isActive,
-              ...patch,
-            })
-          }
-          saving={saving}
+          noun="question"
+          startWithEditor
+          onDelete={deleteExercise}
           isEditable={isEditable}
+          renderEditor={(ex: any, _isFirst: boolean, onCreated?: () => void) => (
+            <OpenEndedEditor
+              exercise={ex}
+              onSave={async (data: any) => { await updateExercise(data, ex ? ex.id : null); onCreated?.(); }}
+              // Carries the shared Required / Active checkboxes, which live on the
+              // block rather than on the exercise this editor saves.
+              onSaveBlock={(patch: Record<string, unknown>) =>
+                onUpdate({
+                  isRequired: localBlock.isRequired,
+                  isActive: localBlock.isActive,
+                  ...patch,
+                })
+              }
+              saving={saving}
+              isEditable={isEditable}
+            />
+          )}
         />
       )}
 
@@ -764,13 +1045,30 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
 }
 
 /**
- * All the questions on one MCQ block.
+ * All the items on one block: MCQ questions, speaking prompts, open-ended
+ * questions.
  *
- * A block used to hold exactly one question, so a ten-question comprehension
- * check meant ten blocks. The server has always allowed many exercises per
- * block — only the editor and the player assumed one.
+ * A block used to hold exactly one, so a ten-question comprehension check
+ * meant ten blocks, and three speaking prompts meant three speaking blocks in
+ * a row. The server has always allowed many exercises per block — only the
+ * editor and the player assumed one. Each item is one exercise; the student
+ * works through them in order inside the same block.
+ *
+ * `startWithEditor`: a type whose single item used to be edited inline shows
+ * that editor straight away when the block is empty, rather than an empty list
+ * with an "Add" button — the way those blocks have always looked.
  */
-function MCQListEditor({ block, onSave, onDelete, saving, isEditable }: any) {
+function ExerciseListEditor({
+  block, noun, renderEditor, onDelete, onFirstDeleted, isEditable, startWithEditor = false,
+}: {
+  block: any;
+  noun: string;
+  renderEditor: (exercise: any | null, isFirst: boolean, onCreated?: () => void) => React.ReactNode;
+  onDelete: (exerciseId: number) => Promise<void> | void;
+  onFirstDeleted?: (next: any) => Promise<unknown> | void;
+  isEditable: boolean;
+  startWithEditor?: boolean;
+}) {
   // `exercises` is the full list; older payloads only carry `exercise`.
   const existing: any[] =
     block.exercises?.length
@@ -780,55 +1078,59 @@ function MCQListEditor({ block, onSave, onDelete, saving, isEditable }: any) {
         : [];
 
   const [adding, setAdding] = useState(false);
+  const Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
+
+  if (existing.length === 0 && startWithEditor) {
+    return <>{renderEditor(null, true)}</>;
+  }
+
+  const remove = async (index: number) => {
+    if (!confirm(`Delete this ${noun}?`)) return;
+    await onDelete(existing[index].id);
+    if (index === 0 && existing[1]) await onFirstDeleted?.(existing[1]);
+  };
 
   return (
     <div className="space-y-3">
       {existing.map((ex, i) => (
         <div key={ex.id} className="rounded-md border border-gray-200 p-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-500">Question {i + 1}</span>
+            <span className="text-xs font-medium text-gray-500">{Noun} {i + 1}</span>
             {isEditable && existing.length > 1 && (
-              <Button size="sm" variant="ghost" className="h-6 text-red-500"
-                onClick={() => { if (confirm("Delete this question?")) onDelete(ex.id); }}>
+              <Button size="sm" variant="ghost" className="h-6 text-red-500" onClick={() => remove(i)}>
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             )}
           </div>
-          <MCQEditor
-            exercise={ex}
-            options={ex.options ?? []}
-            blockId={block.id}
-            onSave={(data: any) => onSave(data, ex.id)}
-            saving={saving}
-            isEditable={isEditable}
-          />
+          {renderEditor(ex, i === 0)}
         </div>
       ))}
 
       {adding && (
         <div className="rounded-md border border-dashed border-indigo-300 p-3">
-          <div className="mb-2 text-xs font-medium text-indigo-600">
-            New question {existing.length + 1}
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-medium text-indigo-600">New {noun} {existing.length + 1}</span>
+            <Button size="sm" variant="ghost" className="h-6 text-gray-500" onClick={() => setAdding(false)}>
+              Cancel
+            </Button>
           </div>
-          <MCQEditor
-            exercise={null}
-            options={[]}
-            blockId={block.id}
-            onSave={async (data: any) => { await onSave(data, null); setAdding(false); }}
-            saving={saving}
-            isEditable={isEditable}
-          />
+          {renderEditor(null, existing.length === 0, () => setAdding(false))}
         </div>
       )}
 
       {isEditable && !adding && (
-        <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
-          <Plus className="mr-1 h-3.5 w-3.5" /> Add question
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+            <Plus className="mr-1 h-3.5 w-3.5" /> Add {noun}
+          </Button>
+          <span className="text-xs text-gray-400">
+            Students go through each {noun} in turn, inside this block.
+          </span>
+        </div>
       )}
 
       {existing.length === 0 && !adding && (
-        <p className="text-xs text-gray-400">No questions yet.</p>
+        <p className="text-xs text-gray-400">No {noun}s yet.</p>
       )}
     </div>
   );
@@ -893,44 +1195,69 @@ function MCQEditor({ exercise, options: initialOptions, blockId, onSave, saving,
   );
 }
 
-/**
- * A speaking block keeps its text in two places, and both are needed.
- *
- * The player reads `prompt`/`promptAr` off the block, the way it does for every
- * other block type; the grader reads the exercise row. Saving only the exercise
- * — which this editor used to do — left the student looking at a screen with no
- * prompt on it at all.
- *
- * This editor replaces the generic "Save Block" button for this type, so its
- * save has to carry the shared block fields too (Required / Active, edited
- * above) or those checkboxes would have no way to persist.
- */
-function SpeakingEditor({ block, onSave, onSaveBlock, saving, isEditable }: any) {
-  const [prompt, setPrompt] = useState(block.prompt ?? block.exercise?.prompt ?? "");
-  const [promptAr, setPromptAr] = useState(block.promptAr ?? block.exercise?.promptAr ?? "");
-  const [instructions, setInstructions] = useState(
-    block.instructions ?? block.exercise?.instructionsText ?? "",
-  );
-  const [modelAnswer, setModelAnswer] = useState(block.exercise?.modelAnswer ?? "");
-  const [expectedConcepts, setExpectedConcepts] = useState(block.exercise?.expectedConcepts ?? "");
+/** Blank strings count as absent — the editor saves "" for untouched fields. */
+function filled(value: string | null | undefined): string | null {
+  return value && value.trim() !== "" ? value : null;
+}
 
-  // Adopt server state when the block changes underneath us, matching
-  // BlockEditor — otherwise the form keeps showing a stale prompt after a
-  // refetch.
+/**
+ * One prompt on a speaking block.
+ *
+ * The FIRST prompt keeps its text in two places, and both are needed. The
+ * player reads `prompt`/`promptAr` off the block for a single-prompt block,
+ * the way it does for every other block type; the grader reads the exercise
+ * row. Saving only the exercise — which this editor used to do — left the
+ * student looking at a screen with no prompt on it at all. Later prompts live
+ * only on their own exercise, which is where the player reads them from when a
+ * block holds several.
+ *
+ * Every prompt's save also carries the shared block fields (Required / Active,
+ * edited above), or those checkboxes would have no way to persist.
+ */
+function SpeakingEditor({ block, exercise, isFirst, onSave, onSaveBlock, saving, isEditable }: any) {
+  // The exercise wins when it has text: after the first prompt is deleted the
+  // block can still mirror the old one, and showing that here would put the
+  // deleted prompt's words into the new first prompt's form.
+  const initial = () => ({
+    prompt: filled(exercise?.prompt) ?? (isFirst ? block.prompt : null) ?? "",
+    promptAr: filled(exercise?.promptAr) ?? (isFirst ? block.promptAr : null) ?? "",
+    instructions: filled(exercise?.instructionsText) ?? (isFirst ? block.instructions : null) ?? "",
+    instructionsAr: filled(exercise?.instructionsAr) ?? (isFirst ? block.instructionsAr : null) ?? "",
+    modelAnswer: exercise?.modelAnswer ?? "",
+    expectedConcepts: exercise?.expectedConcepts ?? "",
+  });
+  const [fields, setFields] = useState(initial);
+  /** The server values the form was last synced to — what "unsaved" is measured against. */
+  const synced = useRef(fields);
+  const set = (k: keyof ReturnType<typeof initial>) => (e: { target: { value: string } }) =>
+    setFields(f => ({ ...f, [k]: e.target.value }));
+
+  // Adopt server state when the block or prompt changes underneath us,
+  // matching BlockEditor, so the form never shows a stale prompt after a
+  // refetch — but keep what the author has typed and not yet saved. Every
+  // save on this block (another prompt, an attached image) changes the block,
+  // and replacing the whole form threw away the other prompts' typing.
   useEffect(() => {
-    setPrompt(block.prompt ?? block.exercise?.prompt ?? "");
-    setPromptAr(block.promptAr ?? block.exercise?.promptAr ?? "");
-    setInstructions(block.instructions ?? block.exercise?.instructionsText ?? "");
-    setModelAnswer(block.exercise?.modelAnswer ?? "");
-    setExpectedConcepts(block.exercise?.expectedConcepts ?? "");
-  }, [block.id, block.updatedAt]);
+    const next = initial();
+    const previous = synced.current;
+    synced.current = next;
+    setFields(local => {
+      const merged = { ...next };
+      for (const key of Object.keys(next) as Array<keyof typeof next>) {
+        if (local[key] !== previous[key]) merged[key] = local[key];
+      }
+      return merged;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block.id, block.updatedAt, exercise?.id, exercise?.updatedAt, isFirst]);
 
   // Block first: if the exercise write fails, the student still sees a prompt.
   const submit = async () => {
-    await onSaveBlock({ prompt, promptAr, instructions });
+    const { prompt, promptAr, instructions, instructionsAr, modelAnswer, expectedConcepts } = fields;
+    await onSaveBlock(isFirst ? { prompt, promptAr, instructions, instructionsAr } : {});
     await onSave({
       exerciseType: "speaking", question: prompt, prompt, promptAr,
-      instructionsText: instructions, modelAnswer, expectedConcepts,
+      instructionsText: instructions, instructionsAr, modelAnswer, expectedConcepts,
       correctOptionId: "_speaking_",
     });
   };
@@ -939,43 +1266,50 @@ function SpeakingEditor({ block, onSave, onSaveBlock, saving, isEditable }: any)
     <div className="space-y-3">
       <div className="space-y-1">
         <Label className="text-xs text-gray-500">Speaking Prompt</Label>
-        <Textarea rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} className="text-sm" />
+        <Textarea rows={3} value={fields.prompt} onChange={set("prompt")} className="text-sm" />
       </div>
       <div className="space-y-1">
         <Label className="text-xs text-gray-500">Prompt (Arabic)</Label>
-        <Textarea rows={2} dir="rtl" value={promptAr} onChange={e => setPromptAr(e.target.value)} className="text-sm" />
+        <Textarea rows={2} dir="rtl" value={fields.promptAr} onChange={set("promptAr")} className="text-sm" />
       </div>
-      <div className="space-y-1">
-        <Label className="text-xs text-gray-500">Instructions for student</Label>
-        <Textarea rows={2} value={instructions} onChange={e => setInstructions(e.target.value)} className="text-sm" />
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs text-gray-500">Instructions for student (English)</Label>
+          <Textarea rows={2} value={fields.instructions} onChange={set("instructions")} className="text-sm" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs text-gray-500">Instructions (Arabic)</Label>
+          <Textarea rows={2} dir="rtl" value={fields.instructionsAr} onChange={set("instructionsAr")} className="text-sm" />
+        </div>
       </div>
       <div className="space-y-1">
         <Label className="text-xs text-gray-500">Model answer (for AI/reviewer evaluation)</Label>
-        <Textarea rows={3} value={modelAnswer} onChange={e => setModelAnswer(e.target.value)} className="text-sm" />
+        <Textarea rows={3} value={fields.modelAnswer} onChange={set("modelAnswer")} className="text-sm" />
       </div>
       <div className="space-y-1">
         <Label className="text-xs text-gray-500">Key concepts / keywords (comma-separated)</Label>
-        <Input value={expectedConcepts} onChange={e => setExpectedConcepts(e.target.value)} className="text-sm" />
+        <Input value={fields.expectedConcepts} onChange={set("expectedConcepts")} className="text-sm" />
       </div>
-      {isEditable && <Button size="sm" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save Speaking Block"}</Button>}
+      {isEditable && <Button size="sm" onClick={submit} disabled={saving}>{saving ? "Saving…" : exercise ? "Save Prompt" : "Add Prompt"}</Button>}
     </div>
   );
 }
 
-function OpenEndedEditor({ block, onSave, onSaveBlock, saving, isEditable }: any) {
-  const [question, setQuestion] = useState(block.exercise?.question ?? "");
-  const [questionAr, setQuestionAr] = useState(block.exercise?.questionAr ?? "");
-  const [modelAnswer, setModelAnswer] = useState(block.exercise?.modelAnswer ?? "");
-  const [expectedConcepts, setExpectedConcepts] = useState(block.exercise?.expectedConcepts ?? "");
+/** One question on an open-ended block. `exercise` is null for a new one. */
+function OpenEndedEditor({ exercise, onSave, onSaveBlock, saving, isEditable }: any) {
+  const [question, setQuestion] = useState(exercise?.question ?? "");
+  const [questionAr, setQuestionAr] = useState(exercise?.questionAr ?? "");
+  const [modelAnswer, setModelAnswer] = useState(exercise?.modelAnswer ?? "");
+  const [expectedConcepts, setExpectedConcepts] = useState(exercise?.expectedConcepts ?? "");
 
-  // Adopt server state when the block changes underneath us, so the form does
-  // not keep showing a stale question after a refetch.
+  // Adopt server state when the question changes underneath us, so the form
+  // does not keep showing a stale question after a refetch.
   useEffect(() => {
-    setQuestion(block.exercise?.question ?? "");
-    setQuestionAr(block.exercise?.questionAr ?? "");
-    setModelAnswer(block.exercise?.modelAnswer ?? "");
-    setExpectedConcepts(block.exercise?.expectedConcepts ?? "");
-  }, [block.id, block.updatedAt]);
+    setQuestion(exercise?.question ?? "");
+    setQuestionAr(exercise?.questionAr ?? "");
+    setModelAnswer(exercise?.modelAnswer ?? "");
+    setExpectedConcepts(exercise?.expectedConcepts ?? "");
+  }, [exercise?.id, exercise?.updatedAt]);
 
   /**
    * Block first, then the exercise.

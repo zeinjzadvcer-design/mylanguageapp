@@ -34,13 +34,13 @@ import {
   practiceCallEvaluationsTable,
   practiceSessionsTable,
   mediaAssetsTable,
-  studentSubscriptionsTable,
   type PracticeCallEvaluation,
 } from "@workspace/db";
 import { analysePeerCall, MIN_DURATION_SECONDS } from "./graders/peer-call";
 import { GradingUnavailableError } from "./graders/open-answer";
 import { storage } from "./storage";
 import { logger } from "../lib/logger";
+import { resolvePlanCode } from "./ai-quota";
 
 /**
  * How long the other participant has to answer a request. Long enough that
@@ -89,21 +89,6 @@ export class EvaluationRefusedError extends Error {
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
-
-async function planCodeFor(userId: number): Promise<string> {
-  const [sub] = await db
-    .select({ planCode: studentSubscriptionsTable.planCode })
-    .from(studentSubscriptionsTable)
-    .where(
-      and(
-        eq(studentSubscriptionsTable.userId, userId),
-        eq(studentSubscriptionsTable.status, "active"),
-      ),
-    )
-    .orderBy(desc(studentSubscriptionsTable.startedAt))
-    .limit(1);
-  return sub?.planCode ?? "free";
-}
 
 /** The call, but only if this user was in it. */
 async function participantSession(sessionId: number, userId: number) {
@@ -468,7 +453,7 @@ export async function analyseEvaluation(evaluationId: number): Promise<void> {
         callDurationSeconds: session?.durationSeconds ?? null,
         channelSeparated: evaluation.channelSeparated,
       },
-      { userId: payer, subscriptionPlan: await planCodeFor(payer) },
+      { userId: payer, subscriptionPlan: await resolvePlanCode(payer) },
     );
 
     // ── Map transcript labels onto the two actual people ──────────────────

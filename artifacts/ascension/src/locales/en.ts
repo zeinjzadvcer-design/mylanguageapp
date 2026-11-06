@@ -438,6 +438,12 @@ export const en = {
     wordsUsed: (n: number) => (n === 1 ? "You used 1 of the lesson's words." : `You used ${n} of the lesson's words.`),
     speakInstead: "Speak instead of typing",
     end: "End conversation",
+    chooseVoice: "Choose the tutor's voice",
+    voiceLabel: "Tutor voice",
+    voiceAuto: "Automatic — best available voice",
+    voiceTry: "Try",
+    voiceHint: "Voices with Natural, Online or Google in the name sound the most natural. Edge offers the best ones for free.",
+    replay: "Listen again",
   },
 
   media: {
@@ -543,6 +549,18 @@ export const en = {
     contentType: (type: string) => `Content type: ${type}`,
     empty: "This lesson has no content yet.",
     skip: "Skip",
+    activityOf: (i: number, n: number) => `Activity ${i} of ${n}`,
+    partOf: (i: number, n: number) => `Part ${i} of ${n}`,
+    objectives: "Lesson objectives",
+    readAloud: "Read the following text out loud, then record your reading.",
+    finishPreview: "Finish preview",
+    previewSpeaking: "Preview mode: you can record and listen, but the recording is not uploaded or assessed. A student sees their pronunciation and fluency scores here.",
+    previewAnswer: "Preview mode: the answer is not sent or marked. A student sees the marking and feedback for their answer here.",
+    previewDialogue: "Preview mode: the AI tutor conversation does not start here. In this step the student talks with the tutor following the dialogue script.",
+    previewDone: "Lesson preview finished",
+    previewDoneBody: "In the real lesson the student sees their score, XP and pronunciation feedback here.",
+    restartPreview: "Restart preview",
+    backToEditor: "Back to the editor",
   },
 
   practice: {
@@ -704,6 +722,8 @@ export const en = {
     lessonsBody: "Browse the current lessons, and edit or add new curriculum content.",
     aiTitle: "AI settings",
     aiBody: "Provider, API key, models and daily limits per plan — changed live without a redeploy.",
+    reportsTitle: "Practice call reports",
+    reportsBody: "Reports students send about practice calls with their peers: the reason, call length, and earlier reports against the same person.",
     lessons: {
       loadError: "Something went wrong while loading the lessons",
       title: "Curriculum and lessons",

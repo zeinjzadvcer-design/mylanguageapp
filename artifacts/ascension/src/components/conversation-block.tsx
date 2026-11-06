@@ -36,10 +36,37 @@ import {
   StopCircle,
   Volume2,
   VolumeX,
+  SlidersHorizontal,
   Loader2,
   CheckCircle2,
   AlertCircle,
 } from "lucide-react";
+
+/**
+ * Conversations whose greeting has been read aloud, so it is read once when the
+ * block opens and not again each time the student comes back to it. Kept in
+ * memory for moving around the lesson and in sessionStorage for a reload.
+ */
+const greetedSessions = new Set<number>();
+const greetedKey = (sessionId: number) => `enstep.tutorGreeting.${sessionId}`;
+
+function wasGreeted(sessionId: number): boolean {
+  if (greetedSessions.has(sessionId)) return true;
+  try {
+    return window.sessionStorage.getItem(greetedKey(sessionId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markGreeted(sessionId: number): void {
+  greetedSessions.add(sessionId);
+  try {
+    window.sessionStorage.setItem(greetedKey(sessionId), "1");
+  } catch {
+    // Memory alone still covers moving around the lesson.
+  }
+}
 
 interface Props {
   lessonId: number;
@@ -54,9 +81,18 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
   const cv = t.conversation;
   const mic = useMicRecorder();
   const speech = useSpeech();
+  const [voicePanelOpen, setVoicePanelOpen] = useState(false);
 
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
+  /** Which tutor message is being replayed, to show it on its button. */
+  const [replaying, setReplaying] = useState<number | null>(null);
+  // Cleared when a new message arrives, whose own reading then takes over.
+  // Not on "speech stopped": replaying one line cancels the one in flight, and
+  // that cancellation reports a stop just after the new line has started.
+  useEffect(() => {
+    setReplaying(null);
+  }, [turns.length]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   /**
@@ -79,17 +115,63 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Reads the greeting aloud, once per conversation.
+   *
+   * Counted as done only when the browser actually starts speaking. After a
+   * reload the browser may refuse to speak until the student has clicked
+   * something; marking that attempt as done meant the greeting was never heard.
+   */
+  // The latest speech controller, for the delayed greeting retry below: the
+  // listener is attached once, and reading `speech` from that render would
+  // ignore a mute pressed in between.
+  const speechRef = useRef(speech);
+  speechRef.current = speech;
+
+  const greetOnce = (id: number, text: string) => {
+    if (wasGreeted(id)) return;
+    speechRef.current.speak(text, () => markGreeted(id));
+  };
+
   // Resume whatever is open, so a reload does not lose the thread.
   useEffect(() => {
     let cancelled = false;
+    let retryCleanup: (() => void) | null = null;
     void getActiveConversation()
       .then(({ session }) => {
         if (cancelled || !session || session.lessonId !== lessonId) return;
+
+        // Another dialogue part of this lesson. Only one conversation can be
+        // open at a time, so one the student walked away from would block this
+        // part from starting at all; it is closed, and this part starts fresh.
+        // Sessions from before blocks were recorded have no block id and are
+        // resumed as before.
+        if (session.blockId != null && session.blockId !== blockId) {
+          void endConversation(session.sessionId).catch(() => {
+            // Starting will report the open conversation if this failed.
+          });
+          return;
+        }
         setSessionId(session.sessionId);
         setTurns(session.turns);
         setTurnsRemaining(session.turnsRemaining);
         setMinutesRemaining(session.minutesRemaining);
         setVocabUsed(session.vocabularyUsed);
+
+        // Opening the block on a conversation that has only the greeting so
+        // far is the start of that conversation for the student, so the
+        // greeting is read — once. Further along, it is not: the student has
+        // moved on, and every line has its own replay button.
+        const [first] = session.turns;
+        if (session.turns.length === 1 && first?.role === "tutor") {
+          const id = session.sessionId;
+          greetOnce(id, first.content);
+          // If the browser refused (no click yet on a freshly loaded page),
+          // try again on the student's first click anywhere.
+          const retry = () => greetOnce(id, first.content);
+          document.addEventListener("pointerdown", retry, { once: true });
+          retryCleanup = () => document.removeEventListener("pointerdown", retry);
+        }
       })
       .catch(() => {
         // Not being able to resume is not worth an error; the student can start
@@ -97,8 +179,12 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
       });
     return () => {
       cancelled = true;
+      retryCleanup?.();
     };
-  }, [lessonId]);
+  // greetOnce reads the latest speech settings through a ref; re-running this
+  // effect for it would refetch the conversation on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, blockId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -125,7 +211,7 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
       const r = await startConversation(lessonId, blockId);
       setSessionId(r.sessionId);
       setTurns([{ role: "tutor", content: r.greeting }]);
-      speech.speak(r.greeting);
+      greetOnce(r.sessionId, r.greeting);
       setTurnsRemaining(r.maxTurns);
       setMinutesRemaining(r.maxMinutes);
       setTargetVocab(r.targetVocabulary);
@@ -290,6 +376,19 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
                 )}
               </button>
             )}
+            {/* Only worth offering when there is a choice to make. */}
+            {speech.available && speech.voices.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setVoicePanelOpen((o) => !o)}
+                title={cv.chooseVoice}
+                aria-label={cv.chooseVoice}
+                aria-expanded={voicePanelOpen}
+                className={`p-1 rounded-md hover:bg-secondary transition-colors ${voicePanelOpen ? "bg-secondary" : ""}`}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+              </button>
+            )}
           </span>
           <span className="tabular-nums">
             {turnsRemaining !== null && cv.turnsLeft(turnsRemaining)}
@@ -297,12 +396,65 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
           </span>
         </div>
 
+        {/* The voices are the browser's own, so the list differs per device —
+            and the one ranked best automatically is not always the one that
+            sounds best to this student. Remembered per browser. */}
+        {voicePanelOpen && (
+          <div className="rounded-lg border border-border bg-secondary/40 p-3 space-y-2">
+            <label className="block text-xs text-muted-foreground" htmlFor={`voice-${blockId}`}>
+              {cv.voiceLabel}
+            </label>
+            <div className="flex gap-2">
+              <select
+                id={`voice-${blockId}`}
+                value={speech.voiceName ?? ""}
+                onChange={(e) => speech.setVoiceName(e.target.value || null)}
+                className="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                dir="ltr"
+              >
+                <option value="">{cv.voiceAuto}</option>
+                {speech.voices.map((v) => (
+                  <option key={v.name} value={v.name}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+              <Button type="button" size="sm" variant="outline" onClick={speech.preview}>
+                <Volume2 className="h-3.5 w-3.5 me-1" />
+                {cv.voiceTry}
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {cv.voiceHint}
+            </p>
+          </div>
+        )}
+
         <div ref={scrollRef} className="max-h-80 overflow-y-auto space-y-2 ps-1">
           {turns.map((turn, i) => (
             <div
               key={i}
-              className={`flex ${turn.role === "student" ? "justify-start" : "justify-end"}`}
+              className={`flex items-end gap-1 ${turn.role === "student" ? "justify-start" : "justify-end"}`}
             >
+              {/* Every tutor line can be heard again: the greeting was spoken
+                  once, before the student had a chance to choose a voice, and a
+                  learner often needs a sentence a second time anyway. */}
+              {turn.role !== "student" && speech.available && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReplaying(i);
+                    speech.replay(turn.content);
+                  }}
+                  title={cv.replay}
+                  aria-label={cv.replay}
+                  className="shrink-0 p-1.5 rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                >
+                  <Volume2
+                    className={`h-4 w-4 ${replaying === i && speech.speaking ? "text-primary animate-pulse" : ""}`}
+                  />
+                </button>
+              )}
               <div
                 dir="ltr"
                 className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${

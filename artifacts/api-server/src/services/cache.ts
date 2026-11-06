@@ -65,7 +65,9 @@ export const CK = {
   curriculaList:      () => "v1:curricula:list",
   subPlans:           () => "v1:sub:plans",
   levelsByCurriculum: (cid: number) => `v1:levels:c:${cid}`,
-  lessonContent:      (lid: number) => `v1:lesson:${lid}:content`,
+  // v2: blocks gained expectsReferenceReading and groupId. A v1 entry lacks
+  // them, so read-aloud and grouped blocks would show wrong until it expired.
+  lessonContent:      (lid: number) => `v2:lesson:${lid}:content`,
   vocabByLesson:      (lid: number) => `v1:vocab:lesson:${lid}`,
   vocabByLevel:       (lid: number) => `v1:vocab:level:${lid}`,
 } as const;
