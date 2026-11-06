@@ -18,6 +18,17 @@ const basePath = process.env.BASE_PATH ?? '/';
 // /api through to it.
 const apiProxyTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:8080';
 
+// The same security headers vercel.json sends in production, so a page that
+// only works when framed, or a feature that needs a blocked permission, breaks
+// here first rather than after deploying.
+const securityHeaders = {
+  'X-Frame-Options': 'DENY',
+  'Content-Security-Policy': "frame-ancestors 'none'",
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), geolocation=(), microphone=(self)',
+};
+
 export default defineConfig({
   base: basePath,
   plugins: [react(), tailwindcss()],
@@ -43,6 +54,7 @@ export default defineConfig({
     strictPort: true,
     host: '0.0.0.0',
     allowedHosts: true,
+    headers: securityHeaders,
     proxy: {
       '/api': {
         target: apiProxyTarget,
@@ -65,6 +77,7 @@ export default defineConfig({
     port,
     host: '0.0.0.0',
     allowedHosts: true,
+    headers: securityHeaders,
     proxy: {
       '/api': {
         target: apiProxyTarget,
