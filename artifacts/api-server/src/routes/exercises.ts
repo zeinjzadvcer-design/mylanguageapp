@@ -10,7 +10,7 @@ import {
   levelsTable,
   studentProfilesTable,
 } from "@workspace/db";
-import { requireAuth } from "../middlewares/auth";
+import { requireAuth, currentRole } from "../middlewares/auth";
 import { getStudentCurriculumContext, publishedLessonFilter } from "../services/learning";
 
 const router: IRouter = Router();
@@ -77,7 +77,13 @@ router.post("/exercises/:exerciseId/submit", requireAuth, async (req, res): Prom
 
   // Enforce curriculum access for students (admins/content managers bypass)
   const userId = req.session.userId!;
-  const role = req.session.role;
+  // Current, not from login: staff skip the check below, and a former staff
+  // member must not keep doing so.
+  const role = await currentRole(req);
+  if (!role) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
 
   if (role === "student") {
     const ctx = await getStudentCurriculumContext(userId);

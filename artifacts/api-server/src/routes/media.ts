@@ -7,7 +7,7 @@
  */
 
 import { Router, type IRouter } from "express";
-import { requireAuth, requireContentManager } from "../middlewares/auth";
+import { requireAuth, requireContentManager, currentRole } from "../middlewares/auth";
 import {
   beginUpload,
   completeUpload,
@@ -145,9 +145,16 @@ router.get("/media/:mediaId/url", requireAuth, async (req, res): Promise<void> =
   }
 
   try {
+    // The current role, not the one from login: staff may play any student's
+    // recording, so someone no longer on staff must stop being able to.
+    const role = await currentRole(req);
+    if (!role) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
     const url = await resolvePlaybackUrl(mediaId, {
       userId: req.session.userId!,
-      role: req.session.role,
+      role,
     });
     if (!url) {
       res.status(404).json({ error: "Recording not found" });

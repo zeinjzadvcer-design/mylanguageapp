@@ -1,4 +1,58 @@
 import { type Request, type Response, type NextFunction } from "express";
+import { eq } from "drizzle-orm";
+import { db, usersTable } from "@workspace/db";
+
+type Role = NonNullable<Request["session"]["role"]>;
+
+/**
+ * The caller's role as the database has it now, not as it was at login.
+ *
+ * The session copies the role when someone signs in and keeps it for as long
+ * as the session lives — and with `rolling` cookies that is as long as they
+ * keep using the app. Without this, demoting a staff member, or deleting their
+ * account, changed nothing until they happened to log out. One primary-key
+ * lookup, run only by the role-gated routes below and the few others that
+ * branch on role; the student hot path (`requireAuth`) does not pay for it.
+ *
+ * Returns null when the account no longer exists, and ends that session.
+ */
+export async function currentRole(req: Request): Promise<Role | null> {
+  const userId = req.session?.userId;
+  if (!userId) return null;
+
+  const [user] = await db
+    .select({ role: usersTable.role })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId))
+    .limit(1);
+
+  if (!user) {
+    await new Promise<void>((resolve) => req.session.destroy(() => resolve()));
+    return null;
+  }
+  if (req.session.role !== user.role) req.session.role = user.role;
+  return user.role;
+}
+
+/** Answer 401/403 unless the caller's current role is one of `allowed`. */
+function requireRole(allowed: readonly Role[], deniedMessage: string) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.session?.userId) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    const role = await currentRole(req);
+    if (!role) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    if (!allowed.includes(role)) {
+      res.status(403).json({ error: deniedMessage });
+      return;
+    }
+    next();
+  };
+}
 
 /** Any authenticated user (all roles). */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
@@ -10,68 +64,34 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 }
 
 /** Admin only. */
-export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!req.session?.userId) {
-    res.status(401).json({ error: "Authentication required" });
-    return;
-  }
-  if (req.session?.role !== "admin") {
-    res.status(403).json({ error: "Admin access required" });
-    return;
-  }
-  next();
-}
+export const requireAdmin = requireRole(["admin"], "Admin access required");
 
 /**
  * Admin + content_manager.
  * Used for content creation and editing endpoints.
  */
-export function requireContentManager(req: Request, res: Response, next: NextFunction): void {
-  if (!req.session?.userId) {
-    res.status(401).json({ error: "Authentication required" });
-    return;
-  }
-  const role = req.session?.role;
-  if (role !== "admin" && role !== "content_manager") {
-    res.status(403).json({ error: "Content manager access required" });
-    return;
-  }
-  next();
-}
+export const requireContentManager = requireRole(
+  ["admin", "content_manager"],
+  "Content manager access required",
+);
 
 /**
  * Admin + content_manager + content_reviewer.
  * Used for read-access to CMS content (listings, preview, audit log).
  */
-export function requireCMSAccess(req: Request, res: Response, next: NextFunction): void {
-  if (!req.session?.userId) {
-    res.status(401).json({ error: "Authentication required" });
-    return;
-  }
-  const role = req.session?.role;
-  if (role !== "admin" && role !== "content_manager" && role !== "content_reviewer") {
-    res.status(403).json({ error: "CMS access required" });
-    return;
-  }
-  next();
-}
+export const requireCMSAccess = requireRole(
+  ["admin", "content_manager", "content_reviewer"],
+  "CMS access required",
+);
 
 /**
  * Admin + content_reviewer.
  * Used for review decisions (approve/reject).
  */
-export function requireReviewer(req: Request, res: Response, next: NextFunction): void {
-  if (!req.session?.userId) {
-    res.status(401).json({ error: "Authentication required" });
-    return;
-  }
-  const role = req.session?.role;
-  if (role !== "admin" && role !== "content_reviewer") {
-    res.status(403).json({ error: "Reviewer access required" });
-    return;
-  }
-  next();
-}
+export const requireReviewer = requireRole(
+  ["admin", "content_reviewer"],
+  "Reviewer access required",
+);
 
 /**
  * Student only.
@@ -88,14 +108,4 @@ export function requireReviewer(req: Request, res: Response, next: NextFunction)
  * that must never apply to staff at all, rather than something staff have no
  * data for.
  */
-export function requireStudent(req: Request, res: Response, next: NextFunction): void {
-  if (!req.session?.userId) {
-    res.status(401).json({ error: "Authentication required" });
-    return;
-  }
-  if (req.session?.role !== "student") {
-    res.status(403).json({ error: "Student access required" });
-    return;
-  }
-  next();
-}
+export const requireStudent = requireRole(["student"], "Student access required");
