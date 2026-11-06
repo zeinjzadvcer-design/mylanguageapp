@@ -4274,6 +4274,13 @@ components:
           type: boolean
         connectTimeoutMs:
           type: number
+        iceTransportPolicy:
+          description: >
+            Pass to RTCPeerConnection. "relay" whenever a TURN relay is
+            available, so neither student's own IP address reaches the stranger
+            they are matched with; "all" only when there is no relay to use.
+          type: string
+          enum: [all, relay]
 
     PracticeSignalInput:
       type: object

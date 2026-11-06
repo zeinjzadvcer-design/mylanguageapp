@@ -1988,11 +1988,24 @@ export interface PracticeIceServer {
   credential?: string;
 }
 
+/**
+ * Pass to RTCPeerConnection. "relay" whenever a TURN relay is available, so neither student's own IP address reaches the stranger they are matched with; "all" only when there is no relay to use.
+ */
+export type PracticeIceServersIceTransportPolicy = typeof PracticeIceServersIceTransportPolicy[keyof typeof PracticeIceServersIceTransportPolicy];
+
+
+export const PracticeIceServersIceTransportPolicy = {
+  all: 'all',
+  relay: 'relay',
+} as const;
+
 export interface PracticeIceServers {
   iceServers: PracticeIceServer[];
   /** False means STUN only, and roughly one connection in five will not establish. Say so rather than sitting on "connecting…". */
   hasTurn: boolean;
   connectTimeoutMs: number;
+  /** Pass to RTCPeerConnection. "relay" whenever a TURN relay is available, so neither student's own IP address reaches the stranger they are matched with; "all" only when there is no relay to use. */
+  iceTransportPolicy?: PracticeIceServersIceTransportPolicy;
 }
 
 export type PracticeSignalInputKind = typeof PracticeSignalInputKind[keyof typeof PracticeSignalInputKind];
