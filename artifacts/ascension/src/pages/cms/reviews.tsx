@@ -79,10 +79,8 @@ export default function ReviewsPage() {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  <Link href={`/cms/lessons/${lesson.id}/preview`}>
-                    <a className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-white transition-colors">
-                      <Eye className="h-3.5 w-3.5" /> Preview
-                    </a>
+                  <Link href={`/cms/lessons/${lesson.id}/preview`} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-white transition-colors">
+                    <Eye className="h-3.5 w-3.5" /> Preview
                   </Link>
 
                   {isReviewer && (
