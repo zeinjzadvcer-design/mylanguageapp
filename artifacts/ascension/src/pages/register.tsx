@@ -3,7 +3,8 @@ import { Link, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { useRegister, RegisterInputPreferredLanguage, RegisterInputReferralSource } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useRegister, RegisterInputPreferredLanguage, RegisterInputReferralSource, getGetMeQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
@@ -75,6 +76,7 @@ export default function Register() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const register = useRegister();
+  const queryClient = useQueryClient();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   
@@ -103,6 +105,7 @@ export default function Register() {
       { data },
       {
         onSuccess: () => {
+          queryClient.removeQueries({ queryKey: getGetMeQueryKey() });
           toast({
             title: a.registerSuccess,
             description: a.registerSuccessBody,

@@ -1,5 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { BookOpen, GraduationCap, Home, User as UserIcon, BookMarked, Mic, Settings, LogOut, Loader2, Crown } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useGetMe, useLogout } from "@workspace/api-client-react";
 import { Button } from "./ui/button";
 import { BrandLogo, LanguageSwitcher } from "./brand";
@@ -9,6 +10,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const { data: user, isLoading } = useGetMe();
   const [location, setLocation] = useLocation();
   const logout = useLogout();
+  const queryClient = useQueryClient();
   const { t } = useI18n();
 
   if (isLoading) {
@@ -28,6 +30,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     logout.mutate(undefined, {
       onSuccess: () => {
         setLocation("/login");
+        // The server session is gone, but the cache still holds the user and
+        // their data: the landing page and route guards read that cached user
+        // and sent the student straight back into the app. Navigate first so
+        // the protected pages unmount instead of refetching into 401s.
+        queryClient.clear();
       }
     });
   };

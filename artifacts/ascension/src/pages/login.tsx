@@ -3,7 +3,8 @@ import { Link, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { useLogin } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useLogin, getGetMeQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -25,6 +26,7 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const login = useLogin();
+  const queryClient = useQueryClient();
   const { t } = useI18n();
   const a = t.auth;
   const formSchema = useMemo(() => makeSchema(t), [t]);
@@ -42,6 +44,9 @@ export default function Login() {
       { data: values },
       {
         onSuccess: (data) => {
+          // A "not logged in" answer cached from before would otherwise make
+          // the route guard bounce the student back here.
+          queryClient.removeQueries({ queryKey: getGetMeQueryKey() });
           toast({
             title: a.loginSuccess,
             description: a.welcomeBack(data.user.name),
