@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { PasswordInput } from "@/components/password-input";
 import { BrandLogo, LanguageSwitcher } from "@/components/brand";
 import { useI18n } from "@/lib/i18n";
 import type { Messages } from "@/locales/en";
@@ -17,7 +18,9 @@ import type { Messages } from "@/locales/en";
 const makeSchema = (t: Messages) =>
   z.object({
     email: z.string().email({ message: t.auth.invalidEmail }),
-    password: z.string().min(6, { message: t.auth.passwordMin6 }),
+    // Only "something was typed". Length and strength rules belong to choosing
+    // a password, not to entering one that already exists.
+    password: z.string().min(1, { message: t.auth.passwordRequired }),
   });
 
 type FormValues = z.infer<ReturnType<typeof makeSchema>>;
@@ -106,7 +109,7 @@ export default function Login() {
                   <FormItem>
                     <FormLabel>{a.passwordLabel}</FormLabel>
                     <FormControl>
-                      <Input type="password" dir="ltr" className="text-left" {...field} />
+                      <PasswordInput {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
