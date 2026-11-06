@@ -66,6 +66,15 @@ services:
       - key: TRUST_PROXY
         value: "1"
 
+      # Where the visitor's own address is. App Platform documents
+      # do-connecting-ip as the client IP; X-Forwarded-For can carry the
+      # ingress address instead, which would put every signed-out visitor in
+      # one rate-limit bucket. VERIFY AFTER THE FIRST DEPLOY with
+      #   node scripts/check-client-ip.mjs https://<your-app>
+      # and delete this entry if it reports the header as spoofable.
+      - key: CLIENT_IP_HEADER
+        value: do-connecting-ip
+
       # Managed Postgres. Use the PRIVATE network URI from the DO database
       # page — it keeps query traffic off the public internet.
       - key: DATABASE_URL

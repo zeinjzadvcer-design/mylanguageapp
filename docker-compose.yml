@@ -95,6 +95,8 @@ services:
       PORT: '8080'
       LOG_LEVEL: info
       TRUST_PROXY: '1'
+      # Empty locally: nothing in front of the API sets a client-IP header.
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
       JOB_QUEUE: ${JOB_QUEUE:-memory}
       JOB_CONCURRENCY: ${JOB_CONCURRENCY:-4}
       JOB_ATTEMPTS: ${JOB_ATTEMPTS:-2}
@@ -140,6 +142,8 @@ services:
       PRACTICE_TURN_URLS: ${PRACTICE_TURN_URLS:-}
       PRACTICE_TURN_USERNAME: ${PRACTICE_TURN_USERNAME:-}
       PRACTICE_TURN_CREDENTIAL: ${PRACTICE_TURN_CREDENTIAL:-}
+      # With a relay, calls are relay-only so students' IPs stay private.
+      PRACTICE_RELAY_ONLY: ${PRACTICE_RELAY_ONLY:-true}
       # Cloudflare Realtime TURN: mints short-lived credentials per process.
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
       CLOUDFLARE_TURN_API_TOKEN: ${CLOUDFLARE_TURN_API_TOKEN:-}
@@ -160,6 +164,9 @@ services:
       RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
       RATE_LIMIT_API: ${RATE_LIMIT_API:-1000}
       RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-20}
+      RATE_LIMIT_LOGIN_ACCOUNT: ${RATE_LIMIT_LOGIN_ACCOUNT:-10}
+      RATE_LIMIT_FORGOT: ${RATE_LIMIT_FORGOT:-5}
+      RESET_COOLDOWN_MS: ${RESET_COOLDOWN_MS:-120000}
       RATE_LIMIT_PRACTICE_POLL: ${RATE_LIMIT_PRACTICE_POLL:-2400}
 
       # AI timeouts and retries. AI_ASR_POLL_TIMEOUT_MS matters most: the code
