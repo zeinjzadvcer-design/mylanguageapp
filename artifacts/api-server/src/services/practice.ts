@@ -984,6 +984,7 @@ export async function iceServers(): Promise<{
   iceServers: IceServer[];
   hasTurn: boolean;
   connectTimeoutMs: number;
+  iceTransportPolicy: "all" | "relay";
 }> {
   const stun = (process.env.PRACTICE_STUN_URLS ??
     "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302")
@@ -1024,7 +1025,26 @@ export async function iceServers(): Promise<{
     iceServers: servers,
     hasTurn,
     connectTimeoutMs: CONNECT_TIMEOUT_MS,
+    iceTransportPolicy: relayOnly(hasTurn),
   };
+}
+
+/**
+ * Whether a call must go through the relay.
+ *
+ * Students are matched with strangers. A direct connection hands each one the
+ * other's IP address — a home address, near enough, for a student on home
+ * broadband — in the ICE candidates the call is set up with. Relay-only means
+ * each side only ever sees the relay's address.
+ *
+ * The cost is relay bandwidth for every call rather than one in five, and a
+ * little latency. PRACTICE_RELAY_ONLY=false trades the privacy back for those.
+ * With no relay configured there is nothing to route through, so "all" — the
+ * alternative is no calls at all.
+ */
+function relayOnly(hasTurn: boolean): "all" | "relay" {
+  if (!hasTurn) return "all";
+  return process.env.PRACTICE_RELAY_ONLY === "false" ? "all" : "relay";
 }
 
 // ─── Blocking and reporting ───────────────────────────────────────────────────
