@@ -11,11 +11,12 @@ import connectPgSimple from "connect-pg-simple";
 import pinoHttp from "pino-http";
 import helmet from "helmet";
 import compression from "compression";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import rateLimit from "express-rate-limit";
 import { RedisStore, type SendCommandFn } from "rate-limit-redis";
 import router from "./routes";
 import docsRouter from "./routes/docs";
 import { logger } from "./lib/logger";
+import { clientIp } from "./lib/client-ip";
 import { pool } from "@workspace/db";
 import { redis } from "./services/redis";
 import { createRedisSessionStore } from "./services/session-store";
@@ -56,7 +57,13 @@ app.use(
 );
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-const allowedOrigin = process.env.ALLOWED_ORIGIN;
+// Unset means "reflect whatever origin asked", with credentials — any site could
+// make signed-in requests and read the answers. Fine for local development,
+// where the origin keeps changing; refused in production, like SESSION_SECRET.
+const allowedOrigin = process.env.ALLOWED_ORIGIN?.trim() || undefined;
+if (process.env.NODE_ENV === "production" && !allowedOrigin) {
+  throw new Error("ALLOWED_ORIGIN must be set in production");
+}
 app.use(cors({ origin: allowedOrigin ?? true, credentials: true }));
 
 // ── Body parsing ──────────────────────────────────────────────────────────────
@@ -318,7 +325,7 @@ const practicePollLimiter = rateLimit({
   legacyHeaders: false,
   store: makeRedisStore("rl:poll:"),
   keyGenerator: (req) =>
-    req.session?.userId ? `user:${req.session.userId}` : ipKeyGenerator(req.ip ?? ""),
+    req.session?.userId ? `user:${req.session.userId}` : clientIp(req),
   message: { error: "Too many requests, please try again later" },
 });
 
@@ -342,7 +349,7 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   store: makeRedisStore("rl:api:"),
   keyGenerator: (req) =>
-    req.session?.userId ? `user:${req.session.userId}` : ipKeyGenerator(req.ip ?? ""),
+    req.session?.userId ? `user:${req.session.userId}` : clientIp(req),
   // Relative to the /api mount below. Limited by practicePollLimiter instead.
   // `/healthz` is exempt: it is a liveness probe, and a probe answering 429 is
   // read as "the server is down" by everything that calls it — which is how a
@@ -359,7 +366,45 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   store: makeRedisStore("rl:auth:"),
   skipSuccessfulRequests: true,
+  keyGenerator: (req) => clientIp(req),
   message: { error: "Too many authentication attempts, please try again later" },
+});
+
+// Failed logins per ACCOUNT, whatever address they come from.
+//
+// authLimiter is keyed by IP, and the IP is whatever X-Forwarded-For says once
+// it has passed TRUST_PROXY hops — so a client reaching the API directly can
+// claim a new address on every request and guess passwords without limit.
+// Keying on the email being guessed closes that whatever the proxy chain
+// looks like. The cost is that someone can lock an account out of password
+// login for one window; that is the usual trade, and the window keeps it short.
+const loginAccountLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "900000", 10),
+  limit: parseInt(process.env.RATE_LIMIT_LOGIN_ACCOUNT ?? "10", 10),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  store: makeRedisStore("rl:login-acct:"),
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    return email ? `email:${email}` : clientIp(req);
+  },
+  message: { error: "Too many authentication attempts, please try again later" },
+});
+
+// Reset requests. Not authLimiter: that one only counts failures, and
+// forgot-password answers 200 on every path by design — so it was never counted
+// at all, and anyone could have the app send a user reset email after reset
+// email. Every request counts here. The per-address cooldown in the route is
+// what stops one inbox being flooded from many addresses.
+const forgotPasswordLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "900000", 10),
+  limit: parseInt(process.env.RATE_LIMIT_FORGOT ?? "5", 10),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  store: makeRedisStore("rl:forgot:"),
+  keyGenerator: (req) => clientIp(req),
+  message: { error: "Too many requests, please try again later" },
 });
 
 app.use("/api", failOpen(apiLimiter));
@@ -374,11 +419,11 @@ app.use("/api/practice/sessions", (req, res, next) => {
   }
   next();
 });
-app.use("/api/auth/login", failOpen(authLimiter));
+app.use("/api/auth/login", failOpen(authLimiter), failOpen(loginAccountLimiter));
 app.use("/api/auth/register", failOpen(authLimiter));
 // Reset endpoints are brute-force targets: one guesses tokens, the other can be
-// used to probe which addresses are registered.
-app.use("/api/auth/forgot-password", failOpen(authLimiter));
+// used to probe which addresses are registered, or to flood an inbox.
+app.use("/api/auth/forgot-password", failOpen(forgotPasswordLimiter));
 app.use("/api/auth/reset-password", failOpen(authLimiter));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
