@@ -108,15 +108,19 @@ import type {
   RegisterInput,
   RejectPaymentSubmission200,
   RejectPaymentSubmissionBody,
+  RotateIngestToken200,
   SkillReport,
   StudentProfile,
   StudentSubscription,
   SubscriptionInput,
   SubscriptionPlan,
   SuccessResponse,
+  UpdatePlanPrice200,
+  UpdatePlanPriceBody,
   User,
   ValidationError,
   VocabularyItem,
+  WalletSubmissionInput,
   WeakAreaSummary
 } from './api.schemas';
 
@@ -1955,6 +1959,78 @@ export const useCreatePaymentSubmission = <TError = ErrorType<ErrorResponse>,
       return useMutation(getCreatePaymentSubmissionMutationOptions(options));
     }
 
+export const getCreateWalletSubmissionUrl = () => {
+
+
+
+
+  return `/api/subscription/wallet-submissions`
+}
+
+/**
+ * Records the claim; it never activates anything itself. The companion app forwards the merchant's copy of the same SMS and the matcher pairs them on the operation number, so a submission that arrives before its SMS — or after, which is the usual order — is handled the same way.
+ * @summary Submit a Syriatel Cash operation number for automatic matching
+ */
+export const createWalletSubmission = async (walletSubmissionInput: WalletSubmissionInput, options?: Parameters<typeof customFetch>[1]): Promise<PaymentSubmission> => {
+
+  return customFetch<PaymentSubmission>(getCreateWalletSubmissionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(walletSubmissionInput)
+  }
+);}
+
+
+
+
+
+export const getCreateWalletSubmissionMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createWalletSubmission>>, TError,{data: BodyType<WalletSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createWalletSubmission>>, TError,{data: BodyType<WalletSubmissionInput>}, TContext> => {
+
+const mutationKey = ['createWalletSubmission'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createWalletSubmission>>, {data: BodyType<WalletSubmissionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createWalletSubmission(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateWalletSubmissionMutationResult = NonNullable<Awaited<ReturnType<typeof createWalletSubmission>>>
+    export type CreateWalletSubmissionMutationBody = BodyType<WalletSubmissionInput>
+    export type CreateWalletSubmissionMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Submit a Syriatel Cash operation number for automatic matching
+ */
+export const useCreateWalletSubmission = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createWalletSubmission>>, TError,{data: BodyType<WalletSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createWalletSubmission>>,
+        TError,
+        {data: BodyType<WalletSubmissionInput>},
+        TContext
+      > => {
+      return useMutation(getCreateWalletSubmissionMutationOptions(options));
+    }
+
 export const getCreateCryptoSubmissionUrl = () => {
 
 
@@ -3172,6 +3248,222 @@ export const useUpdatePaymentSettings = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getUpdatePaymentSettingsMutationOptions(options));
+    }
+
+export const getUpdatePlanPriceUrl = (code: string,) => {
+
+
+
+
+  return `/api/admin/subscription-plans/${code}/price`
+}
+
+/**
+ * @summary Set a plan's USD and Syrian pound prices
+ */
+export const updatePlanPrice = async (code: string,
+    updatePlanPriceBody: UpdatePlanPriceBody, options?: Parameters<typeof customFetch>[1]): Promise<UpdatePlanPrice200> => {
+
+  return customFetch<UpdatePlanPrice200>(getUpdatePlanPriceUrl(code),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updatePlanPriceBody)
+  }
+);}
+
+
+
+
+
+export const getUpdatePlanPriceMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePlanPrice>>, TError,{code: string;data: BodyType<UpdatePlanPriceBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updatePlanPrice>>, TError,{code: string;data: BodyType<UpdatePlanPriceBody>}, TContext> => {
+
+const mutationKey = ['updatePlanPrice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePlanPrice>>, {code: string;data: BodyType<UpdatePlanPriceBody>}> = (props) => {
+          const {code,data} = props ?? {};
+
+          return  updatePlanPrice(code,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePlanPriceMutationResult = NonNullable<Awaited<ReturnType<typeof updatePlanPrice>>>
+    export type UpdatePlanPriceMutationBody = BodyType<UpdatePlanPriceBody>
+    export type UpdatePlanPriceMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Set a plan's USD and Syrian pound prices
+ */
+export const useUpdatePlanPrice = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePlanPrice>>, TError,{code: string;data: BodyType<UpdatePlanPriceBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updatePlanPrice>>,
+        TError,
+        {code: string;data: BodyType<UpdatePlanPriceBody>},
+        TContext
+      > => {
+      return useMutation(getUpdatePlanPriceMutationOptions(options));
+    }
+
+export const getRefreshSypRateUrl = () => {
+
+
+
+
+  return `/api/admin/payment-settings/syp-rate/refresh`
+}
+
+/**
+ * Spends one of the free tier's hundred monthly calls, which is why it is a deliberate action rather than something that runs on every visit.
+ * @summary Fetch the SYP rate from SP Today now
+ */
+export const refreshSypRate = async ( options?: Parameters<typeof customFetch>[1]): Promise<PaymentSettings> => {
+
+  return customFetch<PaymentSettings>(getRefreshSypRateUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRefreshSypRateMutationOptions = <TError = ErrorType<PaymentSettings | ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshSypRate>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshSypRate>>, TError,void, TContext> => {
+
+const mutationKey = ['refreshSypRate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshSypRate>>, void> = () => {
+
+
+          return  refreshSypRate(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshSypRateMutationResult = NonNullable<Awaited<ReturnType<typeof refreshSypRate>>>
+
+    export type RefreshSypRateMutationError = ErrorType<PaymentSettings | ErrorResponse>
+
+    /**
+ * @summary Fetch the SYP rate from SP Today now
+ */
+export const useRefreshSypRate = <TError = ErrorType<PaymentSettings | ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshSypRate>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof refreshSypRate>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRefreshSypRateMutationOptions(options));
+    }
+
+export const getRotateIngestTokenUrl = () => {
+
+
+
+
+  return `/api/admin/payment-settings/ingest-token`
+}
+
+/**
+ * Returned once, in this response only. Anything that can POST a forwarded SMS can mint a subscription, so the token is never readable again afterwards.
+ * @summary Generate a new companion-app token, invalidating the old one
+ */
+export const rotateIngestToken = async ( options?: Parameters<typeof customFetch>[1]): Promise<RotateIngestToken200> => {
+
+  return customFetch<RotateIngestToken200>(getRotateIngestTokenUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRotateIngestTokenMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rotateIngestToken>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rotateIngestToken>>, TError,void, TContext> => {
+
+const mutationKey = ['rotateIngestToken'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rotateIngestToken>>, void> = () => {
+
+
+          return  rotateIngestToken(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RotateIngestTokenMutationResult = NonNullable<Awaited<ReturnType<typeof rotateIngestToken>>>
+
+    export type RotateIngestTokenMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Generate a new companion-app token, invalidating the old one
+ */
+export const useRotateIngestToken = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rotateIngestToken>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof rotateIngestToken>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRotateIngestTokenMutationOptions(options));
     }
 
 export const getBeginPaymentQrUploadUrl = () => {

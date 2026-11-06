@@ -19,6 +19,7 @@ import {
   studentProfilesTable,
   curriculaTable,
 } from "@workspace/db";
+import { getEntitlement, lessonTrackFilter } from "./entitlements";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -110,37 +111,10 @@ export function deriveLessonState(
 /**
  * Extended version that accepts level orders for cross-level comparison.
  */
-export function deriveLessonStateWithOrders(
-  lesson: { id: number; order: number },
-  levelOrder: number,
-  currentLevelOrder: number | null,
-  completedIds: Set<number>,
-  prevLessonId: number | null,
-  progressStatus?: string | null,
-): LessonState {
-  if (completedIds.has(lesson.id)) return "COMPLETED";
-
-  if (currentLevelOrder === null) return "LOCKED";
-
-  // Levels below current are review-accessible
-  if (levelOrder < currentLevelOrder) {
-    // Sequential within past levels still applies
-    if (prevLessonId === null) return "AVAILABLE";
-    if (completedIds.has(prevLessonId)) return "AVAILABLE";
-    return "AVAILABLE"; // all past-level lessons are review-accessible
-  }
-
-  // Future levels are locked
-  if (levelOrder > currentLevelOrder) return "LOCKED";
-
-  // Current level: sequential unlock
-  if (prevLessonId === null) return "AVAILABLE";
-  if (completedIds.has(prevLessonId)) {
-    if (progressStatus === "in_progress") return "IN_PROGRESS";
-    return "AVAILABLE";
-  }
-  return "LOCKED";
-}
+// deriveLessonStateWithOrders lives in entitlement-policy.ts, which has no
+// database import, so the progression rules can be tested without a live
+// DATABASE_URL. Re-exported here so callers keep one import.
+export { deriveLessonStateWithOrders } from "./entitlement-policy";
 
 // ─── Completed lesson IDs ─────────────────────────────────────────────────────
 
@@ -208,6 +182,7 @@ export async function getCurriculumLevels(curriculumId: number) {
 export async function maybeAdvanceLevel(
   userId: number,
   completedLessonId: number,
+  role?: string,
 ): Promise<{ advanced: boolean; newLevelId: number | null }> {
   const [profile] = await db
     .select()
@@ -219,13 +194,17 @@ export async function maybeAdvanceLevel(
     return { advanced: false, newLevelId: profile?.currentLevelId ?? null };
   }
 
-  // All published lessons in current level
+  // All published lessons in current level, in the student's own track: a
+  // level is finished when the lessons their plan covers are, never waiting
+  // on the other track's lessons, which they cannot open.
+  const entitlement = await getEntitlement(userId, role);
   const levelLessons = await db
     .select({ id: lessonsTable.id })
     .from(lessonsTable)
     .where(
       and(
         eq(lessonsTable.levelId, profile.currentLevelId),
+        lessonTrackFilter(entitlement),
         eq(lessonsTable.status, "published"),
         isNull(lessonsTable.softDeletedAt),
       ),
@@ -418,7 +397,7 @@ export async function findNextLesson(
   lessonId: number,
 ): Promise<{ id: number; title: string; titleAr: string } | null> {
   const [lesson] = await db
-    .select({ levelId: lessonsTable.levelId, order: lessonsTable.order })
+    .select({ levelId: lessonsTable.levelId, order: lessonsTable.order, track: lessonsTable.track })
     .from(lessonsTable)
     .where(eq(lessonsTable.id, lessonId))
     .limit(1);
@@ -431,6 +410,9 @@ export async function findNextLesson(
     .where(
       and(
         eq(lessonsTable.levelId, lesson.levelId),
+        // Next in the same track: the other track's lessons are not this
+        // student's to be sent to.
+        eq(lessonsTable.track, lesson.track),
         eq(lessonsTable.status, "published"),
         isNull(lessonsTable.softDeletedAt),
       ),
@@ -444,6 +426,9 @@ export async function findNextLesson(
     .where(
       and(
         eq(lessonsTable.levelId, lesson.levelId),
+        // Next in the same track: the other track's lessons are not this
+        // student's to be sent to.
+        eq(lessonsTable.track, lesson.track),
         eq(lessonsTable.status, "published"),
         isNull(lessonsTable.softDeletedAt),
       ),

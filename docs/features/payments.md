@@ -22,63 +22,83 @@ cannot decide.
 
 ## Before either method works
 
-### ShamCash — upload the QR
+### Syriatel Cash — upload the QR
 
-Nothing to deploy. An admin opens the payment settings and uploads the ShamCash
-receive QR, plus the account name, account number and any Arabic instructions.
+Nothing to deploy. An admin opens the payment settings and uploads the Syriatel
+Cash receive QR, plus the account name, account code and any instructions.
 Until a QR exists the payment page tells students the method is unavailable
 rather than showing them an empty box.
 
-### USDT — set the environment variables
+### USDT — set the wallet in the admin screen
 
-All of these are already in [`.env.example`](../../.env.example) with the
-reasoning beside each one. Two matter:
+**Admin → Payments → Cryptocurrency.** Enter the BEP-20 deposit address, upload
+a QR, or both. Students see the crypto option only once at least one is set,
+and it disappears again when both are removed.
 
-```
-CRYPTO_PAYMENTS_ENABLED=true
-BSC_USDT_WALLET_ADDRESS=0x…        ← the BEP-20 deposit address
-```
+- **With an address**, payments are confirmed on chain automatically.
+- **With only a QR**, there is nothing to check the recipient against, so each
+  payment goes to the review queue and the student is told it will be checked
+  by hand.
 
-The rest have working defaults: BNB Chain's public RPC (no API key), 15
-confirmations, 2% amount tolerance, 7-day maximum transaction age.
+The address must be BNB Smart Chain (BEP-20): `0x` plus 40 hex characters. A
+TRON (`T…`) address is refused with its own message — it is the likeliest wrong
+paste, and saved here it would make every payment fail verification.
 
-**The address must be a BNB Smart Chain (BEP-20) deposit address** — `0x` plus
-40 hex characters. The server checks the format at boot and **refuses to
-start** if it is missing or malformed while crypto is enabled. That is
-deliberate: a wrong address would otherwise fail every comparison silently and
-reject legitimate payments one student at a time.
+How the chain is read stays in env, with working defaults: BNB Chain's public
+RPC, 15 confirmations, 2% amount tolerance, 7-day maximum transaction age.
 
-Leaving `CRYPTO_PAYMENTS_ENABLED=false` (the default) is a valid way to ship —
-nothing below it is read and the payment page offers ShamCash only.
+### Syrian pound prices
+
+**Admin → Payments → Plan prices.** Either type each plan's SYP price, or turn
+on **fetch the Syrian pound price automatically**: the price becomes the dollar
+price × the USD rate from SP Today (الليرة اليوم), refreshed every 12 hours and
+rounded up to a whole pound.
+
+Automatic pricing needs `SPTODAY_API_KEY` (free key, 100 requests a month — see
+`.env.example`). Without one the screen says so and your manual prices are used.
+
+**Set the pound unit before turning it on.** Syria redenominated at 100 old
+pounds = 1 new, and SP Today reports in old pounds. The screen asks which unit
+Syriatel Cash charges in; if it is wrong, every price is off by a factor of a
+hundred.
+
+A student is charged the price **quoted when they opened the subscription**,
+held for 48 hours, so a rate refresh while they are in their wallet app cannot
+fail a correct payment.
 
 ### Migrations
 
-`021`, `022` and `023` must be run. **They have never been executed against a
-database** — they were written and reviewed without a `DATABASE_URL` available.
-Run them somewhere disposable first.
+`021`–`027` run automatically on start, and are written to be re-run: each
+start applies all of them again. They have been run against an existing
+database and against a fresh one, twice each.
 
----
+## Why the crypto wallet is admin-editable now, and what that costs
 
-## Why the wallet address is env and the QR is not
+It used to be deploy configuration, deliberately. Nothing reviews a crypto
+payment, so anyone able to change the address could have every later payment
+confirmed into their own wallet — the system would report success every time,
+because those transfers really did arrive at the configured address, and
+nothing would look wrong until reconciliation.
 
-These look like the same kind of setting and are not, and the difference is the
-only reason the crypto path can be trusted.
+It moved to the admin screen by decision, so the address can be managed without
+a deploy. What that costs is that an admin account is now enough to redirect
+payments. Three things narrow it:
 
-**The QR is admin-editable** because a person reads every ShamCash receipt
-before anything activates. If someone swapped the QR, receipts would start
-arriving that name an unfamiliar account, and the admin reviewing them would
-notice. The review is the control. QR images also get reissued far more often
-than deploys happen.
+- **Every change is attributed** — the screen shows when the crypto details last
+  changed and by whom, and the server logs the new address in full.
+- **The address is validated on save.** A TRON address and anything not
+  `0x` + 40 hex characters are refused.
+- **Each payment is checked against the address set when it was submitted**
+  (`payment_submissions.expected_wallet_address`), so a later change cannot
+  re-point a payment already being verified.
 
-**The wallet address is deploy-only** because nothing reviews a crypto payment.
-An attacker who could change it from the admin UI would have every subsequent
-payment verified into their own wallet — and the system would report success
-every time, because those transfers really did arrive at the configured
-address. Nothing would look broken until reconciliation, days later, with the
-money gone.
+None of these prevents a compromised admin account from changing the address.
+Protect admin accounts accordingly, and treat an unexpected "last changed" line
+as an incident.
 
-The admin UI may *display* the address so staff can confirm what students see.
-Nothing writes it.
+The Syriatel Cash QR has always been admin-editable, for a different reason: a
+swapped QR produces no matching confirmation SMS on the merchant phone, so
+nothing activates.
 
 ---
 

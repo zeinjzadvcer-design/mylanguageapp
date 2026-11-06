@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useGetSubscriptionPlans } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -59,9 +60,29 @@ const TASK_HELP: Record<AITask, string> = {
   transcription: "Speech to text. Needs a provider with the speech role.",
 };
 
-const PLAN_CODES = ["free", "general_english", "professional_english", "admin"];
+/**
+ * Plans the policy table offers, in display order.
+ *
+ * Fixed rather than read from the plans endpoint because `admin` is a policy
+ * code with no plan behind it, and `free` has to lead. It listed
+ * general_english/professional_english, which no subscription carries since
+ * the plans were renamed, so the four paid plans had no column and could not
+ * be given an allowance from this screen at all.
+ */
+const PLAN_CODES = [
+  "free",
+  "general_basic",
+  "general_plus",
+  "pro_basic",
+  "pro_plus",
+  "admin",
+];
 
 export default function AiSettings() {
+  const { data: plans } = useGetSubscriptionPlans();
+  const planPrices = new Map(
+    (plans ?? []).map((plan) => [plan.code as string, plan.priceUsd ?? 0]),
+  );
   const { toast } = useToast();
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [usage, setUsage] = useState<UsageRow[]>([]);
@@ -411,9 +432,10 @@ export default function AiSettings() {
                   </thead>
                   <tbody>
                     {byUser.map((u) => {
-                      const planPrice =
-                        u.plan_code === "professional_english" ? 4 :
-                        u.plan_code === "general_english" ? 2 : 0;
+                      // What the student pays, from the plans themselves:
+                      // prices are admin-editable, so a hard-coded table would
+                      // flag the wrong students the moment one changed.
+                      const planPrice = planPrices.get(u.plan_code ?? "free") ?? 0;
                       const overspending = planPrice > 0 && u.cost_usd >= planPrice;
                       return (
                         <tr key={u.user_id} className="border-t border-border">

@@ -5,6 +5,7 @@ import {
   studentSubscriptionsTable, levelsTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
+import { subscriptionInForce } from "../services/entitlements";
 
 const router: IRouter = Router();
 
@@ -19,7 +20,8 @@ async function buildProfileResponse(userId: number) {
   const [subscription] = await db
     .select()
     .from(studentSubscriptionsTable)
-    .where(and(eq(studentSubscriptionsTable.userId, userId), eq(studentSubscriptionsTable.status, "active")))
+    // In force, not merely `active`: the same test the lesson gate uses.
+    .where(subscriptionInForce(userId))
     .limit(1);
 
   const completedRows = await db

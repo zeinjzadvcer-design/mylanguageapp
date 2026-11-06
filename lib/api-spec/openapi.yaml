@@ -595,8 +595,8 @@ paths:
               schema:
                 type: object
                 properties:
-                  shamCash:
-                    $ref: "#/components/schemas/ShamCashDetails"
+                  wallet:
+                    $ref: "#/components/schemas/WalletDetails"
                   crypto:
                     $ref: "#/components/schemas/CryptoPaymentDetails"
         "401":
@@ -657,6 +657,54 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: A payment for this subscription is already under review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /subscription/wallet-submissions:
+    post:
+      operationId: createWalletSubmission
+      tags: [subscriptions]
+      summary: Submit a Syriatel Cash operation number for automatic matching
+      description: >-
+        Records the claim; it never activates anything itself. The companion app
+        forwards the merchant's copy of the same SMS and the matcher pairs them
+        on the operation number, so a submission that arrives before its SMS —
+        or after, which is the usual order — is handled the same way.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalletSubmissionInput"
+      responses:
+        "201":
+          description: Accepted, matching in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSubmission"
+        "400":
+          description: Malformed operation number or amount
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No pending subscription found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: That operation number has already bought a subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The plan has no Syrian pound price configured
           content:
             application/json:
               schema:
@@ -1093,6 +1141,107 @@ paths:
                 $ref: "#/components/schemas/PaymentSettings"
         "400":
           description: Invalid settings, or the media id is not a completed payment QR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/subscription-plans/{code}/price:
+    patch:
+      operationId: updatePlanPrice
+      tags: [admin]
+      summary: Set a plan's USD and Syrian pound prices
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                priceUsd:
+                  type: number
+                priceSyp:
+                  type: ["number", "null"]
+                  description: >-
+                    Null withdraws the plan from the local wallet. Set by an
+                    admin rather than converted, because the official and
+                    parallel exchange rates differ materially.
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  priceUsd:
+                    type: number
+                  priceSyp:
+                    type: ["string", "null"]
+        "404":
+          description: No such plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-settings/syp-rate/refresh:
+    post:
+      operationId: refreshSypRate
+      tags: [admin]
+      summary: Fetch the SYP rate from SP Today now
+      description: >-
+        Spends one of the free tier's hundred monthly calls, which is why it is
+        a deliberate action rather than something that runs on every visit.
+      responses:
+        "200":
+          description: Refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSettings"
+        "502":
+          description: SP Today could not be reached or returned no usable rate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSettings"
+        "503":
+          description: No SP Today API key is configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-settings/ingest-token:
+    post:
+      operationId: rotateIngestToken
+      tags: [admin]
+      summary: Generate a new companion-app token, invalidating the old one
+      description: >-
+        Returned once, in this response only. Anything that can POST a
+        forwarded SMS can mint a subscription, so the token is never readable
+        again afterwards.
+      responses:
+        "200":
+          description: Generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+        "403":
+          description: Admin access required
           content:
             application/json:
               schema:
@@ -3358,7 +3507,7 @@ components:
           type: number
         code:
           type: string
-          enum: [free, general_english, professional_english]
+          enum: [free, general_basic, general_plus, pro_basic, pro_plus]
         name:
           type: string
         nameAr:
@@ -3391,12 +3540,38 @@ components:
             a lesson's lessonType. The tracks are mutually exclusive, not
             nested: a general subscriber does not see professional lessons.
           example: general
-        freeLessonQuota:
+        lessonsPerMonth:
           type: ["integer", "null"]
           description: >-
-            How many distinct lessons a subscriber may start. Null means
-            unlimited. 1 on the free plan — the single trial lesson after the
-            placement test.
+            Lessons startable per quota period; null means unlimited. The period
+            is `quotaPeriod`, so this covers both the free trial's one lesson
+            ever and a paid tier's monthly allowance.
+        callsPerMonth:
+          type: ["integer", "null"]
+          description: >-
+            Peer calls startable per quota period; null means unlimited.
+            Separate from the deployment-wide daily call cap, which is abuse
+            control applied to everyone.
+        quotaPeriod:
+          type: string
+          enum: [lifetime, monthly]
+          description: >-
+            lifetime counts over the whole account history (the free trial:
+            one lesson, ever); monthly resets from the subscription start date.
+        priceSypManual:
+          type: ["string", "null"]
+          description: >-
+            The admin's own SYP figure, whatever the pricing mode. Edited on the
+            admin screen; students see `priceSyp`.
+        priceSyp:
+          type: ["string", "null"]
+          description: >-
+            The SYP price charged: computed from the fetched rate when automatic
+            pricing is on, the admin's figure otherwise. Null means the wallet
+            cannot sell this plan. A string because it is a SQL
+            numeric — money parsed as a float loses precision. Deliberately not
+            derived from priceUsd: official and parallel exchange rates differ
+            by roughly 18%.
 
     SubscriptionInput:
       type: object
@@ -3404,15 +3579,21 @@ components:
       properties:
         planCode:
           type: string
-          enum: [general_english, professional_english]
+          enum: [general_basic, general_plus, pro_basic, pro_plus]
         paymentMethod:
           type: string
-          enum: [sham_cash, crypto_usdt_bep20]
+          enum: [syriatel_cash, crypto_usdt_bep20]
 
-    ShamCashDetails:
+    WalletDetails:
       type: object
-      description: The ShamCash receive details an admin has configured.
+      description: >-
+        The local wallet's receive details, uploaded by an admin. The student
+        scans the QR or types the account code to pay.
       properties:
+        provider:
+          type: string
+          example: syriatel_cash
+          description: Which wallet these details belong to, for the label shown.
         qrUrl:
           type: ["string", "null"]
           description: Signed URL for the receive QR, null when none is uploaded.
@@ -3420,6 +3601,9 @@ components:
           type: ["string", "null"]
         accountNumber:
           type: ["string", "null"]
+          description: >-
+            The account code, shown beside the QR so a student whose app cannot
+            scan can type it, and so anyone can confirm the account first.
         instructionsAr:
           type: ["string", "null"]
         configured:
@@ -3430,16 +3614,25 @@ components:
 
     CryptoPaymentDetails:
       type: object
-      description: Where to send USDT, and on which network.
+      description: >-
+        Where to send USDT, and on which network. `configured` is false until an
+        admin sets an address or a QR; the method is not offered until then.
       properties:
         configured:
           type: boolean
         walletAddress:
           type: ["string", "null"]
           description: >-
-            Read-only. Set by deploy configuration and never writable from the
-            app: it is the trust anchor of the automated path, since payments
-            to it activate a subscription with no human review.
+            The BEP-20 receiving address an admin set, or null when only a QR
+            was uploaded.
+        qrUrl:
+          type: ["string", "null"]
+          description: Signed URL for the receiving QR, if one was uploaded.
+        autoVerify:
+          type: boolean
+          description: >-
+            Whether payments are confirmed on chain. Needs an address to check
+            the recipient against; with only a QR, an admin reviews each one.
         network:
           type: string
           example: BEP20
@@ -3461,6 +3654,29 @@ components:
         txHash:
           type: string
           description: A 0x-prefixed 64-hex-character BNB Smart Chain transaction hash.
+
+    WalletSubmissionInput:
+      type: object
+      required: [subscriptionId, operationNumber, amountSyp]
+      properties:
+        subscriptionId:
+          type: number
+        operationNumber:
+          type: string
+          pattern: '^\d{4,24}$'
+          description: >-
+            رقم العملية from the payer's own confirmation SMS. A bearer secret:
+            Syriatel sends it only to the payer and the merchant, which is what
+            lets the claim be believed. One number buys one subscription, ever.
+        amountSyp:
+          type: number
+          description: What the student says they transferred, in Syrian pounds.
+        studentNote:
+          type: string
+          maxLength: 2000
+        receiptMediaId:
+          type: number
+          description: Optional screenshot, if the student took one.
 
     PaymentSubmissionInput:
       type: object
@@ -3490,7 +3706,7 @@ components:
           type: number
         method:
           type: string
-          enum: [sham_cash, crypto_usdt_bep20]
+          enum: [syriatel_cash, crypto_usdt_bep20]
         status:
           type: string
           enum: [pending, verifying, approved, rejected]
@@ -3536,6 +3752,12 @@ components:
           format: date-time
         paymentMethod:
           type: ["string", "null"]
+        priceSyp:
+          type: ["string", "null"]
+          description: >-
+            The SYP price quoted when this subscription was opened — what the
+            payment step shows and what the payment is checked against, so a
+            rate refresh mid-payment does not fail a correct transfer.
         paymentNote:
           type: ["string", "null"]
 
@@ -3647,16 +3869,26 @@ components:
           type: string
         planCode:
           type: string
+        planName:
+          type: string
         planNameAr:
           type: string
         method:
           type: string
-          enum: [sham_cash, crypto_usdt_bep20]
+          enum: [syriatel_cash, crypto_usdt_bep20]
         status:
           type: string
           enum: [pending, verifying, approved, rejected]
         amountExpected:
           type: string
+        amountExpectedSyp:
+          type: ["string", "null"]
+        amountClaimedSyp:
+          type: ["string", "null"]
+          description: What the student said they transferred, in Syrian pounds.
+        operationNumber:
+          type: ["string", "null"]
+          description: رقم العملية for a local-wallet payment.
         receiptUrl:
           type: ["string", "null"]
           description: Short-lived signed URL for the receipt image.
@@ -3682,28 +3914,85 @@ components:
     PaymentSettings:
       type: object
       properties:
-        shamCashQrMediaId:
+        walletProvider:
+          type: string
+        walletQrMediaId:
           type: ["number", "null"]
-        shamCashAccountName:
+        walletAccountName:
           type: ["string", "null"]
-        shamCashAccountNumber:
+        walletAccountNumber:
           type: ["string", "null"]
-        shamCashInstructionsAr:
+        walletInstructionsAr:
           type: ["string", "null"]
+        walletMerchantPhone:
+          type: ["string", "null"]
+          description: >-
+            The handset that receives the confirmation SMS, so an admin can see
+            where the companion app belongs. The server never sends to it.
+        hasIngestToken:
+          type: boolean
+          description: >-
+            Whether a companion-app token exists. The token itself is never
+            returned — it is shown once when generated.
+        cryptoWalletAddress:
+          type: ["string", "null"]
+        cryptoQrMediaId:
+          type: ["number", "null"]
+        cryptoUpdatedAt:
+          type: ["string", "null"]
+        cryptoUpdatedByName:
+          type: ["string", "null"]
+          description: >-
+            Who last changed the crypto details. Shown because the address
+            decides where money goes and nothing reviews a crypto payment.
+        sypRateAuto:
+          type: boolean
+        sypUnit:
+          type: string
+          enum: [new, old]
+          description: Which Syrian pound prices are in. 100 old = 1 new.
+        sypRate:
+          type: ["string", "null"]
+          description: SYP per USD in sypUnit, as last fetched.
+        sypRateFetchedAt:
+          type: ["string", "null"]
+        sypRateSourceUpdatedAt:
+          type: ["string", "null"]
+        sypRateError:
+          type: ["string", "null"]
+          description: The last fetch failure, cleared on success.
+        sptodayConfigured:
+          type: boolean
+          description: Whether an SP Today API key is set. The key is never returned.
         updatedAt:
           type: ["string", "null"]
 
     PaymentSettingsUpdate:
       type: object
       properties:
-        shamCashQrMediaId:
+        walletQrMediaId:
           type: ["number", "null"]
-        shamCashAccountName:
+        walletAccountName:
           type: ["string", "null"]
-        shamCashAccountNumber:
+        walletAccountNumber:
           type: ["string", "null"]
-        shamCashInstructionsAr:
+        walletInstructionsAr:
           type: ["string", "null"]
+        walletMerchantPhone:
+          type: ["string", "null"]
+        cryptoWalletAddress:
+          type: ["string", "null"]
+          description: >-
+            BEP-20 address (0x + 40 hex). A TRON address is refused. Null
+            removes it.
+        cryptoQrMediaId:
+          type: ["number", "null"]
+          description: A completed payment_qr upload. Null removes it.
+        sypRateAuto:
+          type: boolean
+        sypUnit:
+          type: string
+          enum: [new, old]
 
     AdminStats:
       type: object

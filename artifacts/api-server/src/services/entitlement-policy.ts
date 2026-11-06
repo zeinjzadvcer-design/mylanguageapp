@@ -16,14 +16,88 @@ export interface Entitlement {
   planCode: string;
   /** Value to match against a lesson's `track`. */
   track: string;
-  /** Distinct lessons startable, or `null` for unlimited. */
-  quota: number | null;
+  /** Lessons startable this period, or `null` for unlimited. */
+  lessonQuota: number | null;
+  /** Peer calls startable this period, or `null` for unlimited. */
+  callQuota: number | null;
   /** Whether a paid plan is active. */
   isPaid: boolean;
+  /**
+   * Start of the current quota period, or `null` when nothing is counted
+   * against a period (an admin, or a subscription with no quota at all).
+   */
+  periodStartedAt: Date | null;
+  /**
+   * Bypasses every check: track, lesson quota and call quota alike.
+   *
+   * Staff need to walk the real student flow to review their own content —
+   * routes/lessons.ts admits them deliberately for that reason — and a
+   * paywall that stops an admin opening a lesson makes the content
+   * unreviewable. This is not a plan; it is the absence of metering.
+   */
+  unlimited: boolean;
+}
+
+/**
+ * Roles that are not metered.
+ *
+ * Content reviewers are included: they are asked to check lessons they did not
+ * write, which means opening them.
+ */
+const UNMETERED_ROLES = new Set(["admin", "content_manager", "content_reviewer"]);
+
+export function isUnmeteredRole(role: string | undefined): boolean {
+  return UNMETERED_ROLES.has(role ?? "");
+}
+
+/**
+ * The entitlement for a role that is not metered.
+ *
+ * Track is `null`-like in effect: `unlimited` short-circuits the track test, so
+ * the value here is never compared. It is set to `general` only so the shape
+ * stays honest if something reads it for display.
+ */
+export function unmeteredEntitlement(role: string): Entitlement {
+  return {
+    planCode: role,
+    track: "general",
+    lessonQuota: null,
+    callQuota: null,
+    isPaid: true,
+    periodStartedAt: null,
+    unlimited: true,
+  };
+}
+
+/**
+ * Roll a period start forward until it covers `now`.
+ *
+ * A month at a time rather than jumping straight to the latest boundary: a
+ * subscription dormant for three months must not grant one allowance for the
+ * whole gap, and must not grant three either — it resumes on the current
+ * period, having forfeited the unused ones.
+ *
+ * `setMonth` clamps 31 January + 1 month into early March the way the rest of
+ * the billing arithmetic does; the anchor day drifting by a day or two at
+ * month ends is immaterial to a monthly allowance.
+ */
+export function currentPeriodStart(anchor: Date, now: Date = new Date()): Date {
+  const start = new Date(anchor.getTime());
+  // Bounded: a corrupt far-past anchor must not spin here.
+  for (let i = 0; i < 600; i++) {
+    const next = new Date(start.getTime());
+    next.setMonth(next.getMonth() + 1);
+    if (next > now) break;
+    start.setTime(next.getTime());
+  }
+  return start;
 }
 
 /** Why a lesson is not startable. `null` means it is. */
 export type LessonDenial = "wrong_track" | "quota_exhausted";
+
+/** Why a peer call is not startable. `null` means it is. */
+export type CallDenial = "call_quota_exhausted";
 
 /**
  * Whether a lesson's `track` belongs to this entitlement's track.
@@ -37,7 +111,29 @@ export type LessonDenial = "wrong_track" | "quota_exhausted";
  * plan sells the lesson.
  */
 export function isLessonInTrack(entitlement: Entitlement, lessonTrack: string): boolean {
+  // Staff see both tracks: a reviewer cannot check professional content from a
+  // general account, and they hold no subscription to switch.
+  if (entitlement.unlimited) return true;
   return lessonTrack === entitlement.track;
+}
+
+/**
+ * The lesson that must be finished before `ordered[idx]` unlocks.
+ *
+ * The previous lesson IN THE SAME TRACK, not simply the previous one in the
+ * level. Both tracks share a level's ordering, so the plain predecessor of a
+ * general lesson can be a professional one the student can never open, and
+ * would lock the rest of their level behind it.
+ */
+export function previousLessonInTrack(
+  ordered: ReadonlyArray<{ id: number; track: string }>,
+  idx: number,
+): number | null {
+  const track = ordered[idx]?.track;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (ordered[i].track === track) return ordered[i].id;
+  }
+  return null;
 }
 
 /**
@@ -60,11 +156,37 @@ export function checkLessonAccess(args: {
 }): LessonDenial | null {
   const { entitlement, lessonTrack, lessonsStarted, alreadyStarted } = args;
 
+  if (entitlement.unlimited) return null;
+
   if (!isLessonInTrack(entitlement, lessonTrack)) return "wrong_track";
 
-  if (entitlement.quota === null) return null;
+  if (entitlement.lessonQuota === null) return null;
+  // A lesson already open can always be finished. The quota counts distinct
+  // lessons STARTED, so this is what stops a student losing work when their
+  // allowance runs out mid-lesson.
   if (alreadyStarted) return null;
-  if (lessonsStarted >= entitlement.quota) return "quota_exhausted";
+  if (lessonsStarted >= entitlement.lessonQuota) return "quota_exhausted";
+
+  return null;
+}
+
+/**
+ * Decide whether a user may start a peer call.
+ *
+ * Simpler than the lesson check: a call has no track and nothing to resume, so
+ * only the monthly allowance applies. The separate daily cap
+ * (PRACTICE_DAILY_CALL_LIMIT) is abuse control and is enforced where it always
+ * was — both apply, and whichever is stricter bites.
+ */
+export function checkCallAccess(args: {
+  entitlement: Entitlement;
+  callsStarted: number;
+}): CallDenial | null {
+  const { entitlement, callsStarted } = args;
+
+  if (entitlement.unlimited) return null;
+  if (entitlement.callQuota === null) return null;
+  if (callsStarted >= entitlement.callQuota) return "call_quota_exhausted";
 
   return null;
 }
@@ -76,8 +198,19 @@ export const DENIAL_MESSAGES: Record<LessonDenial, { error: string; errorAr: str
     errorAr: "هذا الدرس غير متضمن في خطتك",
   },
   quota_exhausted: {
-    error: "Your free lesson has been used. Subscribe to continue.",
-    errorAr: "لقد استخدمت درسك المجاني. اشترك للمتابعة.",
+    // Worded for a monthly allowance now, not a one-off trial: the free plan
+    // is 1 lesson per month and a paid plan is 12 or 24, so "your free lesson"
+    // would be wrong for every paying student who hits the limit.
+    error: "You have used this month's lessons.",
+    errorAr: "لقد استخدمت دروس هذا الشهر. يمكنك الترقية أو الانتظار حتى بداية الفترة القادمة.",
+  },
+};
+
+/** Arabic-first messages for a refused call. */
+export const CALL_DENIAL_MESSAGES: Record<CallDenial, { error: string; errorAr: string }> = {
+  call_quota_exhausted: {
+    error: "You have used this month's calls.",
+    errorAr: "لقد استخدمت مكالمات هذا الشهر. يمكنك الترقية أو الانتظار حتى بداية الفترة القادمة.",
   },
 };
 
@@ -125,4 +258,57 @@ export function canReadMediaAsset(
   if (asset.purpose === "payment_receipt") return viewer.role === "admin";
 
   return staffRoles.has(viewer.role ?? "");
+}
+
+/** Lesson states the curriculum can report. */
+export type LessonState = "LOCKED" | "AVAILABLE" | "IN_PROGRESS" | "COMPLETED";
+
+export function deriveLessonStateWithOrders(
+  lesson: { id: number; order: number },
+  levelOrder: number,
+  currentLevelOrder: number | null,
+  completedIds: Set<number>,
+  prevLessonId: number | null,
+  progressStatus?: string | null,
+  /**
+   * Staff see every lesson, in every level, regardless of progression.
+   *
+   * This is CURRICULUM progression, separate from the plan paywall — it locks
+   * by level order and by whether the previous lesson was completed. Staff
+   * hold no student profile, so `currentLevelOrder` is null for them and the
+   * check below locked everything: an admin saw a wall of مقفل and could not
+   * open the content they are here to review. The lesson routes admit staff on
+   * purpose (see routes/lessons.ts), which is pointless if progression then
+   * refuses them.
+   */
+  unmetered = false,
+): LessonState {
+  if (completedIds.has(lesson.id)) return "COMPLETED";
+
+  if (unmetered) {
+    // Still report work in progress, so a reviewer walking a lesson sees the
+    // same state a student would.
+    return progressStatus === "in_progress" ? "IN_PROGRESS" : "AVAILABLE";
+  }
+
+  if (currentLevelOrder === null) return "LOCKED";
+
+  // Levels below current are review-accessible
+  if (levelOrder < currentLevelOrder) {
+    // Sequential within past levels still applies
+    if (prevLessonId === null) return "AVAILABLE";
+    if (completedIds.has(prevLessonId)) return "AVAILABLE";
+    return "AVAILABLE"; // all past-level lessons are review-accessible
+  }
+
+  // Future levels are locked
+  if (levelOrder > currentLevelOrder) return "LOCKED";
+
+  // Current level: sequential unlock
+  if (prevLessonId === null) return "AVAILABLE";
+  if (completedIds.has(prevLessonId)) {
+    if (progressStatus === "in_progress") return "IN_PROGRESS";
+    return "AVAILABLE";
+  }
+  return "LOCKED";
 }

@@ -17,6 +17,8 @@
 import { logger } from "../lib/logger";
 import { expireSubscriptions } from "./subscription-activation";
 import { sweepPendingVerifications } from "./crypto-verify";
+import { sweepUnmatchedSms } from "./wallet-sms";
+import { refreshSypRateIfDue } from "./syp-rate";
 
 const INTERVAL_MS = parseInt(process.env.SUBSCRIPTION_SWEEP_INTERVAL_MS ?? "3600000", 10);
 
@@ -65,6 +67,16 @@ export function startSubscriptionSweeper(): void {
   verifyTimer = setInterval(() => {
     void sweepPendingVerifications().catch((err) => {
       logger.error({ err }, "Crypto verification sweep failed");
+    });
+    // Pairs stored SMS with submissions that arrived after them — the usual
+    // order, since a student pays before they type the number in.
+    void sweepUnmatchedSms().catch((err) => {
+      logger.error({ err }, "Wallet SMS sweep failed");
+    });
+    // A database read every tick, an SP Today call only when the stored rate
+    // is twelve hours old — the free tier is a hundred calls a month.
+    void refreshSypRateIfDue().catch((err) => {
+      logger.error({ err }, "SYP rate refresh failed");
     });
   }, VERIFY_INTERVAL_MS);
 

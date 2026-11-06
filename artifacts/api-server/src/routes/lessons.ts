@@ -34,6 +34,8 @@ import {
   countLessonsStarted,
   checkLessonAccess,
   isLessonInTrack,
+  lessonTrackFilter,
+  previousLessonInTrack,
   DENIAL_MESSAGES,
   type LessonDenial,
 } from "../services/entitlements";
@@ -109,9 +111,10 @@ router.get("/lessons", requireAuth, async (req, res): Promise<void> => {
   // tiers, so a professional lesson is not something a general subscriber can
   // unlock by upgrading. Showing it would advertise content that no purchase on
   // this plan makes available.
-  const entitlement = await getEntitlement(userId);
+  const entitlement = await getEntitlement(userId, req.session.role);
 
-  const trackFilter = eq(lessonsTable.track, entitlement.track);
+  // Staff get no filter: they see both tracks.
+  const trackFilter = lessonTrackFilter(entitlement);
 
   const whereFilter = levelId
     ? and(
@@ -141,8 +144,14 @@ router.get("/lessons", requireAuth, async (req, res): Promise<void> => {
   const startedLessonIds = new Set(
     progressRows.filter((p) => p.startedAt !== null).map((p) => p.lessonId),
   );
+  // Only lessons started in the CURRENT period count against the allowance,
+  // so a monthly quota resets rather than accumulating for all time.
+  const periodStart = entitlement.periodStartedAt;
+  const startedThisPeriod = progressRows.filter(
+    (p) => p.startedAt !== null && (!periodStart || p.startedAt >= periodStart),
+  ).length;
   const quotaSpent =
-    entitlement.quota !== null && startedLessonIds.size >= entitlement.quota;
+    entitlement.lessonQuota !== null && startedThisPeriod >= entitlement.lessonQuota;
 
   // Group lessons by level for sequential unlock calculation
   const lessonsByLevel = new Map<number, typeof lessons>();
@@ -158,7 +167,7 @@ router.get("/lessons", requireAuth, async (req, res): Promise<void> => {
       (a, b) => a.order - b.order,
     );
     const idx = levelLessons.findIndex((l) => l.id === lesson.id);
-    const prevLessonId = idx > 0 ? levelLessons[idx - 1].id : null;
+    const prevLessonId = previousLessonInTrack(levelLessons, idx);
     const progressRow = progressRows.find((p) => p.lessonId === lesson.id);
     const curriculumState = deriveLessonStateWithOrders(
       lesson,
@@ -167,6 +176,7 @@ router.get("/lessons", requireAuth, async (req, res): Promise<void> => {
       completedIds,
       prevLessonId,
       progressRow?.status,
+      entitlement.unlimited,
     );
 
     // The plan can only ever lock further, never unlock: a lesson the
@@ -325,7 +335,7 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
   // Enforce plan access. This route serves the lesson's actual content blocks,
   // so it needs its own gate: without one a student could skip /start and read
   // everything the paywall is meant to cover.
-  const entitlement = await getEntitlement(userId);
+  const entitlement = await getEntitlement(userId, req.session.role);
   if (!isLessonInTrack(entitlement, bundle.lesson.track)) {
     res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
     return;
@@ -357,9 +367,9 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
   // Quota gate. Deferred until here because it needs progressRow: a lesson the
   // student already started stays readable however spent the quota is, so they
   // can finish what they opened.
-  if (entitlement.quota !== null && !progressRow?.startedAt) {
-    const lessonsStarted = await countLessonsStarted(userId);
-    if (lessonsStarted >= entitlement.quota) {
+  if (entitlement.lessonQuota !== null && !progressRow?.startedAt) {
+    const lessonsStarted = await countLessonsStarted(userId, entitlement.periodStartedAt);
+    if (lessonsStarted >= entitlement.lessonQuota) {
       res
         .status(403)
         .json({ ...DENIAL_MESSAGES.quota_exhausted, reason: "quota_exhausted" });
@@ -376,6 +386,8 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
       .where(
         and(
           eq(lessonsTable.levelId, bundle.lesson.levelId),
+          // The predecessor that unlocks a lesson is in its own track.
+          eq(lessonsTable.track, bundle.lesson.track),
           eq(lessonsTable.status, "published"),
           isNull(lessonsTable.softDeletedAt),
         ),
@@ -393,6 +405,7 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
     completedIds,
     prevLessonId,
     progressRow?.status,
+    entitlement.unlimited,
   );
 
   // Enforce that locked lessons are not accessible for detail
@@ -493,6 +506,8 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
     .where(
       and(
         eq(lessonsTable.levelId, lessonRow.levelId),
+        // The predecessor that unlocks a lesson is in its own track.
+        eq(lessonsTable.track, lessonRow.track),
         publishedLessonFilter(),
       ),
     )
@@ -502,6 +517,10 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
   const prevLessonId = idx > 0 ? siblings[idx - 1].id : null;
   const currentLevelOrder = currentLevel?.order ?? null;
 
+  // Resolved before the progression check below, which needs `unlimited` to
+  // let staff past it, as well as by the plan gate further down.
+  const entitlement = await getEntitlement(userId, req.session.role);
+
   const state = deriveLessonStateWithOrders(
     lessonRow,
     level.order,
@@ -509,6 +528,7 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
     completedIds,
     prevLessonId,
     null,
+    entitlement.unlimited,
   );
 
   if (state === "LOCKED") {
@@ -532,7 +552,6 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
   // one thing actually needed — two starts by the same student cannot
   // interleave — without making a routine request retryable on 40001, which
   // nothing else in this codebase is set up to handle.
-  const entitlement = await getEntitlement(userId);
 
   // Assigned inside the transaction callback and read after it commits.
   // Explicitly widened: TypeScript narrows a `null` initializer to `null` and
@@ -563,7 +582,9 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
       // Only counted when it can actually change the answer. An unlimited plan
       // and a resume both short-circuit, so the common paths skip the count.
       lessonsStarted:
-        entitlement.quota !== null && !existing ? await countLessonsStarted(userId, tx) : 0,
+        entitlement.lessonQuota !== null && !existing
+          ? await countLessonsStarted(userId, entitlement.periodStartedAt, tx)
+          : 0,
       alreadyStarted: Boolean(existing),
     });
     if (denial) return;
@@ -1097,7 +1118,7 @@ router.post("/lessons/:lessonId/complete", requireAuth, async (req, res): Promis
   // is the end of a lesson the student was already allowed to start, and the
   // quota counts starts. Re-checking it here would strand a free student who
   // started their one lesson inside a lesson they can never finish.
-  const entitlement = await getEntitlement(userId);
+  const entitlement = await getEntitlement(userId, req.session.role);
   if (!isLessonInTrack(entitlement, lesson.track)) {
     res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
     return;
@@ -1192,7 +1213,7 @@ router.post("/lessons/:lessonId/complete", requireAuth, async (req, res): Promis
   }
 
   // Maybe advance to next level
-  const { advanced, newLevelId } = await maybeAdvanceLevel(userId, lessonId);
+  const { advanced, newLevelId } = await maybeAdvanceLevel(userId, lessonId, req.session.role);
 
   // Find next lesson
   const nextLessonRow = await findNextLesson(lessonId);

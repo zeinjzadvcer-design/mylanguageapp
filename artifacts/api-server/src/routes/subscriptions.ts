@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   db,
@@ -10,10 +10,13 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { cached, CK, TTL } from "../services/cache";
-import { getShamCashDetails } from "../services/payment-settings";
-import { cryptoConfig } from "../services/crypto-config";
+import { getWalletDetails, getCryptoDetails } from "../services/payment-settings";
+import { checkWalletAddress } from "../services/crypto-config";
+import { getPricingConfig, priceSypFor } from "../services/syp-rate";
+import { subscriptionInForce } from "../services/entitlements";
 import { isValidTxHash } from "../services/crypto-verify-policy";
 import { verifySubmission } from "../services/crypto-verify";
+import { sweepUnmatchedSms } from "../services/wallet-sms";
 
 const router: IRouter = Router();
 
@@ -24,11 +27,19 @@ const router: IRouter = Router();
  */
 router.get("/subscription-plans", async (_req, res): Promise<void> => {
   const plans = await cached(CK.subPlans(), TTL.SUBSCRIPTION_PLANS, async () => {
-    const rows = await db
-      .select()
-      .from(subscriptionPlansTable)
-      .where(eq(subscriptionPlansTable.isActive, true));
-    return rows.map((p) => ({
+    const [rows, pricing] = await Promise.all([
+      db
+        .select()
+        .from(subscriptionPlansTable)
+        .where(eq(subscriptionPlansTable.isActive, true)),
+      getPricingConfig(),
+    ]);
+    return rows.map((p) => {
+      // The price a student is charged: computed from the stored rate when
+      // automatic pricing is on, the admin's figure otherwise. Cached with the
+      // plans, and invalidated whenever the rate or a price changes.
+      const effective = priceSypFor(pricing, p.priceUsd, p.priceSyp);
+      return {
       id: p.id,
       code: p.code,
       name: p.name,
@@ -42,8 +53,16 @@ router.get("/subscription-plans", async (_req, res): Promise<void> => {
       featuresAr: p.featuresAr ?? [],
       includesConversationPartner: p.includesConversationPartner,
       lessonTrack: p.lessonTrack,
-      freeLessonQuota: p.freeLessonQuota,
-    }));
+      lessonsPerMonth: p.lessonsPerMonth,
+      callsPerMonth: p.callsPerMonth,
+      priceSyp: effective === null ? null : effective.toFixed(2),
+      /**
+       * The admin's own figure, whatever the mode. The admin screen edits this
+       * one; students only ever see `priceSyp`.
+       */
+      priceSypManual: p.priceSyp,
+      };
+    });
   });
 
   res.json(plans);
@@ -55,8 +74,13 @@ router.get("/subscription-plans", async (_req, res): Promise<void> => {
  */
 router.get("/subscription", requireAuth, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
+  // The same test the lesson gate applies (services/entitlements.ts): active
+  // AND not past its expiry. Filtering on status alone kept showing a lapsed
+  // subscription as "active, valid until …" until the hourly sweep flipped its
+  // status — while every lesson was already locked, because the gate checks
+  // the timestamp. The page and the gate must agree on what the student has.
   const [sub] = await db.select().from(studentSubscriptionsTable)
-    .where(and(eq(studentSubscriptionsTable.userId, userId), eq(studentSubscriptionsTable.status, "active")))
+    .where(subscriptionInForce(userId))
     .limit(1);
 
   if (!sub) {
@@ -95,11 +119,32 @@ router.get("/subscription", requireAuth, async (req, res): Promise<void> => {
  * Whitelisted, like planCode. Previously this value went straight from the
  * request body into the database and into an interpolated note string.
  */
-const PAYMENT_METHODS = ["sham_cash", "crypto_usdt_bep20"] as const;
+/**
+ * `sham_cash` is absent: it is retained in the database enum for the rows that
+ * already carry it, but no new submission may name it.
+ */
+const PAYMENT_METHODS = ["syriatel_cash", "crypto_usdt_bep20"] as const;
 type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/**
+ * The four sellable plans. `free` is absent deliberately: it is what a student
+ * has before paying, not something to buy.
+ */
+const SELLABLE_PLANS = [
+  "general_basic",
+  "general_plus",
+  "pro_basic",
+  "pro_plus",
+] as const;
+
+/**
+ * How long a SYP quote holds. Long enough to pay in a wallet app and come back,
+ * short enough that a returning student is not held to last week's rate.
+ */
+const QUOTE_VALID_MS = 48 * 3600_000;
+
 const createSubscriptionSchema = z.object({
-  planCode: z.enum(["general_english", "professional_english"]),
+  planCode: z.enum(SELLABLE_PLANS),
   paymentMethod: z.enum(PAYMENT_METHODS),
 });
 
@@ -133,6 +178,27 @@ router.post("/subscription", requireAuth, async (req, res): Promise<void> => {
     .where(eq(subscriptionPlansTable.code, planCode)).limit(1);
   if (!plan) { res.status(400).json({ error: "Plan not found" }); return; }
 
+  // Crypto is offered only once an admin has set a receiving address or QR.
+  // The UI hides the option otherwise; this refuses a request that bypasses it,
+  // which would leave a student with a pending subscription and nowhere to pay.
+  if (paymentMethod === "crypto_usdt_bep20" && !(await getCryptoDetails()).configured) {
+    res.status(409).json({
+      error: "Crypto payments are not available",
+      errorAr: "الدفع بالعملات الرقمية غير متاح حالياً.",
+    });
+    return;
+  }
+
+  // The SYP price is quoted now and the payment is checked against the quote.
+  // With an automatic rate the price moves, and a student who reads 290 ل.س and
+  // pays it must not be checked against 295 because the rate refreshed while
+  // they were in their wallet app.
+  const quote = priceSypFor(await getPricingConfig(), plan.priceUsd, plan.priceSyp);
+  const quoteFields = {
+    quotedPriceSyp: quote === null ? null : quote.toFixed(2),
+    quotedAt: new Date(),
+  };
+
   // Reuse an existing unpaid attempt for the same plan rather than opening a
   // second one. A student who reloads the payment page should not accumulate
   // pending subscriptions, each with its own submissions, for one purchase.
@@ -148,18 +214,34 @@ router.post("/subscription", requireAuth, async (req, res): Promise<void> => {
     )
     .limit(1);
 
-  const sub = existingPending ?? (
-    await db.insert(studentSubscriptionsTable).values({
-      userId,
-      planCode,
-      planName: plan.name,
-      planNameAr: plan.nameAr,
-      status: "pending_payment",
-      paymentMethod,
-      startedAt: new Date(),
-      // expiresAt stays null until activation sets it.
-    }).returning()
-  )[0];
+  // A reused attempt takes the method chosen now and a fresh quote once the
+  // old one is stale — a quote from last week would hold a student to a rate
+  // the market has left behind, in either direction.
+  const quoteStale =
+    !existingPending?.quotedAt ||
+    Date.now() - existingPending.quotedAt.getTime() > QUOTE_VALID_MS;
+
+  const sub = existingPending
+    ? (
+        await db
+          .update(studentSubscriptionsTable)
+          .set({ paymentMethod, ...(quoteStale ? quoteFields : {}) })
+          .where(eq(studentSubscriptionsTable.id, existingPending.id))
+          .returning()
+      )[0]
+    : (
+        await db.insert(studentSubscriptionsTable).values({
+          userId,
+          planCode,
+          planName: plan.name,
+          planNameAr: plan.nameAr,
+          status: "pending_payment",
+          paymentMethod,
+          startedAt: new Date(),
+          ...quoteFields,
+          // expiresAt stays null until activation sets it.
+        }).returning()
+      )[0];
 
   res.json({
     id: sub.id,
@@ -173,6 +255,8 @@ router.post("/subscription", requireAuth, async (req, res): Promise<void> => {
     paymentMethod: sub.paymentMethod ?? null,
     paymentNote: sub.paymentNote ?? null,
     priceUsd: plan.priceUsd,
+    /** The quoted SYP price — what the payment step shows and checks against. */
+    priceSyp: sub.quotedPriceSyp ?? null,
   });
 });
 
@@ -221,16 +305,12 @@ router.get(
  * admin-managed settings row; the crypto side is step 4.
  */
 router.get("/subscription/payment-details", requireAuth, async (_req, res): Promise<void> => {
-  const shamCash = await getShamCashDetails();
-  const crypto = cryptoConfig();
+  const [wallet, crypto] = await Promise.all([getWalletDetails(), getCryptoDetails()]);
 
   res.json({
-    shamCash,
+    wallet,
     crypto: {
-      configured: crypto.enabled,
-      // Shown for the student to send to. Only ever read here; it is set by
-      // deploy configuration and nothing in the app can change it.
-      walletAddress: crypto.enabled ? crypto.walletAddress : null,
+      ...crypto,
       /**
        * The network, carried explicitly so the UI can shout about it. A
        * student who sends TRC-20 USDT to a 0x address loses the money
@@ -328,7 +408,12 @@ router.post(
       .where(
         and(
           eq(paymentSubmissionsTable.subscriptionId, subscriptionId),
-          eq(paymentSubmissionsTable.status, "pending"),
+          // Both unresolved statuses. Blocking only on `pending` let a student
+          // whose first claim was still `verifying` open a second one, leaving
+          // an admin two rows to reconcile for one payment. A `rejected`
+          // submission is deliberately NOT counted: correcting a refused
+          // receipt is exactly what a student should be able to do.
+          inArray(paymentSubmissionsTable.status, ["pending", "verifying"]),
         ),
       )
       .limit(1);
@@ -357,7 +442,7 @@ router.post(
       .values({
         subscriptionId,
         userId,
-        method: "sham_cash",
+        method: "syriatel_cash",
         status: "pending",
         // Snapshotted: a price change before review must not invalidate a
         // payment that was correct when it was made.
@@ -397,8 +482,13 @@ router.post(
   async (req, res): Promise<void> => {
     const userId = req.session.userId!;
 
-    if (!cryptoConfig().enabled) {
-      res.status(503).json({ error: "Crypto payments are not enabled" });
+    // Offered only once an admin has set an address or a QR.
+    const crypto = await getCryptoDetails();
+    if (!crypto.configured) {
+      res.status(503).json({
+        error: "Crypto payments are not available",
+        errorAr: "الدفع بالعملات الرقمية غير متاح حالياً.",
+      });
       return;
     }
 
@@ -458,11 +548,16 @@ router.post(
           subscriptionId,
           userId,
           method: "crypto_usdt_bep20",
-          // Starts at `verifying`: the job below decides, and a submission
-          // nobody has checked yet should not sit in the admin queue.
-          status: "verifying",
+          // `verifying` when the chain can decide; `pending` when there is no
+          // address to check the recipient against (a QR-only setup), so it
+          // goes straight to an admin instead of waiting on a check that
+          // cannot succeed.
+          status: crypto.autoVerify ? "verifying" : "pending",
           amountExpected: plan.priceUsd.toFixed(2),
           txHash,
+          // The address it is checked against, fixed now. A later change in
+          // settings must not re-point a payment that is already in flight.
+          expectedWalletAddress: crypto.walletAddress,
         })
         .returning();
       submissionId = submission.id;
@@ -471,7 +566,9 @@ router.post(
       // buying ten subscriptions. Catching the violation here turns it into a
       // clear refusal rather than a 500 — and it is the database, not a prior
       // SELECT, that decides, so two simultaneous submissions cannot both win.
-      const code = (err as { code?: string }).code;
+      const code =
+        (err as { code?: string })?.code ??
+        (err as { cause?: { code?: string } })?.cause?.code;
       if (code === "23505") {
         res.status(409).json({
           error: "That transaction has already been used for a subscription",
@@ -486,16 +583,206 @@ router.post(
     // while they are still looking at the screen. Not awaited: an RPC round
     // trip must not hold the response open, and the sweeper re-checks anything
     // this misses.
-    void verifySubmission(submissionId).catch(() => {
+    if (crypto.autoVerify) {
+      void verifySubmission(submissionId).catch(() => {
+        // Already logged inside; the sweeper will try again.
+      });
+    }
+
+    res.status(201).json({
+      id: submissionId,
+      subscriptionId,
+      method: "crypto_usdt_bep20",
+      status: crypto.autoVerify ? "verifying" : "pending",
+      amountExpected: plan.priceUsd.toFixed(2),
+    });
+  },
+);
+
+const walletSubmissionSchema = z.object({
+  subscriptionId: z.number().int().positive(),
+  /**
+   * رقم العملية from the payer's SMS. Digits only, and bounded: Syriatel's are
+   * around twelve, but the exact length is undocumented and the point of the
+   * check is to reject obvious nonsense, not to assert a format Syriatel never
+   * promised.
+   */
+  operationNumber: z.string().trim().regex(/^\d{4,24}$/),
+  /** What the student says they transferred, in SYP. */
+  amountSyp: z.number().positive().max(100_000_000),
+  studentNote: z.string().trim().max(2000).optional(),
+  /** Optional: a receipt screenshot, if they took one. */
+  receiptMediaId: z.number().int().positive().optional(),
+});
+
+/**
+ * POST /subscription/wallet-submissions
+ *
+ * A Syriatel Cash payment. The student gives the operation number from their
+ * own confirmation SMS; the companion app forwards the merchant's copy of the
+ * same message, and the two are matched on that number.
+ *
+ * Verification is therefore automatic when both halves are present — but this
+ * endpoint never activates anything itself. It records the claim and lets the
+ * matcher decide, so a submission that arrives before its SMS (or after, which
+ * is the common order) is handled the same way.
+ */
+router.post(
+  "/subscription/wallet-submissions",
+  requireAuth,
+  async (req, res): Promise<void> => {
+    const userId = req.session.userId!;
+
+    const parsed = walletSubmissionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "A subscription, operation number and amount are required",
+        errorAr: "رقم العملية والمبلغ مطلوبان.",
+      });
+      return;
+    }
+    const { subscriptionId, operationNumber, amountSyp, studentNote, receiptMediaId } =
+      parsed.data;
+
+    // The subscription must be the caller's own and still awaiting payment.
+    // Checked rather than trusted: the id comes from the request body, and
+    // without this a student could attach a payment to someone else's.
+    const [subscription] = await db
+      .select()
+      .from(studentSubscriptionsTable)
+      .where(
+        and(
+          eq(studentSubscriptionsTable.id, subscriptionId),
+          eq(studentSubscriptionsTable.userId, userId),
+          eq(studentSubscriptionsTable.status, "pending_payment"),
+        ),
+      )
+      .limit(1);
+
+    if (!subscription) {
+      res.status(404).json({ error: "No pending subscription found" });
+      return;
+    }
+
+    const [plan] = await db
+      .select({
+        priceUsd: subscriptionPlansTable.priceUsd,
+        priceSyp: subscriptionPlansTable.priceSyp,
+      })
+      .from(subscriptionPlansTable)
+      .where(sql`${subscriptionPlansTable.code} = ${subscription.planCode}`)
+      .limit(1);
+
+    if (!plan) {
+      res.status(400).json({ error: "Plan not found" });
+      return;
+    }
+
+    // No SYP price means an admin has not set one, and there is nothing to
+    // verify the payment against. Refusing is the only honest answer: guessing
+    // a rate here would either reject a correct payment or undercharge.
+    // The quote the student was shown when they opened this subscription, while
+    // it holds; the current price after that. Checking against the live price
+    // instead would fail a correct payment whenever the rate moved in between.
+    const quoteFresh =
+      subscription.quotedPriceSyp !== null &&
+      subscription.quotedAt !== null &&
+      Date.now() - subscription.quotedAt.getTime() <= QUOTE_VALID_MS;
+    const currentPrice = priceSypFor(await getPricingConfig(), plan.priceUsd, plan.priceSyp);
+    const expectedSyp = quoteFresh
+      ? subscription.quotedPriceSyp
+      : currentPrice === null
+        ? null
+        : currentPrice.toFixed(2);
+
+    if (expectedSyp === null) {
+      res.status(503).json({
+        error: "This plan has no Syrian pound price configured",
+        errorAr: "لم يتم تحديد سعر هذه الباقة بالليرة السورية بعد.",
+      });
+      return;
+    }
+
+    // Don't stack submissions: a second claim while one is pending gives the
+    // admin two rows to reconcile for one payment.
+    const [existingPending] = await db
+      .select({ id: paymentSubmissionsTable.id })
+      .from(paymentSubmissionsTable)
+      .where(
+        and(
+          eq(paymentSubmissionsTable.subscriptionId, subscriptionId),
+          // Both unresolved statuses. Blocking only on `pending` let a student
+          // whose first claim was still `verifying` open a second one, leaving
+          // an admin two rows to reconcile for one payment. A `rejected`
+          // submission is deliberately NOT counted: correcting a refused
+          // receipt is exactly what a student should be able to do.
+          inArray(paymentSubmissionsTable.status, ["pending", "verifying"]),
+        ),
+      )
+      .limit(1);
+
+    if (existingPending) {
+      res.status(409).json({
+        error: "A payment for this subscription is already under review",
+        submissionId: existingPending.id,
+      });
+      return;
+    }
+
+    let submissionId: number;
+    try {
+      const [submission] = await db
+        .insert(paymentSubmissionsTable)
+        .values({
+          subscriptionId,
+          userId,
+          method: "syriatel_cash",
+          // `verifying`, not `pending`: the matcher decides next, and a claim
+          // nobody has checked yet should not sit in the admin queue.
+          status: "verifying",
+          amountExpected: plan.priceUsd.toFixed(2),
+          amountExpectedSyp: expectedSyp,
+          amountClaimedSyp: amountSyp.toFixed(2),
+          operationNumber,
+          studentNote: studentNote ?? null,
+          receiptMediaId: receiptMediaId ?? null,
+        })
+        .returning();
+      submissionId = submission.id;
+    } catch (err) {
+      // The unique index on operation_number is what stops one payment buying
+      // several subscriptions. Catching it here turns the violation into a
+      // clear refusal rather than a 500 — and it is the database, not a prior
+      // SELECT, that decides, so two simultaneous claims cannot both win.
+      // Drizzle wraps the driver error, so the Postgres code can be on the
+      // error or on its cause.
+      if (
+        (err as { code?: string })?.code === "23505" ||
+        (err as { cause?: { code?: string } })?.cause?.code === "23505"
+      ) {
+        res.status(409).json({
+          error: "That operation number has already been used",
+          errorAr: "تم استخدام رقم هذه العملية مسبقاً.",
+        });
+        return;
+      }
+      throw err;
+    }
+
+    // Try to match straight away, in case the SMS already arrived — which is
+    // the usual order. Not awaited: the student should not wait on it, and the
+    // sweep re-checks anything this misses.
+    void sweepUnmatchedSms().catch(() => {
       // Already logged inside; the sweeper will try again.
     });
 
     res.status(201).json({
       id: submissionId,
       subscriptionId,
-      method: "crypto_usdt_bep20",
+      method: "syriatel_cash",
       status: "verifying",
       amountExpected: plan.priceUsd.toFixed(2),
+      amountExpectedSyp: expectedSyp,
     });
   },
 );

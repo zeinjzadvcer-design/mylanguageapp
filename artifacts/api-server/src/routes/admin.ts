@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { eq, desc, and, sql } from "drizzle-orm";
 import {
-  db, usersTable, studentSubscriptionsTable, lessonProgressTable,
+  db, usersTable, studentSubscriptionsTable, lessonProgressTable, subscriptionPlansTable,
   lessonsTable, levelsTable, studentProfilesTable, placementResultsTable,
 } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
@@ -17,8 +17,20 @@ router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {
   const activeSubscriptions = await db.select().from(studentSubscriptionsTable)
     .where(eq(studentSubscriptionsTable.status, "active"));
 
-  const generalCount = activeSubscriptions.filter((s) => s.planCode === "general_english").length;
-  const proCount = activeSubscriptions.filter((s) => s.planCode === "professional_english").length;
+  // Counted by track, not by plan code. These matched the literal codes
+  // "general_english" / "professional_english" and silently fell to zero when
+  // the plans became general_basic/general_plus and pro_basic/pro_plus. A
+  // plan's track is what "general" and "professional" actually mean, and it
+  // survives the next plan being added or renamed.
+  const planTracks = new Map(
+    (
+      await db
+        .select({ code: subscriptionPlansTable.code, track: subscriptionPlansTable.lessonTrack })
+        .from(subscriptionPlansTable)
+    ).map((p) => [p.code as string, p.track]),
+  );
+  const generalCount = activeSubscriptions.filter((s) => planTracks.get(s.planCode) === "general").length;
+  const proCount = activeSubscriptions.filter((s) => planTracks.get(s.planCode) === "professional").length;
 
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);

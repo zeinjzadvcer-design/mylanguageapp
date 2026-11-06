@@ -13,8 +13,23 @@ import {
   deriveLessonStateWithOrders,
   publishedLessonFilter,
 } from "../services/learning";
+import {
+  getEntitlement,
+  lessonTrackFilter,
+  previousLessonInTrack,
+} from "../services/entitlements";
 
 const router: IRouter = Router();
+
+/**
+ * The track condition for a signed-in student's lessons; undefined (both
+ * tracks) for staff and for a visitor who is not signed in, who sees the
+ * catalogue rather than any one plan's content.
+ */
+async function trackFilterFor(userId: number | undefined, role: string | undefined) {
+  if (!userId) return undefined;
+  return lessonTrackFilter(await getEntitlement(userId, role));
+}
 
 /** Resolve which curriculum to use: from query param or student's enrolled curriculum or platform default */
 async function resolveCurriculumId(
@@ -77,6 +92,7 @@ router.get("/levels", async (req, res): Promise<void> => {
           .where(and(
             eq(lessonsTable.status, "published"),
             isNull(lessonsTable.softDeletedAt),
+            await trackFilterFor(userId, req.session?.role),
           ))
       : [];
 
@@ -111,7 +127,7 @@ router.get("/levels", async (req, res): Promise<void> => {
     const lessonStateCounts = { LOCKED: 0, AVAILABLE: 0, IN_PROGRESS: 0, COMPLETED: 0 };
 
     levelLessons.forEach((lesson, idx) => {
-      const prevLessonId = idx > 0 ? levelLessons[idx - 1].id : null;
+      const prevLessonId = previousLessonInTrack(levelLessons, idx);
       const progressRow = allProgress.find((p) => p.lessonId === lesson.id);
       const state = deriveLessonStateWithOrders(
         lesson,
@@ -217,6 +233,7 @@ router.get("/levels/:levelId", async (req, res): Promise<void> => {
     .where(
       and(
         eq(lessonsTable.levelId, levelId),
+        await trackFilterFor(userId, req.session?.role),
         publishedLessonFilter(),
       ),
     )
@@ -233,7 +250,7 @@ router.get("/levels/:levelId", async (req, res): Promise<void> => {
   const lessonStateCounts = { LOCKED: 0, AVAILABLE: 0, IN_PROGRESS: 0, COMPLETED: 0 };
 
   const lessonSummaries = levelLessons.map((lesson, idx) => {
-    const prevLessonId = idx > 0 ? levelLessons[idx - 1].id : null;
+    const prevLessonId = previousLessonInTrack(levelLessons, idx);
     const progressRow = allProgress.find((p) => p.lessonId === lesson.id);
     const state = deriveLessonStateWithOrders(
       lesson,

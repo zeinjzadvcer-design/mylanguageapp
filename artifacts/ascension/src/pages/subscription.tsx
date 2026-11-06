@@ -4,8 +4,9 @@ import {
   useGetSubscription,
   useCreateSubscription,
   useGetPaymentSubmissions,
+  useGetPaymentDetails,
 } from "@workspace/api-client-react";
-import { ShamCashPayment } from "@/components/sham-cash-payment";
+import { WalletPayment } from "@/components/wallet-payment";
 import { CryptoPayment } from "@/components/crypto-payment";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,6 +45,13 @@ export default function Subscription() {
    * submission list is the only place the pending state is visible.
    */
   const { data: submissions, refetch: refetchSubmissions } = useGetPaymentSubmissions();
+
+  /**
+   * Whether crypto is offered. Until an admin sets a receiving address or QR
+   * the option is not shown at all, and Syriatel Cash is the only method.
+   */
+  const { data: paymentDetails } = useGetPaymentDetails();
+  const cryptoAvailable = Boolean(paymentDetails?.crypto?.configured);
 
   const pendingSubmission = submissions?.find(
     (sub) => sub.status === "pending" || sub.status === "verifying",
@@ -111,14 +119,25 @@ export default function Subscription() {
   );
 
   const [selectedPlanCode, setSelectedPlanCode] = useState<SubscriptionInputPlanCode | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<SubscriptionInputPaymentMethod>(SubscriptionInputPaymentMethod.sham_cash);
+  const [paymentMethod, setPaymentMethod] = useState<SubscriptionInputPaymentMethod>(SubscriptionInputPaymentMethod.syriatel_cash);
+  // Falls back if crypto is withdrawn while selected (an admin removed it
+  // mid-session), so the student cannot submit a method that will be refused.
+  const effectiveMethod =
+    paymentMethod === SubscriptionInputPaymentMethod.crypto_usdt_bep20 && !cryptoAvailable
+      ? SubscriptionInputPaymentMethod.syriatel_cash
+      : paymentMethod;
   /**
    * Set once the subscription row exists, which switches the dialog from
    * "choose how to pay" to "here is how to pay". Held here rather than derived
    * from `subscription`, because the row we need is the pending one this
    * dialog just created, not whatever is currently active.
    */
-  const [pending, setPending] = useState<{ id: number; priceUsd: number } | null>(null);
+  const [pending, setPending] = useState<{
+    id: number;
+    priceUsd: number;
+    /** The plan's Syrian pound price. Null means the wallet cannot sell it. */
+    priceSyp: string | null;
+  } | null>(null);
 
   const isLoading = plansLoading || subLoading;
 
@@ -137,15 +156,20 @@ export default function Subscription() {
     if (!selectedPlanCode) return;
     
     createSub.mutate(
-      { data: { planCode: selectedPlanCode, paymentMethod } },
+      { data: { planCode: selectedPlanCode, paymentMethod: effectiveMethod } },
       {
         onSuccess: (sub) => {
           // The subscription is only a placeholder at pending_payment; it
           // grants nothing until proof of payment is reviewed. So rather than
           // closing here, move the dialog on to the paying step.
+          const plan = plans?.find((p) => p.code === selectedPlanCode);
           setPending({
             id: sub.id,
-            priceUsd: plans?.find((p) => p.code === selectedPlanCode)?.priceUsd ?? 0,
+            priceUsd: plan?.priceUsd ?? 0,
+            // The quote taken when the subscription opened, not the plan's
+            // live price: with an automatic rate the two can differ, and the
+            // payment is checked against the quote.
+            priceSyp: sub.priceSyp ?? plan?.priceSyp ?? null,
           });
           refetch();
           void refetchSubmissions();
@@ -183,16 +207,16 @@ export default function Subscription() {
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-lg">طلب الدفع قيد المراجعة</h3>
+              <h3 className="font-bold text-lg">{sb.underReviewTitle}</h3>
               <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-                {pendingSubmission.method === "sham_cash"
-                  ? "استلمنا إثبات الدفع وسيقوم الفريق بمراجعته وتفعيل اشتراكك قريباً."
-                  : "جارٍ التحقق من العملية على الشبكة. سيتم التفعيل تلقائياً عند التأكيد."}
+                {pendingSubmission.method === "syriatel_cash"
+                  ? sb.underReviewWallet
+                  : sb.underReviewCrypto}
               </p>
               <div className="flex flex-wrap gap-3 mt-3 text-xs text-muted-foreground">
                 <span dir="ltr">${pendingSubmission.amountExpected}</span>
                 <span>
-                  {pendingSubmission.method === "sham_cash" ? "شام كاش" : "USDT (BEP-20)"}
+                  {pendingSubmission.method === "syriatel_cash" ? sb.walletName : sb.cryptoName}
                 </span>
                 {pendingSubmission.createdAt && (
                   <span dir="ltr">
@@ -214,21 +238,21 @@ export default function Subscription() {
               <AlertTriangle className="h-6 w-6" />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-lg">لم يتم قبول إثبات الدفع</h3>
+              <h3 className="font-bold text-lg">{sb.rejectedTitle}</h3>
               {lastRejected.reviewNote && (
                 <p className="text-sm mt-1 leading-relaxed">
-                  <strong>السبب:</strong> {lastRejected.reviewNote}
+                  <strong>{sb.rejectedReason}</strong> {lastRejected.reviewNote}
                 </p>
               )}
               <p className="text-sm text-muted-foreground mt-2">
-                يمكنك اختيار الباقة وإرسال إثبات جديد.
+                {sb.rejectedRetry}
               </p>
             </div>
             <Button
               variant="ghost"
               size="icon"
-              className="shrink-0 -mt-2 -ml-2"
-              aria-label="إغلاق"
+              className="shrink-0 -mt-2 -ms-2"
+              aria-label={t.common.close}
               onClick={() => lastRejected.id != null && dismiss(lastRejected.id)}
             >
               <X className="h-4 w-4" />
@@ -242,9 +266,9 @@ export default function Subscription() {
           or the other — a payment awaiting review is the banner above, not a
           state of this one. */}
       {subscription && (
-        <Card className="mb-12 border-2 border-emerald-500 bg-emerald-50/50">
+        <Card className="mb-12 border-2 border-mint bg-mint-soft/50">
           <CardContent className="p-6 flex items-center gap-4">
-            <div className="p-3 rounded-full bg-emerald-100 text-emerald-600 shrink-0">
+            <div className="p-3 rounded-full bg-mint-soft text-mint-foreground shrink-0">
               <CheckCircle2 className="h-6 w-6" />
             </div>
             <div>
@@ -253,36 +277,67 @@ export default function Subscription() {
               </h3>
               <p className="text-sm text-muted-foreground mt-1">
                 {subscription.expiresAt
-                  ? `ساري حتى ${new Date(subscription.expiresAt).toLocaleDateString("ar")}`
-                  : "الخطة الأساسية — درس مجاني واحد بعد اختبار تحديد المستوى"}
+                  ? sb.validUntil(
+                      new Date(subscription.expiresAt).toLocaleDateString(
+                        lang === "ar" ? "ar" : "en",
+                      ),
+                    )
+                  : sb.freePlanLine}
               </p>
             </div>
           </CardContent>
         </Card>
       )}
 
-      <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto items-stretch">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto items-stretch">
         {plans?.map((plan) => {
           const isFree = plan.code === "free";
-          const isPro = plan.code === "professional_english";
+          const isPro = plan.code === "pro_basic" || plan.code === "pro_plus";
           const isCurrentPlan = subscription?.planCode === plan.code;
+          // The larger tier in each track, which is what the badge marks now
+          // that there are two of each.
+          const isPlus = plan.code === "general_plus" || plan.code === "pro_plus";
           
           return (
             <Card key={plan.id} className={`flex flex-col relative transition-transform duration-300 hover:-translate-y-2 ${
               isPro ? "border-primary shadow-xl" : "border-border shadow-sm"
             }`}>
-              {isPro && (
+              {isPlus && (
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-accent text-accent-foreground px-4 py-1 rounded-full text-sm font-bold shadow-lg whitespace-nowrap">
-                  {sb.bestForWork}
+                  {sb.mostLessons}
                 </div>
               )}
               
               <CardContent className="p-8 flex flex-col flex-1">
                 <h3 className="text-2xl font-bold mb-2">{pick(plan.nameAr, plan.name)}</h3>
-                <div className="text-4xl font-bold mb-6 text-primary">
-                  ${plan.priceUsd}
-                  <span className="text-lg text-muted-foreground font-normal">{t.common.perMonth}</span>
+                <div className="mb-4">
+                  <div className="text-4xl font-bold text-primary">
+                    ${plan.priceUsd}
+                    <span className="text-lg text-muted-foreground font-normal">{t.common.perMonth}</span>
+                  </div>
+                  {plan.priceSyp && (
+                    <div className="text-sm text-muted-foreground mt-1" dir="ltr">
+                      {Number(plan.priceSyp).toLocaleString("en")} {sb.syp}
+                    </div>
+                  )}
                 </div>
+
+                {/* The allowance, which is what separates the tiers within a
+                    track — without it the $2 and $5 cards read identically. */}
+                {!isFree && (
+                  <ul className="space-y-2 mb-4 text-sm">
+                    <li className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
+                      <span>
+                        {sb.lessonsPerMonth(plan.lessonsPerMonth)}
+                      </span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
+                      <span>{sb.callsPerMonth(plan.callsPerMonth)}</span>
+                    </li>
+                  </ul>
+                )}
                 
                 <ul className="space-y-4 mb-8 flex-1">
                   {(lang === "en" && plan.features?.length ? plan.features : plan.featuresAr)?.map((feature, idx) => (
@@ -325,12 +380,12 @@ export default function Subscription() {
                     }
                   >
                     {pendingSubmission
-                      ? "بانتظار مراجعة الدفع"
+                      ? sb.awaitingReview
                       : isCurrentPlan && subscription?.status === "active"
-                        ? "باقتك الحالية"
+                        ? sb.yourPlan
                         : subscription?.status === "active"
-                          ? "التغيير إلى هذه الباقة"
-                          : "اختيار الباقة"}
+                          ? sb.switchToPlan
+                          : sb.choosePlan}
                   </Button>
                 )}
                 {isFree && (
@@ -353,23 +408,23 @@ export default function Subscription() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-md bg-card max-h-[90vh] overflow-y-auto" dir="rtl">
+        <DialogContent className="sm:max-w-md bg-card max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold">
-              {pending ? "إتمام الدفع" : "تأكيد الاشتراك"}
+              {pending ? sb.payTitle : sb.confirmTitle}
             </DialogTitle>
             <DialogDescription className="text-base text-muted-foreground mt-2">
               {pending
-                ? "حوّل المبلغ ثم أرسل صورة الإشعار لمراجعتها."
-                : "اختر طريقة الدفع المناسبة لك."}
+                ? sb.payBody
+                : sb.confirmBody}
             </DialogDescription>
           </DialogHeader>
 
           {pending ? (
-            paymentMethod === SubscriptionInputPaymentMethod.sham_cash ? (
-              <ShamCashPayment
+            effectiveMethod === SubscriptionInputPaymentMethod.syriatel_cash ? (
+              <WalletPayment
                 subscriptionId={pending.id}
-                priceUsd={pending.priceUsd}
+                priceSyp={pending.priceSyp}
                 onSubmitted={() => {
                   setSelectedPlanCode(null);
                   setPending(null);
@@ -392,31 +447,35 @@ export default function Subscription() {
           ) : (
             <>
               <div className="py-4">
-                <Label className="text-base font-bold mb-4 block">طريقة الدفع (Payment Method)</Label>
+                <Label className="text-base font-bold mb-4 block">{sb.paymentMethod}</Label>
                 <RadioGroup
-                  value={paymentMethod}
+                  value={effectiveMethod}
                   onValueChange={(val) => setPaymentMethod(val as SubscriptionInputPaymentMethod)}
                   className="space-y-3"
                 >
-                  {/* شام كاش, not Syriatel/MTN: those are different companies and
-                      the QR the admin uploads is a ShamCash account. The label used
-                      to name all three, which would have sent students to the wrong
-                      wallet. */}
-                  <div className="flex items-center space-x-3 space-x-reverse border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
-                    <RadioGroupItem value={SubscriptionInputPaymentMethod.sham_cash} id="r1" />
-                    <Label htmlFor="r1" className="cursor-pointer font-medium flex-1">شام كاش (محلي)</Label>
+                  {/* One named wallet, matching the QR the admin uploads. An
+                      earlier label named three different companies at once,
+                      which would have sent students to the wrong wallet. */}
+                  <div className="flex items-center gap-3 border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
+                    <RadioGroupItem value={SubscriptionInputPaymentMethod.syriatel_cash} id="r1" />
+                    <Label htmlFor="r1" className="cursor-pointer font-medium flex-1">{sb.localCash}</Label>
                   </div>
-                  <div className="flex items-center space-x-3 space-x-reverse border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
-                    <RadioGroupItem value={SubscriptionInputPaymentMethod.crypto_usdt_bep20} id="r2" />
-                    <Label htmlFor="r2" className="cursor-pointer font-medium flex-1">عملات رقمية — USDT (BEP-20)</Label>
-                  </div>
+                  {/* Not shown until an admin has set a receiving address or
+                      QR — an option that leads to "unavailable" is worse than
+                      no option. */}
+                  {cryptoAvailable && (
+                    <div className="flex items-center gap-3 border p-4 rounded-xl cursor-pointer hover:bg-secondary/50">
+                      <RadioGroupItem value={SubscriptionInputPaymentMethod.crypto_usdt_bep20} id="r2" />
+                      <Label htmlFor="r2" className="cursor-pointer font-medium flex-1">{sb.crypto}</Label>
+                    </div>
+                  )}
                 </RadioGroup>
               </div>
 
               <div className="flex gap-3 pt-4 border-t border-border">
-                <Button variant="outline" className="flex-1" onClick={() => setSelectedPlanCode(null)}>إلغاء</Button>
+                <Button variant="outline" className="flex-1" onClick={() => setSelectedPlanCode(null)}>{t.common.cancel}</Button>
                 <Button className="flex-1" onClick={handleSubscribe} disabled={createSub.isPending}>
-                  {createSub.isPending ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : "متابعة"}
+                  {createSub.isPending ? <Loader2 className="h-5 w-5 animate-spin ms-2" /> : t.common.continue}
                 </Button>
               </div>
             </>

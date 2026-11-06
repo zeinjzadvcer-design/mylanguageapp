@@ -137,6 +137,13 @@ export async function activateSubscription(
         status: "active",
         startedAt,
         expiresAt,
+        // The quota period's anchor, set once here.
+        //
+        // getEntitlement falls back to `startedAt` when this is null, so the
+        // allowance works either way — but only while they agree. A renewal
+        // will set `startedAt` again, and without its own anchor the monthly
+        // allowance would silently reset at that moment.
+        periodStartedAt: startedAt,
         supersedesId: previous?.id ?? null,
       })
       .where(eq(studentSubscriptionsTable.id, subscription.id));

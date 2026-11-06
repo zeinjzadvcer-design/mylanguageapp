@@ -31,6 +31,7 @@ import {
   levelProgressionsTable,
 } from "@workspace/db";
 import { publishedLessonFilter } from "./learning";
+import { getEntitlement, lessonTrackFilter } from "./entitlements";
 
 /** The transaction handle drizzle hands to a `db.transaction` callback. */
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -302,11 +303,14 @@ export async function getEvaluationEligibility(
     .limit(1);
 
   // Counted from published lessons only — an unpublished draft must not hold a
-  // student back from an evaluation they have otherwise earned.
+  // student back from an evaluation they have otherwise earned. Likewise only
+  // the student's own track: the other track's lessons cannot be opened, so
+  // counting them would hold the evaluation shut for good.
+  const trackFilter = lessonTrackFilter(await getEntitlement(userId));
   const lessons = await db
     .select({ id: lessonsTable.id })
     .from(lessonsTable)
-    .where(and(eq(lessonsTable.levelId, levelId), publishedLessonFilter()));
+    .where(and(eq(lessonsTable.levelId, levelId), trackFilter, publishedLessonFilter()));
 
   let lessonsPassed = 0;
   if (lessons.length > 0) {
@@ -525,7 +529,14 @@ export async function getLevelRemediation(
       order: lessonsTable.order,
     })
     .from(lessonsTable)
-    .where(and(eq(lessonsTable.levelId, levelId), publishedLessonFilter()))
+    // Only lessons the student can open are worth recommending.
+    .where(
+      and(
+        eq(lessonsTable.levelId, levelId),
+        lessonTrackFilter(await getEntitlement(userId)),
+        publishedLessonFilter(),
+      ),
+    )
     .orderBy(asc(lessonsTable.order));
 
   if (lessons.length === 0) return [];

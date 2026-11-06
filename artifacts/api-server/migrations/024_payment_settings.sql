@@ -58,8 +58,21 @@ CREATE TABLE IF NOT EXISTS payment_settings (
 COMMENT ON TABLE payment_settings IS
   'Singleton. The ShamCash receive details students see. Admin-editable because a human reviews every ShamCash receipt — unlike the crypto wallet address, which is verified without a human and therefore lives in env.';
 
-COMMENT ON COLUMN payment_settings.sham_cash_qr_media_id IS
-  'Admin-uploaded receive QR, purpose payment_qr. Owned by nobody so every student can see it.';
+-- Guarded. These migrations re-run on every start, and migration 025 renamed
+-- this column to wallet_qr_media_id; the Drizzle push also creates the table
+-- with the new names on a fresh database before any SQL here runs. An
+-- unguarded COMMENT on the old name therefore failed on every run after 025,
+-- and on every brand-new deployment, taking the whole migration with it.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'payment_settings' AND column_name = 'sham_cash_qr_media_id'
+  ) THEN
+    COMMENT ON COLUMN payment_settings.sham_cash_qr_media_id IS
+      'Admin-uploaded receive QR, purpose payment_qr. Owned by nobody so every student can see it.';
+  END IF;
+END $$;
 
 -- Seed the row so the settings endpoint always has something to read and an
 -- admin never has to create it. Empty until configured.

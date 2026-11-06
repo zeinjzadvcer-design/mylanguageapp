@@ -307,6 +307,16 @@ services:
         type: SECRET
         value: SET-ME
 
+      # ── Syrian pound rate ───────────────────────────────────────────────────
+      # Only used when an admin turns on automatic SYP pricing; the payment
+      # settings screen says when no key is configured, and manual prices are
+      # used until one is. Free key: api-v2.sp-today.com/api-dashboard/signup.
+      # Delete this entry if automatic pricing will not be used.
+      - key: SPTODAY_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: SET-ME
+
 static_sites:
   - name: web
     source_dir: /

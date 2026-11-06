@@ -204,11 +204,8 @@ services:
       MAIL_API_KEY: ${MAIL_API_KEY:-}
       MAIL_TIMEOUT_MS: ${MAIL_TIMEOUT_MS:-10000}
 
-      # USDT (BEP-20) payments. Off unless the root .env switches them on —
-      # see .env.example for what each value does and why the wallet address
-      # is deploy configuration rather than an admin setting.
-      CRYPTO_PAYMENTS_ENABLED: ${CRYPTO_PAYMENTS_ENABLED:-false}
-      BSC_USDT_WALLET_ADDRESS: ${BSC_USDT_WALLET_ADDRESS:-}
+      # USDT (BEP-20): how the chain is read. The receiving address and QR are
+      # admin settings, and crypto is offered once either is set there.
       BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed.binance.org}
       BSC_RPC_URL_FALLBACK: ${BSC_RPC_URL_FALLBACK:-https://bsc-dataseed1.defibit.io}
       BSC_CONFIRMATIONS: ${BSC_CONFIRMATIONS:-15}
@@ -216,6 +213,12 @@ services:
       CRYPTO_TXID_MAX_AGE_DAYS: ${CRYPTO_TXID_MAX_AGE_DAYS:-7}
       CRYPTO_VERIFY_INTERVAL_MS: ${CRYPTO_VERIFY_INTERVAL_MS:-60000}
       CRYPTO_VERIFY_MAX_ATTEMPTS: ${CRYPTO_VERIFY_MAX_ATTEMPTS:-8}
+
+      # Automatic Syrian pound pricing (SP Today / الليرة اليوم). Only read when
+      # an admin turns automatic pricing on; unset, manual prices are used.
+      SPTODAY_API_KEY: ${SPTODAY_API_KEY:-}
+      SPTODAY_CITY: ${SPTODAY_CITY:-damascus}
+      SYP_RATE_REFRESH_MS: ${SYP_RATE_REFRESH_MS:-43200000}
     ports:
       - '8080:8080'
     depends_on:

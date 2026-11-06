@@ -94,6 +94,12 @@ export interface ChainCheck {
 export async function checkTransaction(
   txHash: string,
   amountExpected: number,
+  /**
+   * The address that must have received the transfer — the one snapshotted on
+   * the submission, not the current setting, so an admin changing the address
+   * cannot re-point a payment that is already being checked.
+   */
+  walletAddress: string,
 ): Promise<ChainCheck> {
   const config = cryptoConfig();
 
@@ -115,7 +121,7 @@ export async function checkTransaction(
     const result = verifyTransfer({
       receipt,
       currentBlock,
-      walletAddress: config.walletAddress,
+      walletAddress,
       amountExpected,
       confirmations: config.confirmations,
       amountTolerance: config.amountTolerance,
@@ -154,11 +160,35 @@ export async function verifySubmission(submissionId: number): Promise<void> {
 
   if (!submission || !submission.txHash) return;
 
+  // Paid against a QR with no address configured. There is nothing to compare
+  // the recipient against, so the chain cannot confirm this payment was ours —
+  // it goes to an admin, who can see the transaction and decide.
+  if (!submission.expectedWalletAddress) {
+    if (submission.status === "verifying") {
+      await db
+        .update(paymentSubmissionsTable)
+        .set({
+          status: "pending",
+          verificationLog: {
+            lastOutcome: "no_wallet_address",
+            needsReview: true,
+            note: "No receiving address was configured when this was submitted, so it cannot be verified on chain. Check the transaction by hand.",
+          },
+        })
+        .where(eq(paymentSubmissionsTable.id, submissionId));
+    }
+    return;
+  }
+
   // Already decided — by an admin, or by an earlier run of this job.
   if (submission.status === "approved" || submission.status === "rejected") return;
 
   const amountExpected = Number(submission.amountExpected);
-  const check = await checkTransaction(submission.txHash, amountExpected);
+  const check = await checkTransaction(
+    submission.txHash,
+    amountExpected,
+    submission.expectedWalletAddress,
+  );
 
   const previousLog = (submission.verificationLog ?? {}) as Record<string, unknown>;
   const attempts = Number(previousLog.attempts ?? 0) + 1;
@@ -273,7 +303,6 @@ export async function verifySubmission(submissionId: number): Promise<void> {
  * later with no further request to trigger a re-check.
  */
 export async function sweepPendingVerifications(): Promise<number> {
-  if (!cryptoConfig().enabled) return 0;
 
   const rows = await db
     .select({ id: paymentSubmissionsTable.id })

@@ -832,8 +832,10 @@ export type SubscriptionPlanCode = typeof SubscriptionPlanCode[keyof typeof Subs
 
 export const SubscriptionPlanCode = {
   free: 'free',
-  general_english: 'general_english',
-  professional_english: 'professional_english',
+  general_basic: 'general_basic',
+  general_plus: 'general_plus',
+  pro_basic: 'pro_basic',
+  pro_plus: 'pro_plus',
 } as const;
 
 export type SubscriptionPlanBillingCycle = typeof SubscriptionPlanBillingCycle[keyof typeof SubscriptionPlanBillingCycle];
@@ -842,6 +844,17 @@ export type SubscriptionPlanBillingCycle = typeof SubscriptionPlanBillingCycle[k
 export const SubscriptionPlanBillingCycle = {
   monthly: 'monthly',
   yearly: 'yearly',
+} as const;
+
+/**
+ * lifetime counts over the whole account history (the free trial: one lesson, ever); monthly resets from the subscription start date.
+ */
+export type SubscriptionPlanQuotaPeriod = typeof SubscriptionPlanQuotaPeriod[keyof typeof SubscriptionPlanQuotaPeriod];
+
+
+export const SubscriptionPlanQuotaPeriod = {
+  lifetime: 'lifetime',
+  monthly: 'monthly',
 } as const;
 
 export interface SubscriptionPlan {
@@ -862,25 +875,44 @@ export interface SubscriptionPlan {
   /** Which content track this plan unlocks, matched for equality against a lesson's lessonType. The tracks are mutually exclusive, not nested: a general subscriber does not see professional lessons. */
   lessonTrack?: string;
   /**
-     * How many distinct lessons a subscriber may start. Null means unlimited. 1 on the free plan — the single trial lesson after the placement test.
+     * Lessons startable per quota period; null means unlimited. The period is `quotaPeriod`, so this covers both the free trial's one lesson ever and a paid tier's monthly allowance.
      * @nullable
      */
-  freeLessonQuota?: number | null;
+  lessonsPerMonth?: number | null;
+  /**
+     * Peer calls startable per quota period; null means unlimited. Separate from the deployment-wide daily call cap, which is abuse control applied to everyone.
+     * @nullable
+     */
+  callsPerMonth?: number | null;
+  /** lifetime counts over the whole account history (the free trial: one lesson, ever); monthly resets from the subscription start date. */
+  quotaPeriod?: SubscriptionPlanQuotaPeriod;
+  /**
+     * The admin's own SYP figure, whatever the pricing mode. Edited on the admin screen; students see `priceSyp`.
+     * @nullable
+     */
+  priceSypManual?: string | null;
+  /**
+     * The SYP price charged: computed from the fetched rate when automatic pricing is on, the admin's figure otherwise. Null means the wallet cannot sell this plan. A string because it is a SQL numeric — money parsed as a float loses precision. Deliberately not derived from priceUsd: official and parallel exchange rates differ by roughly 18%.
+     * @nullable
+     */
+  priceSyp?: string | null;
 }
 
 export type SubscriptionInputPlanCode = typeof SubscriptionInputPlanCode[keyof typeof SubscriptionInputPlanCode];
 
 
 export const SubscriptionInputPlanCode = {
-  general_english: 'general_english',
-  professional_english: 'professional_english',
+  general_basic: 'general_basic',
+  general_plus: 'general_plus',
+  pro_basic: 'pro_basic',
+  pro_plus: 'pro_plus',
 } as const;
 
 export type SubscriptionInputPaymentMethod = typeof SubscriptionInputPaymentMethod[keyof typeof SubscriptionInputPaymentMethod];
 
 
 export const SubscriptionInputPaymentMethod = {
-  sham_cash: 'sham_cash',
+  syriatel_cash: 'syriatel_cash',
   crypto_usdt_bep20: 'crypto_usdt_bep20',
 } as const;
 
@@ -890,9 +922,11 @@ export interface SubscriptionInput {
 }
 
 /**
- * The ShamCash receive details an admin has configured.
+ * The local wallet's receive details, uploaded by an admin. The student scans the QR or types the account code to pay.
  */
-export interface ShamCashDetails {
+export interface WalletDetails {
+  /** Which wallet these details belong to, for the label shown. */
+  provider?: string;
   /**
      * Signed URL for the receive QR, null when none is uploaded.
      * @nullable
@@ -900,7 +934,10 @@ export interface ShamCashDetails {
   qrUrl?: string | null;
   /** @nullable */
   accountName?: string | null;
-  /** @nullable */
+  /**
+     * The account code, shown beside the QR so a student whose app cannot scan can type it, and so anyone can confirm the account first.
+     * @nullable
+     */
   accountNumber?: string | null;
   /** @nullable */
   instructionsAr?: string | null;
@@ -909,15 +946,22 @@ export interface ShamCashDetails {
 }
 
 /**
- * Where to send USDT, and on which network.
+ * Where to send USDT, and on which network. `configured` is false until an admin sets an address or a QR; the method is not offered until then.
  */
 export interface CryptoPaymentDetails {
   configured?: boolean;
   /**
-     * Read-only. Set by deploy configuration and never writable from the app: it is the trust anchor of the automated path, since payments to it activate a subscription with no human review.
+     * The BEP-20 receiving address an admin set, or null when only a QR was uploaded.
      * @nullable
      */
   walletAddress?: string | null;
+  /**
+     * Signed URL for the receiving QR, if one was uploaded.
+     * @nullable
+     */
+  qrUrl?: string | null;
+  /** Whether payments are confirmed on chain. Needs an address to check the recipient against; with only a QR, an admin reviews each one. */
+  autoVerify?: boolean;
   network?: string;
   /** Shown prominently. A student who sends TRC-20 or ERC-20 USDT to this 0x address loses the money permanently. */
   networkLabel?: string;
@@ -928,6 +972,21 @@ export interface CryptoSubmissionInput {
   subscriptionId: number;
   /** A 0x-prefixed 64-hex-character BNB Smart Chain transaction hash. */
   txHash: string;
+}
+
+export interface WalletSubmissionInput {
+  subscriptionId: number;
+  /**
+     * رقم العملية from the payer's own confirmation SMS. A bearer secret: Syriatel sends it only to the payer and the merchant, which is what lets the claim be believed. One number buys one subscription, ever.
+     * @pattern ^\d{4,24}$
+     */
+  operationNumber: string;
+  /** What the student says they transferred, in Syrian pounds. */
+  amountSyp: number;
+  /** @maxLength 2000 */
+  studentNote?: string;
+  /** Optional screenshot, if the student took one. */
+  receiptMediaId?: number;
 }
 
 export interface PaymentSubmissionInput {
@@ -942,7 +1001,7 @@ export type PaymentSubmissionMethod = typeof PaymentSubmissionMethod[keyof typeo
 
 
 export const PaymentSubmissionMethod = {
-  sham_cash: 'sham_cash',
+  syriatel_cash: 'syriatel_cash',
   crypto_usdt_bep20: 'crypto_usdt_bep20',
 } as const;
 
@@ -1002,6 +1061,11 @@ export interface StudentSubscription {
   expiresAt?: string | null;
   /** @nullable */
   paymentMethod?: string | null;
+  /**
+     * The SYP price quoted when this subscription was opened — what the payment step shows and what the payment is checked against, so a rate refresh mid-payment does not fail a correct transfer.
+     * @nullable
+     */
+  priceSyp?: string | null;
   /** @nullable */
   paymentNote?: string | null;
 }
@@ -1055,7 +1119,7 @@ export type AdminPaymentSubmissionMethod = typeof AdminPaymentSubmissionMethod[k
 
 
 export const AdminPaymentSubmissionMethod = {
-  sham_cash: 'sham_cash',
+  syriatel_cash: 'syriatel_cash',
   crypto_usdt_bep20: 'crypto_usdt_bep20',
 } as const;
 
@@ -1076,10 +1140,23 @@ export interface AdminPaymentSubmission {
   studentName?: string;
   studentEmail?: string;
   planCode?: string;
+  planName?: string;
   planNameAr?: string;
   method?: AdminPaymentSubmissionMethod;
   status?: AdminPaymentSubmissionStatus;
   amountExpected?: string;
+  /** @nullable */
+  amountExpectedSyp?: string | null;
+  /**
+     * What the student said they transferred, in Syrian pounds.
+     * @nullable
+     */
+  amountClaimedSyp?: string | null;
+  /**
+     * رقم العملية for a local-wallet payment.
+     * @nullable
+     */
+  operationNumber?: string | null;
   /**
      * Short-lived signed URL for the receipt image.
      * @nullable
@@ -1102,28 +1179,99 @@ export interface AdminPaymentSubmission {
   reviewedAt?: string | null;
 }
 
+/**
+ * Which Syrian pound prices are in. 100 old = 1 new.
+ */
+export type PaymentSettingsSypUnit = typeof PaymentSettingsSypUnit[keyof typeof PaymentSettingsSypUnit];
+
+
+export const PaymentSettingsSypUnit = {
+  new: 'new',
+  old: 'old',
+} as const;
+
 export interface PaymentSettings {
+  walletProvider?: string;
   /** @nullable */
-  shamCashQrMediaId?: number | null;
+  walletQrMediaId?: number | null;
   /** @nullable */
-  shamCashAccountName?: string | null;
+  walletAccountName?: string | null;
   /** @nullable */
-  shamCashAccountNumber?: string | null;
+  walletAccountNumber?: string | null;
   /** @nullable */
-  shamCashInstructionsAr?: string | null;
+  walletInstructionsAr?: string | null;
+  /**
+     * The handset that receives the confirmation SMS, so an admin can see where the companion app belongs. The server never sends to it.
+     * @nullable
+     */
+  walletMerchantPhone?: string | null;
+  /** Whether a companion-app token exists. The token itself is never returned — it is shown once when generated. */
+  hasIngestToken?: boolean;
+  /** @nullable */
+  cryptoWalletAddress?: string | null;
+  /** @nullable */
+  cryptoQrMediaId?: number | null;
+  /** @nullable */
+  cryptoUpdatedAt?: string | null;
+  /**
+     * Who last changed the crypto details. Shown because the address decides where money goes and nothing reviews a crypto payment.
+     * @nullable
+     */
+  cryptoUpdatedByName?: string | null;
+  sypRateAuto?: boolean;
+  /** Which Syrian pound prices are in. 100 old = 1 new. */
+  sypUnit?: PaymentSettingsSypUnit;
+  /**
+     * SYP per USD in sypUnit, as last fetched.
+     * @nullable
+     */
+  sypRate?: string | null;
+  /** @nullable */
+  sypRateFetchedAt?: string | null;
+  /** @nullable */
+  sypRateSourceUpdatedAt?: string | null;
+  /**
+     * The last fetch failure, cleared on success.
+     * @nullable
+     */
+  sypRateError?: string | null;
+  /** Whether an SP Today API key is set. The key is never returned. */
+  sptodayConfigured?: boolean;
   /** @nullable */
   updatedAt?: string | null;
 }
 
+export type PaymentSettingsUpdateSypUnit = typeof PaymentSettingsUpdateSypUnit[keyof typeof PaymentSettingsUpdateSypUnit];
+
+
+export const PaymentSettingsUpdateSypUnit = {
+  new: 'new',
+  old: 'old',
+} as const;
+
 export interface PaymentSettingsUpdate {
   /** @nullable */
-  shamCashQrMediaId?: number | null;
+  walletQrMediaId?: number | null;
   /** @nullable */
-  shamCashAccountName?: string | null;
+  walletAccountName?: string | null;
   /** @nullable */
-  shamCashAccountNumber?: string | null;
+  walletAccountNumber?: string | null;
   /** @nullable */
-  shamCashInstructionsAr?: string | null;
+  walletInstructionsAr?: string | null;
+  /** @nullable */
+  walletMerchantPhone?: string | null;
+  /**
+     * BEP-20 address (0x + 40 hex). A TRON address is refused. Null removes it.
+     * @nullable
+     */
+  cryptoWalletAddress?: string | null;
+  /**
+     * A completed payment_qr upload. Null removes it.
+     * @nullable
+     */
+  cryptoQrMediaId?: number | null;
+  sypRateAuto?: boolean;
+  sypUnit?: PaymentSettingsUpdateSypUnit;
 }
 
 export interface AdminStats {
@@ -2289,7 +2437,7 @@ levelId?: number;
 };
 
 export type GetPaymentDetails200 = {
-  shamCash?: ShamCashDetails;
+  wallet?: WalletDetails;
   crypto?: CryptoPaymentDetails;
 };
 
@@ -2341,6 +2489,26 @@ export type RejectPaymentSubmissionBody = {
 
 export type RejectPaymentSubmission200 = {
   ok?: boolean;
+};
+
+export type UpdatePlanPriceBody = {
+  priceUsd?: number;
+  /**
+     * Null withdraws the plan from the local wallet. Set by an admin rather than converted, because the official and parallel exchange rates differ materially.
+     * @nullable
+     */
+  priceSyp?: number | null;
+};
+
+export type UpdatePlanPrice200 = {
+  code?: string;
+  priceUsd?: number;
+  /** @nullable */
+  priceSyp?: string | null;
+};
+
+export type RotateIngestToken200 = {
+  token?: string;
 };
 
 export type BeginPaymentQrUploadBody = {

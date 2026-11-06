@@ -109,7 +109,7 @@ router.put("/practice/profile", requireAuth, async (req, res): Promise<void> => 
 
 router.post("/practice/queue", requireAuth, async (req, res): Promise<void> => {
   try {
-    res.status(201).json(await joinQueue(req.session.userId!));
+    res.status(201).json(await joinQueue(req.session.userId!, req.session.role));
   } catch (err) {
     handleError(err, res);
   }

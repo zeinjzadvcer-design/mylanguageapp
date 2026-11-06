@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { getStudentCurriculumContext, publishedLessonFilter } from "../services/learning";
+import { DENIAL_MESSAGES, getEntitlement, isLessonInTrack } from "../services/entitlements";
 
 const router: IRouter = Router();
 
@@ -92,6 +93,14 @@ router.post("/exercises/:exerciseId/submit", requireAuth, async (req, res): Prom
         res.status(403).json({ error: "You do not have access to this exercise" });
         return;
       }
+    }
+
+    // Same plan gate as the lesson itself: grading an exercise from the other
+    // track would reveal its answers to a student who cannot open the lesson.
+    const entitlement = await getEntitlement(userId, role);
+    if (!isLessonInTrack(entitlement, lesson.track)) {
+      res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
+      return;
     }
   }
 

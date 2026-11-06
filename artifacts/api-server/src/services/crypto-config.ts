@@ -1,22 +1,14 @@
 /**
  * USDT (BEP-20) payment configuration.
  *
- * WHY THE WALLET ADDRESS IS ENV AND NOT ADMIN-EDITABLE
- * ────────────────────────────────────────────────────
- * This address is the trust anchor of the automated path. A payment to it is
- * verified on-chain and activates a subscription with no human in the loop, so
- * anyone who could change it would have every subsequent payment confirmed
- * into their own wallet — and nothing would look broken. The verifier would
- * keep reporting success, because the transfers really did arrive at the
- * configured address. It would surface at reconciliation, days later, with the
- * money gone.
- *
- * The ShamCash QR is admin-editable precisely because that path has a human
- * reading every receipt, who would notice an unfamiliar account name. Here
- * there is no such review, so changing the address requires deploy access.
- *
- * The admin UI may DISPLAY this value read-only — an admin needs to confirm
- * what students are being shown — but nothing writes it.
+ * Only how the chain is READ lives here. The receiving address used to as well,
+ * as deploy configuration, on the reasoning that nothing reviews a crypto
+ * payment — so anyone able to change the address could have every later payment
+ * confirmed into their own wallet. It is now admin-editable (migration 027),
+ * by decision, and three things narrow that exposure instead: changes are
+ * attributed and shown on the admin screen, the address is validated on save,
+ * and each submission snapshots the address it is checked against so a change
+ * cannot redirect a payment already in flight.
  */
 
 import { logger } from "../lib/logger";
@@ -51,9 +43,7 @@ export const BSC_CHAIN_ID = 56;
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 export interface CryptoConfig {
-  enabled: boolean;
-  /** Lowercased. EVM addresses are case-insensitive bar the EIP-55 checksum. */
-  walletAddress: string;
+  /** RPC endpoints, primary first. Defaults to BNB Chain's public nodes. */
   rpcUrls: string[];
   confirmations: number;
   /** Fractional tolerance on the expected amount, e.g. 0.02 for 2%. */
@@ -63,46 +53,24 @@ export interface CryptoConfig {
 }
 
 /**
- * Read and validate the configuration.
+ * Read and validate the chain-reading configuration.
  *
- * Throws rather than returning a broken config when crypto is switched on but
- * misconfigured. A malformed address that merely fails every comparison would
- * reject legitimate payments silently; failing at boot is louder and cheaper.
+ * The receiving address is no longer here. It moved to payment_settings so an
+ * admin can set it (migration 027); whether crypto is offered at all now
+ * follows from whether an address or a QR is set there, not from an env flag.
+ * What stays in env is how the chain is read, which has safe defaults.
+ *
+ * Throws on a malformed value rather than running with it: a confirmation
+ * count of zero would credit transfers a reorg can still undo.
  */
 export function loadCryptoConfig(env: NodeJS.ProcessEnv = process.env): CryptoConfig {
-  const enabled = env.CRYPTO_PAYMENTS_ENABLED === "true";
-
-  const rawAddress = (env.BSC_USDT_WALLET_ADDRESS ?? "").trim();
-
-  if (!enabled) {
-    return {
-      enabled: false,
-      walletAddress: rawAddress.toLowerCase(),
-      rpcUrls: [],
-      confirmations: 0,
-      amountTolerance: 0,
-      maxAgeDays: 0,
-    };
-  }
-
-  if (!ADDRESS_RE.test(rawAddress)) {
-    throw new Error(
-      "BSC_USDT_WALLET_ADDRESS must be a 0x-prefixed 40-hex-character address " +
-        "when CRYPTO_PAYMENTS_ENABLED=true. Refusing to start: an unset or " +
-        "malformed address would reject every legitimate payment.",
-    );
-  }
-
   // Public endpoints are flaky; a fallback is configuration, not luxury.
-  const rpcUrls = [env.BSC_RPC_URL, env.BSC_RPC_URL_FALLBACK]
-    .map((u) => (u ?? "").trim())
+  const rpcUrls = [
+    env.BSC_RPC_URL || "https://bsc-dataseed.binance.org",
+    env.BSC_RPC_URL_FALLBACK || "https://bsc-dataseed1.defibit.io",
+  ]
+    .map((u) => u.trim())
     .filter((u) => u.length > 0);
-
-  if (rpcUrls.length === 0) {
-    throw new Error(
-      "BSC_RPC_URL must be set when CRYPTO_PAYMENTS_ENABLED=true.",
-    );
-  }
 
   const confirmations = parseInt(env.BSC_CONFIRMATIONS ?? "15", 10);
   const tolerancePct = parseFloat(env.CRYPTO_AMOUNT_TOLERANCE_PCT ?? "2");
@@ -119,15 +87,32 @@ export function loadCryptoConfig(env: NodeJS.ProcessEnv = process.env): CryptoCo
   }
 
   return {
-    enabled: true,
-    // Lowercased once, here. A log topic arrives lowercased and an env value
-    // may be EIP-55 checksummed; comparing them raw would never match.
-    walletAddress: rawAddress.toLowerCase(),
     rpcUrls,
     confirmations,
     amountTolerance: tolerancePct / 100,
     maxAgeDays,
   };
+}
+
+export type AddressCheck =
+  | { ok: true; address: string }
+  | { ok: false; error: "tron_address" | "malformed" };
+
+/**
+ * Validate and normalise a receiving address an admin typed.
+ *
+ * Lowercased once, here: log topics arrive lowercased and a pasted address may
+ * be EIP-55 checksummed, so comparing them raw would never match.
+ *
+ * A TRON address gets its own refusal. It is the likeliest wrong paste — USDT
+ * is most often held on TRC-20 — and a T… address saved here would make every
+ * BEP-20 payment fail verification while looking entirely plausible.
+ */
+export function checkWalletAddress(raw: string): AddressCheck {
+  const trimmed = raw.trim();
+  if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(trimmed)) return { ok: false, error: "tron_address" };
+  if (!ADDRESS_RE.test(trimmed)) return { ok: false, error: "malformed" };
+  return { ok: true, address: trimmed.toLowerCase() };
 }
 
 let cached: CryptoConfig | null = null;
@@ -136,18 +121,10 @@ let cached: CryptoConfig | null = null;
 export function cryptoConfig(): CryptoConfig {
   if (!cached) {
     cached = loadCryptoConfig();
-    if (cached.enabled) {
-      logger.info(
-        {
-          wallet: cached.walletAddress,
-          rpcCount: cached.rpcUrls.length,
-          confirmations: cached.confirmations,
-        },
-        "USDT (BEP-20) payments enabled",
-      );
-    } else {
-      logger.info("USDT (BEP-20) payments disabled");
-    }
+    logger.info(
+      { rpcCount: cached.rpcUrls.length, confirmations: cached.confirmations },
+      "USDT (BEP-20) chain reader configured",
+    );
   }
   return cached;
 }
