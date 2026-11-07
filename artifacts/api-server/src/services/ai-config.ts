@@ -29,6 +29,7 @@ import {
   type AITask,
   pool,
 } from "@workspace/db";
+import { DEFAULT_TASK_PROMPTS } from "./ai-prompts";
 import { logger } from "../lib/logger";
 
 // ─── Encryption ───────────────────────────────────────────────────────────────
@@ -132,6 +133,11 @@ export interface ResolvedTaskConfig {
    * null on a speech provider whose price has not been entered.
    */
   pricePerMinute: number | null;
+  /**
+   * The administrator's instructions for this task, or null for the default.
+   * Read through `taskInstructions` in ai-prompts.ts, never used raw.
+   */
+  systemPrompt: string | null;
 }
 
 /**
@@ -263,6 +269,7 @@ export async function resolveTaskConfig(task: AITask): Promise<ResolvedTaskConfi
     inputPricePerMtok: row.provider.inputPricePerMtok,
     outputPricePerMtok: row.provider.outputPricePerMtok,
     pricePerMinute: row.provider.pricePerMinute,
+    systemPrompt: row.taskSettings.systemPrompt,
   };
 }
 
@@ -401,6 +408,8 @@ export async function getAdminConfig() {
     tasks,
     policies,
     availableTasks: AI_TASKS,
+    // Shown in the panel as the starting text, and what "Reset" returns to.
+    defaultPrompts: DEFAULT_TASK_PROMPTS,
   };
 }
 
