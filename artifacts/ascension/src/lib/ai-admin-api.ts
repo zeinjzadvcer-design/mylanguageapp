@@ -55,7 +55,8 @@ export type AITask =
   | "conversation"
   | "feedback"
   | "weakness_analysis"
-  | "transcription";
+  | "transcription"
+  | "peer_call_analysis";
 
 export interface AiProvider {
   id: number;
@@ -85,6 +86,8 @@ export interface AiTaskSettings {
   temperature: number;
   maxTokens: number;
   enabled: boolean;
+  /** Edited instructions, or null when the task uses its default. */
+  systemPrompt: string | null;
 }
 
 export interface AiPlanPolicy {
@@ -105,6 +108,8 @@ export interface AiConfig {
   tasks: AiTaskSettings[];
   policies: AiPlanPolicy[];
   availableTasks: AITask[];
+  /** Default instructions, for the tasks whose prompt can be edited. */
+  defaultPrompts: Partial<Record<AITask, string>>;
 }
 
 export interface ModelInfo {
@@ -201,7 +206,9 @@ export const testProvider = (id: number, modelId: string) =>
 
 export const updateTask = (
   task: AITask,
-  patch: Partial<Pick<AiTaskSettings, "providerId" | "modelId" | "temperature" | "maxTokens" | "enabled">>,
+  patch: Partial<
+    Pick<AiTaskSettings, "providerId" | "modelId" | "temperature" | "maxTokens" | "enabled" | "systemPrompt">
+  >,
 ) => request<AiTaskSettings>("PATCH", `/admin/ai/tasks/${task}`, patch);
 
 export const setPolicy = (planCode: string, task: AITask, dailyLimit: number) =>

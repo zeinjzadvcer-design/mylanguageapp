@@ -37,6 +37,7 @@ import type { TranscriptUtterance } from "../ai-providers";
 import { checkAndIncrement, recordUsage, refundQuota } from "../ai-quota";
 import { storage } from "../storage";
 import { logger } from "../../lib/logger";
+import { taskInstructions } from "../ai-prompts";
 import { GradingUnavailableError, type GradingContext } from "./open-answer";
 
 const ASR_TASK = "transcription" as const;
@@ -96,22 +97,13 @@ export interface PeerCallVerdict {
 
 // ─── Prompt ───────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are an English teacher reviewing a recorded practice conversation between two English learners whose first language is Arabic.
-
-You are given a diarized transcript. Speaker labels (A, B) identify turns, not names. You do not know who either person is, and you must not guess or invent names.
-
-Write feedback FOR EACH SPEAKER SEPARATELY, addressed to that speaker as "you".
-
-Rules:
-- Base every comment on something actually said in the transcript. Quote or paraphrase it. Never invent an error.
-- Name at most three things per speaker. A learner cannot act on ten.
-- Lead with what they did well, then what to change. Both must be specific.
-- Judge communication, not accent. These are learners talking to each other, and the recording is of a real conversation rather than a reading test.
-- Transcription errors exist. If something looks like a mis-transcription rather than a learner error, ignore it.
-- Never compare the two speakers to each other, and never tell one speaker anything about the other's level or mistakes.
-- Arabic feedback must be natural Arabic written for the learner, not a literal translation of the English.
-
-Reply with ONLY a JSON object:
+/**
+ * The reply shape `parseAnalysis` reads. Fixed in code and appended after the
+ * instructions on every call: the instructions are editable from the admin
+ * panel (default in ai-prompts.ts), and an edit that lost this block would fail
+ * every analysis instead of changing its tone.
+ */
+const RESPONSE_FORMAT = `Reply with ONLY a JSON object:
 {
   "speakers": [
     { "speaker": "A", "feedback": "<English, 2-4 sentences>", "feedbackAr": "<Arabic, 2-4 sentences>" }
@@ -119,6 +111,11 @@ Reply with ONLY a JSON object:
   "summary": "<English, 1-2 sentences about the conversation as a whole: topic, how it flowed. No per-person judgement.>",
   "summaryAr": "<the same in Arabic>"
 }`;
+
+/** Identical to the original prompt when no override is stored. */
+function systemPrompt(stored: string | null): string {
+  return `${taskInstructions(ANALYSIS_TASK, stored)}\n\n${RESPONSE_FORMAT}`;
+}
 
 function renderTranscript(utterances: TranscriptUtterance[]): string {
   const lines = utterances.map((u) => {
@@ -403,7 +400,7 @@ export async function analysePeerCall(
     const result = await chatJson(
       analysisConfig,
       [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt(analysisConfig.systemPrompt) },
         {
           role: "user",
           content: `Speakers in this transcript: ${speakers.join(", ")}.\n\nTranscript:\n${renderTranscript(utterances)}`,

@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -57,6 +58,7 @@ const TASK_HELP: Record<AITask, string> = {
   feedback: "Writes the short Arabic advice sentence from scores already computed.",
   weakness_analysis: "Finds patterns across lessons and recommends existing material.",
   transcription: "Speech to text. Needs a provider with the speech role.",
+  peer_call_analysis: "Writes each student's feedback on a recorded practice call.",
 };
 
 const PLAN_CODES = ["free", "general_english", "professional_english", "admin"];
@@ -235,6 +237,7 @@ export default function AiSettings() {
             key={t.task}
             task={t}
             providers={t.task === "transcription" ? providers : chatProviders}
+            defaultPrompt={config.defaultPrompts?.[t.task]}
             busy={busy}
             onSave={(patch) => run(() => updateTask(t.task, patch), `${t.task} saved`)}
           />
@@ -848,11 +851,14 @@ function NewProviderCard({
 function TaskCard({
   task,
   providers,
+  defaultPrompt,
   busy,
   onSave,
 }: {
   task: AiTaskSettings;
   providers: AiProvider[];
+  /** Set only for tasks whose instructions may be edited. */
+  defaultPrompt?: string;
   busy: boolean;
   onSave: (patch: Partial<AiTaskSettings>) => void;
 }) {
@@ -1052,7 +1058,97 @@ function TaskCard({
             </span>
           )}
         </div>
+
+        {defaultPrompt !== undefined && (
+          <PromptEditor
+            stored={task.systemPrompt}
+            defaultPrompt={defaultPrompt}
+            busy={busy}
+            onSave={(systemPrompt) => onSave({ systemPrompt })}
+          />
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * The task's instructions to the model, editable.
+ *
+ * Starts from the default. Saving the default text unchanged, or resetting,
+ * stores nothing, so the task keeps following the default if the code improves
+ * it. The reply format the server parses is not shown: it is added on every call
+ * and cannot be edited, so no edit here can break the response.
+ */
+function PromptEditor({
+  stored,
+  defaultPrompt,
+  busy,
+  onSave,
+}: {
+  stored: string | null;
+  defaultPrompt: string;
+  busy: boolean;
+  onSave: (systemPrompt: string | null) => void;
+}) {
+  const current = stored ?? defaultPrompt;
+  const [text, setText] = useState(current);
+
+  // Follow the saved value when it changes underneath, e.g. after a reset.
+  useEffect(() => {
+    setText(current);
+  }, [current]);
+
+  const isCustom = stored !== null;
+  const dirty = text.trim() !== current.trim();
+
+  return (
+    <div className="space-y-2 border-t pt-4">
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs text-muted-foreground">Instructions to the model</Label>
+        <Badge variant={isCustom ? "default" : "secondary"}>{isCustom ? "Custom" : "Default"}</Badge>
+      </div>
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        disabled={busy}
+        rows={14}
+        maxLength={8000}
+        dir="ltr"
+        className="rounded-xl font-mono text-xs leading-relaxed"
+      />
+      <p className="text-xs text-muted-foreground">
+        The reply format (JSON) is added automatically and cannot be edited here. Changes apply to
+        the next evaluation, with no deploy.
+      </p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button
+          size="sm"
+          disabled={busy || !dirty || text.trim() === ""}
+          onClick={() => onSave(text)}
+          className="rounded-xl"
+        >
+          Save instructions
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy || !dirty}
+          onClick={() => setText(current)}
+          className="rounded-xl"
+        >
+          Discard changes
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy || !isCustom}
+          onClick={() => onSave(null)}
+          className="rounded-xl"
+        >
+          Reset to default
+        </Button>
+      </div>
+    </div>
   );
 }

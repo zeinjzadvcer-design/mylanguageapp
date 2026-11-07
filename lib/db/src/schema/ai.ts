@@ -134,6 +134,11 @@ export const aiTaskSettingsTable = pgTable("ai_task_settings", {
   temperature: real("temperature").notNull().default(0.2),
   maxTokens: integer("max_tokens").notNull().default(512),
   enabled: boolean("enabled").notNull().default(false),
+  /**
+   * Administrator-edited instructions. Null means the default in code
+   * (api-server services/ai-prompts.ts); only some tasks honour it.
+   */
+  systemPrompt: text("system_prompt"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()
