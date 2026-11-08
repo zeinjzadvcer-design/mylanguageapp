@@ -407,6 +407,20 @@ const forgotPasswordLimiter = rateLimit({
   message: { error: "Too many requests, please try again later" },
 });
 
+// Accounts created per address, successful ones included. authLimiter only
+// counts failures, so sign-ups were unlimited: each new account is another free
+// lesson and another held USDT amount, and enough of them leave real students
+// unable to pay. Generous, because a classroom shares one address.
+const registerLimiter = rateLimit({
+  windowMs: 3_600_000,
+  limit: parseInt(process.env.RATE_LIMIT_REGISTER ?? "20", 10),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  store: makeRedisStore("rl:register:"),
+  keyGenerator: (req) => clientIp(req),
+  message: { error: "Too many accounts created from this address, please try again later" },
+});
+
 app.use("/api", failOpen(apiLimiter));
 app.use(`/api${PRACTICE_POLL_PATH}`, failOpen(practicePollLimiter));
 // Signal reads are polled on the same timer, so they need the same per-user
@@ -420,7 +434,7 @@ app.use("/api/practice/sessions", (req, res, next) => {
   next();
 });
 app.use("/api/auth/login", failOpen(authLimiter), failOpen(loginAccountLimiter));
-app.use("/api/auth/register", failOpen(authLimiter));
+app.use("/api/auth/register", failOpen(authLimiter), failOpen(registerLimiter));
 // Reset endpoints are brute-force targets: one guesses tokens, the other can be
 // used to probe which addresses are registered, or to flood an inbox.
 app.use("/api/auth/forgot-password", failOpen(forgotPasswordLimiter));
