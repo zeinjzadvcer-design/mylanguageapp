@@ -70,6 +70,24 @@ export function unmeteredEntitlement(role: string): Entitlement {
 }
 
 /**
+ * Add calendar months, holding the day where the target month has it and
+ * clamping to that month's last day where it does not.
+ *
+ * `setMonth` alone overflows: 31 January + 1 month is 3 March, which gives
+ * extra paid days and moves the billing date.
+ */
+function addCalendarMonths(from: Date, months: number): Date {
+  const to = new Date(from.getTime());
+  const day = to.getUTCDate();
+  // Day 1 first, so setting the month cannot itself overflow.
+  to.setUTCDate(1);
+  to.setUTCMonth(to.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth() + 1, 0)).getUTCDate();
+  to.setUTCDate(Math.min(day, lastDay));
+  return to;
+}
+
+/**
  * Roll a period start forward until it covers `now`.
  *
  * A month at a time rather than jumping straight to the latest boundary: a
@@ -77,18 +95,17 @@ export function unmeteredEntitlement(role: string): Entitlement {
  * whole gap, and must not grant three either — it resumes on the current
  * period, having forfeited the unused ones.
  *
- * `setMonth` clamps 31 January + 1 month into early March the way the rest of
- * the billing arithmetic does; the anchor day drifting by a day or two at
- * month ends is immaterial to a monthly allowance.
+ * Each boundary is counted from the anchor, not from the previous boundary, so
+ * a subscription started on the 31st returns to the 31st after a short month
+ * rather than staying on the 28th for good.
  */
 export function currentPeriodStart(anchor: Date, now: Date = new Date()): Date {
-  const start = new Date(anchor.getTime());
+  let start = new Date(anchor.getTime());
   // Bounded: a corrupt far-past anchor must not spin here.
-  for (let i = 0; i < 600; i++) {
-    const next = new Date(start.getTime());
-    next.setMonth(next.getMonth() + 1);
+  for (let months = 1; months <= 600; months++) {
+    const next = addCalendarMonths(anchor, months);
     if (next > now) break;
-    start.setTime(next.getTime());
+    start = next;
   }
   return start;
 }
@@ -218,17 +235,11 @@ export const CALL_DENIAL_MESSAGES: Record<CallDenial, { error: string; errorAr: 
  * Add one billing cycle to a start date.
  *
  * Month arithmetic deliberately, not 30 days: a student who subscribes on the
- * 15th expects to be billed on the 15th. `setMonth` clamps 31 January + 1
- * month to 28/29 February rather than overflowing into March.
+ * 15th expects to be billed on the 15th. 31 January + 1 month is 28/29
+ * February, not early March.
  */
 export function addBillingCycle(from: Date, cycle: string): Date {
-  const to = new Date(from.getTime());
-  if (cycle === "yearly") {
-    to.setFullYear(to.getFullYear() + 1);
-  } else {
-    to.setMonth(to.getMonth() + 1);
-  }
-  return to;
+  return addCalendarMonths(from, cycle === "yearly" ? 12 : 1);
 }
 
 /**

@@ -46,8 +46,6 @@ export interface CryptoConfig {
   /** RPC endpoints, primary first. Defaults to BNB Chain's public nodes. */
   rpcUrls: string[];
   confirmations: number;
-  /** Fractional tolerance on the expected amount, e.g. 0.02 for 2%. */
-  amountTolerance: number;
   /** How old a transaction may be and still buy a subscription. */
   maxAgeDays: number;
 }
@@ -73,14 +71,10 @@ export function loadCryptoConfig(env: NodeJS.ProcessEnv = process.env): CryptoCo
     .filter((u) => u.length > 0);
 
   const confirmations = parseInt(env.BSC_CONFIRMATIONS ?? "15", 10);
-  const tolerancePct = parseFloat(env.CRYPTO_AMOUNT_TOLERANCE_PCT ?? "2");
   const maxAgeDays = parseInt(env.CRYPTO_TXID_MAX_AGE_DAYS ?? "7", 10);
 
   if (!Number.isFinite(confirmations) || confirmations < 1) {
     throw new Error("BSC_CONFIRMATIONS must be a positive integer.");
-  }
-  if (!Number.isFinite(tolerancePct) || tolerancePct < 0 || tolerancePct > 50) {
-    throw new Error("CRYPTO_AMOUNT_TOLERANCE_PCT must be between 0 and 50.");
   }
   if (!Number.isFinite(maxAgeDays) || maxAgeDays < 1) {
     throw new Error("CRYPTO_TXID_MAX_AGE_DAYS must be a positive integer.");
@@ -89,7 +83,6 @@ export function loadCryptoConfig(env: NodeJS.ProcessEnv = process.env): CryptoCo
   return {
     rpcUrls,
     confirmations,
-    amountTolerance: tolerancePct / 100,
     maxAgeDays,
   };
 }

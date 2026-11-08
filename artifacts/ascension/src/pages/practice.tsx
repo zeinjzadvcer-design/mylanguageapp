@@ -109,7 +109,7 @@ const FAST_POLL_WINDOW_MS = 3 * 60_000;
 
 export default function Practice() {
   const { toast } = useToast();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const pr = t.practice;
   const qc = useQueryClient();
 
@@ -519,10 +519,12 @@ export default function Practice() {
   const fail = useCallback(
     (err: unknown) => {
       const message =
-        err instanceof PracticeError ? err.message : pr.genericError;
+        err instanceof PracticeError
+          ? (lang === "ar" && err.messageAr) || err.message
+          : pr.genericError;
       toast({ title: pr.actionFailed, description: message, variant: "destructive" });
     },
-    [toast, pr],
+    [toast, pr, lang],
   );
 
   // ─── Actions ───────────────────────────────────────────────────────────────

@@ -36,6 +36,13 @@ interface Props {
 /** Matches the server's check, so an obvious typo is caught before a request. */
 const OPERATION_RE = /^\d{4,24}$/;
 
+/** The server normalises too; done here so the check above sees what is sent. */
+function toAsciiDigits(text: string): string {
+  return text
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+}
+
 export function WalletPayment({ subscriptionId, priceSyp, onSubmitted }: Props) {
   const { data: details, isLoading } = useGetPaymentDetails();
   const createSubmission = useCreateWalletSubmission();
@@ -80,7 +87,7 @@ export function WalletPayment({ subscriptionId, priceSyp, onSubmitted }: Props) 
     );
   }
 
-  const trimmed = operationNumber.trim();
+  const trimmed = toAsciiDigits(operationNumber.trim());
   const looksValid = OPERATION_RE.test(trimmed);
 
   const copyAccount = () => {

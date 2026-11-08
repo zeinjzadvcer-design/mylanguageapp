@@ -23,18 +23,19 @@ import { AlertTriangle, Copy, Info, Loader2 } from "lucide-react";
 
 interface Props {
   subscriptionId: number;
-  priceUsd: number;
+  /** Exact, tag included. The last digits are what identify this student. */
+  amountUsdt: string;
   onSubmitted: () => void;
 }
 
 /** Matches the server's check, so a mistyped hash is caught before a request. */
 const TX_HASH_RE = /^0x[a-fA-F0-9]{64}$/;
 
-export function CryptoPayment({ subscriptionId, priceUsd, onSubmitted }: Props) {
+export function CryptoPayment({ subscriptionId, amountUsdt, onSubmitted }: Props) {
   const { data: details, isLoading } = useGetPaymentDetails();
   const createSubmission = useCreateCryptoSubmission();
   const { toast } = useToast();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const pc = t.payment.crypto;
 
   const [txHash, setTxHash] = useState("");
@@ -74,21 +75,30 @@ export function CryptoPayment({ subscriptionId, priceUsd, onSubmitted }: Props) 
     createSubmission.mutate(
       { data: { subscriptionId, txHash: trimmed } },
       {
-        onSuccess: () => {
+        onSuccess: (created) => {
           toast({
             title: pc.receivedTitle,
-            description: crypto.autoVerify ? pc.receivedAuto : pc.receivedManual,
+            // From the response: a resubmission goes to the team even when
+            // automatic checking is available.
+            description: created.status === "verifying" ? pc.receivedAuto : pc.receivedManual,
           });
           onSubmitted();
         },
         onError: (err) => {
-          // 409 is the one worth naming: the hash already bought a
-          // subscription, which a generic message would leave mysterious.
-          const status = (err as { status?: number })?.status;
+          // 409 is the one worth naming, and the server says which it was:
+          // the hash already bought a subscription, or a payment is already
+          // under review.
+          const { status, data } = err as {
+            status?: number;
+            data?: { error?: string; errorAr?: string };
+          };
           toast({
             variant: "destructive",
             title: t.subscription.error,
-            description: status === 409 ? pc.alreadyUsed : pc.submitFailed,
+            description:
+              status === 409
+                ? ((lang === "ar" ? data?.errorAr : data?.error) ?? pc.alreadyUsed)
+                : pc.submitFailed,
           });
         },
       },
@@ -100,8 +110,9 @@ export function CryptoPayment({ subscriptionId, priceUsd, onSubmitted }: Props) 
       <div className="text-center">
         <p className="text-sm text-muted-foreground mb-1">{pc.amountDue}</p>
         <p className="text-3xl font-bold text-primary" dir="ltr">
-          {priceUsd.toFixed(2)} USDT
+          {amountUsdt} USDT
         </p>
+        <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{pc.exactAmountNote}</p>
       </div>
 
       {/* Stated before the address, deliberately. Sending on the wrong network

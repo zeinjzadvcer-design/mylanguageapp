@@ -1066,6 +1066,11 @@ export interface StudentSubscription {
      * @nullable
      */
   priceSyp?: string | null;
+  /**
+     * The exact USDT amount held for this subscription: the plan price plus a tag no other open subscription has, which is what ties a public transfer to one student. Null off the crypto path.
+     * @nullable
+     */
+  amountUsdt?: string | null;
   /** @nullable */
   paymentNote?: string | null;
 }

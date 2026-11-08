@@ -12,12 +12,15 @@ const base = () => `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
 export class PracticeError extends Error {
   readonly status: number;
   readonly code: string | null;
+  /** The server's Arabic wording, when it sent one (plan limits do). */
+  readonly messageAr: string | null;
 
-  constructor(message: string, status: number, code: string | null) {
+  constructor(message: string, status: number, code: string | null, messageAr: string | null = null) {
     super(message);
     this.name = "PracticeError";
     this.status = status;
     this.code = code;
+    this.messageAr = messageAr;
   }
 }
 
@@ -30,7 +33,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   });
 
   if (!r.ok) {
-    let payload: { error?: string; code?: string } = {};
+    let payload: { error?: string; errorAr?: string; code?: string } = {};
     try {
       payload = await r.json();
     } catch {
@@ -40,6 +43,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       payload.error ?? `${method} ${path} → ${r.status}`,
       r.status,
       payload.code ?? null,
+      payload.errorAr ?? null,
     );
   }
 

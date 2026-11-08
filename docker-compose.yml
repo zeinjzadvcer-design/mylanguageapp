@@ -209,7 +209,6 @@ services:
       BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed.binance.org}
       BSC_RPC_URL_FALLBACK: ${BSC_RPC_URL_FALLBACK:-https://bsc-dataseed1.defibit.io}
       BSC_CONFIRMATIONS: ${BSC_CONFIRMATIONS:-15}
-      CRYPTO_AMOUNT_TOLERANCE_PCT: ${CRYPTO_AMOUNT_TOLERANCE_PCT:-2}
       CRYPTO_TXID_MAX_AGE_DAYS: ${CRYPTO_TXID_MAX_AGE_DAYS:-7}
       CRYPTO_VERIFY_INTERVAL_MS: ${CRYPTO_VERIFY_INTERVAL_MS:-60000}
       CRYPTO_VERIFY_MAX_ATTEMPTS: ${CRYPTO_VERIFY_MAX_ATTEMPTS:-8}
@@ -217,6 +216,7 @@ services:
       # Automatic Syrian pound pricing (SP Today / الليرة اليوم). Only read when
       # an admin turns automatic pricing on; unset, manual prices are used.
       SPTODAY_API_KEY: ${SPTODAY_API_KEY:-}
+      WALLET_SMS_SENDERS: ${WALLET_SMS_SENDERS:-Syriatel}
       SPTODAY_CITY: ${SPTODAY_CITY:-damascus}
       SYP_RATE_REFRESH_MS: ${SYP_RATE_REFRESH_MS:-43200000}
     ports:

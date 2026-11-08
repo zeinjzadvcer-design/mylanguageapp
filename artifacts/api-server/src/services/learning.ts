@@ -19,7 +19,7 @@ import {
   studentProfilesTable,
   curriculaTable,
 } from "@workspace/db";
-import { getEntitlement, lessonTrackFilter } from "./entitlements";
+import { getEntitlement, lessonTrackFilter, type Entitlement } from "./entitlements";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -175,6 +175,78 @@ export async function getCurriculumLevels(curriculumId: number) {
 // ─── Level advancement ────────────────────────────────────────────────────────
 
 /**
+ * The first level after this one holding a published lesson the student's plan
+ * covers. Levels with nothing in their track are stepped over, or they would
+ * sit on a page with no lesson to complete and no way forward.
+ */
+async function nextLevelWithLessons(
+  curriculumId: number,
+  afterOrder: number,
+  entitlement: Entitlement,
+) {
+  const later = (await getCurriculumLevels(curriculumId)).filter((l) => l.order > afterOrder);
+  if (later.length === 0) return null;
+
+  const populated = await db
+    .selectDistinct({ levelId: lessonsTable.levelId })
+    .from(lessonsTable)
+    .where(
+      and(
+        inArray(lessonsTable.levelId, later.map((l) => l.id)),
+        lessonTrackFilter(entitlement),
+        publishedLessonFilter(),
+      ),
+    );
+  const populatedIds = new Set(populated.map((r) => r.levelId));
+  return later.find((l) => populatedIds.has(l.id)) ?? null;
+}
+
+/**
+ * Move a student off a level that has nothing in their track.
+ *
+ * Run when a plan is activated: switching track can leave a student on a level
+ * whose lessons are all in the other one, with no lesson that could ever
+ * trigger maybeAdvanceLevel.
+ */
+export async function skipLevelWithoutLessons(userId: number): Promise<void> {
+  const [profile] = await db
+    .select()
+    .from(studentProfilesTable)
+    .where(eq(studentProfilesTable.userId, userId))
+    .limit(1);
+  if (!profile?.currentLevelId || !profile.curriculumId) return;
+
+  const entitlement = await getEntitlement(userId);
+  const [hasLesson] = await db
+    .select({ id: lessonsTable.id })
+    .from(lessonsTable)
+    .where(
+      and(
+        eq(lessonsTable.levelId, profile.currentLevelId),
+        lessonTrackFilter(entitlement),
+        publishedLessonFilter(),
+      ),
+    )
+    .limit(1);
+  if (hasLesson) return;
+
+  const [currentLevel] = await db
+    .select({ order: levelsTable.order })
+    .from(levelsTable)
+    .where(eq(levelsTable.id, profile.currentLevelId))
+    .limit(1);
+  if (!currentLevel) return;
+
+  const next = await nextLevelWithLessons(profile.curriculumId, currentLevel.order, entitlement);
+  if (!next) return;
+
+  await db
+    .update(studentProfilesTable)
+    .set({ currentLevelId: next.id })
+    .where(eq(studentProfilesTable.userId, userId));
+}
+
+/**
  * Check if the student has completed all published lessons in their current
  * level and if so advance to the next level in the same curriculum.
  * Returns the new currentLevelId (unchanged if no advancement happened).
@@ -214,6 +286,9 @@ export async function maybeAdvanceLevel(
   // Include the just-completed lesson
   completedIds.add(completedLessonId);
 
+  // True for a level with nothing in this student's track, deliberately: there
+  // is nothing there for them to finish, and the move below goes to a level
+  // that does have lessons, so nothing real is skipped.
   const allDone = levelLessons.every((l) => completedIds.has(l.id));
   if (!allDone) return { advanced: false, newLevelId: profile.currentLevelId };
 
@@ -226,8 +301,11 @@ export async function maybeAdvanceLevel(
 
   if (!currentLevel) return { advanced: false, newLevelId: profile.currentLevelId };
 
-  const levels = await getCurriculumLevels(profile.curriculumId);
-  const nextLevel = levels.find((l) => l.order > currentLevel.order);
+  const nextLevel = await nextLevelWithLessons(
+    profile.curriculumId,
+    currentLevel.order,
+    entitlement,
+  );
 
   if (!nextLevel) return { advanced: false, newLevelId: profile.currentLevelId };
 

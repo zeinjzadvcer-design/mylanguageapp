@@ -327,6 +327,16 @@ describe("currentPeriodStart — the allowance resets monthly", () => {
     ).toBe("2026-11-03T10:00:00.000Z");
   });
 
+  it("clamps to a short month and returns to the anchor day afterwards", () => {
+    const anchor = new Date("2026-01-31T10:00:00.000Z");
+    expect(
+      currentPeriodStart(anchor, new Date("2026-03-05T10:00:00.000Z")).toISOString(),
+    ).toBe("2026-02-28T10:00:00.000Z");
+    expect(
+      currentPeriodStart(anchor, new Date("2026-04-01T10:00:00.000Z")).toISOString(),
+    ).toBe("2026-03-31T10:00:00.000Z");
+  });
+
   it("does not mutate the anchor it was given", () => {
     const anchor = new Date("2026-05-03T10:00:00.000Z");
     currentPeriodStart(anchor, new Date("2026-11-20T10:00:00.000Z"));

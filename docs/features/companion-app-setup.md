@@ -103,8 +103,8 @@ supports a **custom HTTP POST with headers** and a **sender filter**. Configure:
 
 The placeholder names differ per app; map them to the message body, the sender,
 and the time **the handset received it**. That last one matters: the 48-hour
-submission window is measured from it, so a phone that was offline for an hour
-must not consume the student's window. If the app cannot give an ISO timestamp,
+submission window runs from it to when the student submitted the number, so a
+phone that forwards an hour late must not push a prompt student outside it. If the app cannot give an ISO timestamp,
 option B is better than guessing.
 
 Check the app before trusting it with this. It will hold a credential that can
@@ -189,9 +189,12 @@ SELECT id, received_at, parsed_operation_number, parsed_amount_syp,
 
 | Symptom | Cause | What happens meanwhile |
 |---|---|---|
-| Nothing arrives in `wallet_sms_messages` | Phone off, app killed, token wrong | Payments wait for an admin |
-| Rows arrive, parsed columns null | Syriatel reworded the message | Payments wait for an admin; raw text is kept so it can be re-parsed |
-| `needsReview: true` in the verification log | Amount short, or submitted after the window | Admin decides — the money did arrive |
+| Nothing arrives in `wallet_sms_messages` | Phone off, app killed, token wrong | Submissions wait; a late SMS still matches. After 48 hours with none, each goes to the admin queue (`lastOutcome: no_sms_received`) |
+| Rows arrive, parsed columns null | Syriatel reworded the message, or it is not a money-received message (only «استلام مبلغ» counts) | Payments wait for an admin; raw text is kept so it can be re-parsed |
+| `needsReview: true` in the verification log | Amount short, or submitted more than 48 hours after paying | Admin decides — the money did arrive |
+| `activationFailed: subscription_not_pending` | A second payment for a subscription that is already active | Admin decides; it is not activated twice |
+| `stored_untrusted_sender` from the ingest endpoint | The message's sender is not in `WALLET_SMS_SENDERS` | Nothing activates. Check the sender logged by the API and correct the setting |
+| Claim re-uses a rejected number | The student resubmitted after an admin said no | Goes to the admin queue, with the SMS attached if there is one; never activates by itself |
 | 401 from the ingest endpoint | Token rotated, or wrong | Nothing is stored |
 | 503 from the ingest endpoint | No token generated yet | Nothing is stored |
 
@@ -208,8 +211,9 @@ number, not who paid. If student A learns student B's number and submits it
 first, A's claim verifies and B's genuine payment reads as already used.
 
 Three things bound this and none of them eliminates it: one number may be
-claimed exactly once (a unique index, not an application check), submissions are
-refused after 48 hours, and operation numbers are not published anywhere. The
+claimed exactly once (a unique index, not an application check), a submission
+more than 48 hours after the payment goes to an admin instead of activating,
+and operation numbers are not published anywhere. The
 number is a secret the payer holds, which is why the UI never displays another
 student's.
 

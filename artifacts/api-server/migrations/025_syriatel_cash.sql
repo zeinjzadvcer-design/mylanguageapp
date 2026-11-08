@@ -179,9 +179,7 @@ COMMENT ON COLUMN payment_submissions.operation_number IS
 -- one payment could be claimed repeatedly, and every claim would verify because
 -- the payment really did happen. Enforced by the database, not by a prior
 -- SELECT, so two simultaneous submissions of one number cannot both win.
-CREATE UNIQUE INDEX IF NOT EXISTS payment_submissions_operation_number_key
-  ON payment_submissions (operation_number)
-  WHERE operation_number IS NOT NULL;
+-- Created by 029, partial so a rejected claim does not burn the number.
 
 -- ─── Wallet settings, generalised ────────────────────────────────────────────
 --

@@ -15,10 +15,50 @@ import { checkWalletAddress } from "../services/crypto-config";
 import { getPricingConfig, priceSypFor } from "../services/syp-rate";
 import { subscriptionInForce } from "../services/entitlements";
 import { isValidTxHash } from "../services/crypto-verify-policy";
+import { reserveUsdtAmount, USDT_AMOUNT_HOLD_MS } from "../services/usdt-amount";
+import { toAsciiDigits } from "../services/wallet-sms-policy";
 import { verifySubmission } from "../services/crypto-verify";
-import { sweepUnmatchedSms } from "../services/wallet-sms";
+import { matchSubmission } from "../services/wallet-sms";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
+
+/**
+ * Whether a media id is this student's own completed receipt upload.
+ *
+ * Checked rather than trusted: an id from the request body is otherwise a
+ * pointer to any object in the bucket, and an admin would see another student's
+ * real receipt presented as evidence for this claim.
+ */
+async function isUsableReceipt(mediaId: number, userId: number): Promise<boolean> {
+  const [asset] = await db
+    .select({
+      ownerUserId: mediaAssetsTable.ownerUserId,
+      purpose: mediaAssetsTable.purpose,
+      status: mediaAssetsTable.status,
+    })
+    .from(mediaAssetsTable)
+    .where(eq(mediaAssetsTable.id, mediaId))
+    .limit(1);
+
+  return (
+    asset?.purpose === "payment_receipt" &&
+    asset.status === "ready" &&
+    asset.ownerUserId === userId
+  );
+}
+
+/**
+ * What a claim on an identifier an admin has already rejected starts as.
+ *
+ * A rejection can be a mistake, so the identifier stays usable; but somebody
+ * said no, so it goes back to a person and nothing activates it automatically.
+ */
+const RESUBMISSION_LOG = {
+  resubmittedAfterRejection: true,
+  needsReview: true,
+  note: "This identifier was rejected before and has been submitted again.",
+};
 
 /**
  * GET /subscription-plans
@@ -243,6 +283,24 @@ router.post("/subscription", requireAuth, async (req, res): Promise<void> => {
         }).returning()
       )[0];
 
+  // Held once and then left alone, like the SYP quote: an admin changing the
+  // price while the student is sending must not invalidate the number shown.
+  let amountUsdt = sub.usdtAmount ?? null;
+  if (paymentMethod === "crypto_usdt_bep20") {
+    const holding =
+      amountUsdt !== null &&
+      sub.usdtAmountAt !== null &&
+      Date.now() - sub.usdtAmountAt.getTime() <= USDT_AMOUNT_HOLD_MS;
+    if (!holding) amountUsdt = await reserveUsdtAmount(sub.id, plan.priceUsd);
+    if (amountUsdt === null) {
+      res.status(503).json({
+        error: "Crypto payments are busy. Please try again shortly.",
+        errorAr: "الدفع بالعملات الرقمية مشغول حالياً. يرجى المحاولة بعد قليل.",
+      });
+      return;
+    }
+  }
+
   res.json({
     id: sub.id,
     studentId: userId,
@@ -257,6 +315,8 @@ router.post("/subscription", requireAuth, async (req, res): Promise<void> => {
     priceUsd: plan.priceUsd,
     /** The quoted SYP price — what the payment step shows and checks against. */
     priceSyp: sub.quotedPriceSyp ?? null,
+    /** The exact USDT amount held for this subscription; null off the crypto path. */
+    amountUsdt,
   });
 });
 
@@ -379,22 +439,7 @@ router.post(
     // purpose — the same check assertUsableRecording makes for audio, for the
     // same reason: a media id from the body is otherwise a pointer to any
     // object in the bucket.
-    const [asset] = await db
-      .select({
-        ownerUserId: mediaAssetsTable.ownerUserId,
-        purpose: mediaAssetsTable.purpose,
-        status: mediaAssetsTable.status,
-      })
-      .from(mediaAssetsTable)
-      .where(eq(mediaAssetsTable.id, receiptMediaId))
-      .limit(1);
-
-    if (
-      !asset ||
-      asset.purpose !== "payment_receipt" ||
-      asset.status !== "ready" ||
-      asset.ownerUserId !== userId
-    ) {
+    if (!(await isUsableReceipt(receiptMediaId, userId))) {
       res.status(400).json({ error: "That receipt upload is not usable" });
       return;
     }
@@ -528,16 +573,51 @@ router.post(
       return;
     }
 
-    const [plan] = await db
-      .select({ priceUsd: subscriptionPlansTable.priceUsd })
-      .from(subscriptionPlansTable)
-      .where(sql`${subscriptionPlansTable.code} = ${subscription.planCode}`)
+    // One unresolved claim per subscription, as on the other methods. Two tx
+    // hashes for one subscription would otherwise both verify, and a student
+    // who paid twice would get one period for two payments.
+    const [existingPending] = await db
+      .select({ id: paymentSubmissionsTable.id })
+      .from(paymentSubmissionsTable)
+      .where(
+        and(
+          eq(paymentSubmissionsTable.subscriptionId, subscriptionId),
+          inArray(paymentSubmissionsTable.status, ["pending", "verifying"]),
+        ),
+      )
       .limit(1);
 
-    if (!plan) {
-      res.status(400).json({ error: "Plan not found" });
+    if (existingPending) {
+      res.status(409).json({
+        error: "A payment for this subscription is already under review",
+        errorAr: "يوجد دفع قيد المراجعة لهذا الاشتراك.",
+        submissionId: existingPending.id,
+      });
       return;
     }
+
+    // The amount shown when this subscription was opened, not one recomputed
+    // from the plan now.
+    const amountUsdt = subscription.usdtAmount;
+    if (amountUsdt === null) {
+      res.status(409).json({
+        error: "Open the payment step again to get your amount",
+        errorAr: "افتح خطوة الدفع مرة أخرى للحصول على المبلغ المطلوب.",
+      });
+      return;
+    }
+
+    const [rejectedBefore] = await db
+      .select({ id: paymentSubmissionsTable.id })
+      .from(paymentSubmissionsTable)
+      .where(
+        and(
+          sql`lower(${paymentSubmissionsTable.txHash}) = ${txHash}`,
+          eq(paymentSubmissionsTable.status, "rejected"),
+        ),
+      )
+      .limit(1);
+    const initialStatus = crypto.autoVerify && !rejectedBefore ? "verifying" : "pending";
 
     let submissionId: number;
 
@@ -552,9 +632,10 @@ router.post(
           // address to check the recipient against (a QR-only setup), so it
           // goes straight to an admin instead of waiting on a check that
           // cannot succeed.
-          status: crypto.autoVerify ? "verifying" : "pending",
-          amountExpected: plan.priceUsd.toFixed(2),
+          status: initialStatus,
+          amountExpected: amountUsdt,
           txHash,
+          ...(rejectedBefore ? { verificationLog: RESUBMISSION_LOG } : {}),
           // The address it is checked against, fixed now. A later change in
           // settings must not re-point a payment that is already in flight.
           expectedWalletAddress: crypto.walletAddress,
@@ -583,7 +664,7 @@ router.post(
     // while they are still looking at the screen. Not awaited: an RPC round
     // trip must not hold the response open, and the sweeper re-checks anything
     // this misses.
-    if (crypto.autoVerify) {
+    if (initialStatus === "verifying") {
       void verifySubmission(submissionId).catch(() => {
         // Already logged inside; the sweeper will try again.
       });
@@ -593,8 +674,8 @@ router.post(
       id: submissionId,
       subscriptionId,
       method: "crypto_usdt_bep20",
-      status: crypto.autoVerify ? "verifying" : "pending",
-      amountExpected: plan.priceUsd.toFixed(2),
+      status: initialStatus,
+      amountExpected: amountUsdt,
     });
   },
 );
@@ -607,7 +688,12 @@ const walletSubmissionSchema = z.object({
    * check is to reject obvious nonsense, not to assert a format Syriatel never
    * promised.
    */
-  operationNumber: z.string().trim().regex(/^\d{4,24}$/),
+  operationNumber: z
+    .string()
+    .trim()
+    // Normalised first: the student may type the digits as their phone shows them.
+    .transform(toAsciiDigits)
+    .pipe(z.string().regex(/^\d{4,24}$/)),
   /** What the student says they transferred, in SYP. */
   amountSyp: z.number().positive().max(100_000_000),
   studentNote: z.string().trim().max(2000).optional(),
@@ -729,6 +815,23 @@ router.post(
       return;
     }
 
+    if (receiptMediaId !== undefined && !(await isUsableReceipt(receiptMediaId, userId))) {
+      res.status(400).json({ error: "That receipt upload is not usable" });
+      return;
+    }
+
+    const [rejectedBefore] = await db
+      .select({ id: paymentSubmissionsTable.id })
+      .from(paymentSubmissionsTable)
+      .where(
+        and(
+          eq(paymentSubmissionsTable.operationNumber, operationNumber),
+          eq(paymentSubmissionsTable.status, "rejected"),
+        ),
+      )
+      .limit(1);
+    const initialStatus = rejectedBefore ? "pending" : "verifying";
+
     let submissionId: number;
     try {
       const [submission] = await db
@@ -739,7 +842,8 @@ router.post(
           method: "syriatel_cash",
           // `verifying`, not `pending`: the matcher decides next, and a claim
           // nobody has checked yet should not sit in the admin queue.
-          status: "verifying",
+          status: initialStatus,
+          ...(rejectedBefore ? { verificationLog: RESUBMISSION_LOG } : {}),
           amountExpected: plan.priceUsd.toFixed(2),
           amountExpectedSyp: expectedSyp,
           amountClaimedSyp: amountSyp.toFixed(2),
@@ -772,15 +876,16 @@ router.post(
     // Try to match straight away, in case the SMS already arrived — which is
     // the usual order. Not awaited: the student should not wait on it, and the
     // sweep re-checks anything this misses.
-    void sweepUnmatchedSms().catch(() => {
-      // Already logged inside; the sweeper will try again.
+    void matchSubmission(submissionId).catch((err) => {
+      // The sweeper tries again within a minute.
+      logger.warn({ err, submissionId }, "Immediate wallet SMS match failed");
     });
 
     res.status(201).json({
       id: submissionId,
       subscriptionId,
       method: "syriatel_cash",
-      status: "verifying",
+      status: initialStatus,
       amountExpected: plan.priceUsd.toFixed(2),
       amountExpectedSyp: expectedSyp,
     });

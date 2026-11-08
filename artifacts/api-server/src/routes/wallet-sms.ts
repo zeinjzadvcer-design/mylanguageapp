@@ -12,7 +12,7 @@
  */
 
 import { Router, type IRouter } from "express";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { ingestSms, getIngestToken } from "../services/wallet-sms";
 import { logger } from "../lib/logger";
@@ -23,13 +23,14 @@ const router: IRouter = Router();
  * Compare without leaking length or position through timing.
  *
  * `timingSafeEqual` throws on a length mismatch, which would itself be a
- * signal, so both sides are hashed to a fixed width first — length is
- * compared as data rather than as control flow.
+ * signal, so both sides are hashed to a fixed 32 bytes first. Hashing the
+ * UTF-8 bytes, not padding characters: a non-ASCII header encodes to more
+ * bytes than characters, and padded buffers of unequal length made
+ * `timingSafeEqual` throw, turning a bad token into a 500.
  */
 function tokensMatch(presented: string, expected: string): boolean {
-  const a = Buffer.from(presented.padEnd(128, "\0").slice(0, 128));
-  const b = Buffer.from(expected.padEnd(128, "\0").slice(0, 128));
-  return timingSafeEqual(a, b) && presented.length === expected.length;
+  const digest = (s: string) => createHash("sha256").update(s, "utf8").digest();
+  return timingSafeEqual(digest(presented), digest(expected));
 }
 
 const ingestSchema = z.object({
@@ -42,9 +43,10 @@ const ingestSchema = z.object({
    *
    * Not the time of this request: a phone that was offline reports an older
    * timestamp, and the submission window is measured from this, so using the
-   * server clock would quietly extend or consume a student's window.
+   * server clock would quietly extend or consume a student's window. An
+   * offset is allowed: off-the-shelf forwarders send the phone's local time.
    */
-  receivedAt: z.string().datetime(),
+  receivedAt: z.string().datetime({ offset: true }),
 });
 
 /** POST /wallet-sms — forward one confirmation message. */

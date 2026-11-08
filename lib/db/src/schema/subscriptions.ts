@@ -118,6 +118,12 @@ export const studentSubscriptionsTable = pgTable("student_subscriptions", {
    */
   periodStartedAt: timestamp("period_started_at", { withTimezone: true }),
   /**
+   * The exact USDT amount held for this subscription, tag included. Nobody
+   * else can be given it while it is held; see services/usdt-amount.ts.
+   */
+  usdtAmount: numeric("usdt_amount", { precision: 12, scale: 4 }),
+  usdtAmountAt: timestamp("usdt_amount_at", { withTimezone: true }),
+  /**
    * The SYP price quoted when this subscription was opened.
    *
    * With an automatic rate the price moves. A student who read 290 ل.س and
@@ -169,7 +175,8 @@ export const paymentSubmissionsTable = pgTable("payment_submissions", {
    * `numeric` reaches the driver as a string; parse it rather than relying on
    * JavaScript number coercion.
    */
-  amountExpected: numeric("amount_expected", { precision: 12, scale: 2 }).notNull(),
+  /** Four decimals: a USDT amount carries a tag (usdtAmountWithTag). */
+  amountExpected: numeric("amount_expected", { precision: 12, scale: 4 }).notNull(),
 
   /** ShamCash: the transfer receipt the student uploaded. */
   receiptMediaId: integer("receipt_media_id").references(() => mediaAssetsTable.id, {
@@ -230,18 +237,20 @@ export const paymentSubmissionsTable = pgTable("payment_submissions", {
    * transaction really is real. Case-insensitive because hex arrives in mixed
    * case; partial so ShamCash rows, which have no hash, do not collide on NULL.
    */
-  txHashUnique: uniqueIndex("payment_submissions_tx_hash_key")
+  // Rejected rows excluded: a refused claim bought nothing, and counting it
+  // would burn a real payment the student is told to resubmit.
+  txHashUnique: uniqueIndex("payment_submissions_tx_hash_open_key")
     .on(sql`lower(${table.txHash})`)
-    .where(sql`${table.txHash} is not null`),
+    .where(sql`${table.txHash} is not null and ${table.status} <> 'rejected'`),
   /**
    * One operation number buys one subscription, ever — the same control as
    * `txHashUnique`, for the same reason: without it one payment could be
    * claimed repeatedly, and every claim would verify because the payment
    * really did happen.
    */
-  operationNumberUnique: uniqueIndex("payment_submissions_operation_number_key")
+  operationNumberUnique: uniqueIndex("payment_submissions_operation_number_open_key")
     .on(table.operationNumber)
-    .where(sql`${table.operationNumber} is not null`),
+    .where(sql`${table.operationNumber} is not null and ${table.status} <> 'rejected'`),
   statusIdx: index("payment_submissions_status_idx").on(table.status, table.createdAt),
   userIdx: index("payment_submissions_user_idx").on(table.userId, table.createdAt),
   subscriptionIdx: index("payment_submissions_subscription_idx").on(table.subscriptionId),
@@ -295,6 +304,8 @@ export const paymentSettingsTable = pgTable("payment_settings", {
   sypRateSourceUpdatedAt: timestamp("syp_rate_source_updated_at", { withTimezone: true }),
   /** The last fetch failure, cleared on success. */
   sypRateError: text("syp_rate_error"),
+  /** Last fetch attempt, successful or not. What the scheduler claims; see syp-rate.ts. */
+  sypRateAttemptedAt: timestamp("syp_rate_attempted_at", { withTimezone: true }),
   /**
    * `new` or `old` Syrian pound — 100 old = 1 new. SP Today reports in old;
    * prices are converted to whichever unit Syriatel Cash charges in. Wrong,

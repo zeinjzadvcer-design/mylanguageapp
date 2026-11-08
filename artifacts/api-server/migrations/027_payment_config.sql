@@ -64,6 +64,13 @@ ALTER TABLE payment_settings
 ALTER TABLE payment_settings
   ADD COLUMN IF NOT EXISTS syp_rate_error text;
 
+-- When a fetch was last ATTEMPTED, successful or not. The scheduler claims a
+-- refresh by moving this forward in one conditional UPDATE, so a failing
+-- source is not retried every minute and several instances never spend the
+-- same slot of the hundred-calls-a-month quota.
+ALTER TABLE payment_settings
+  ADD COLUMN IF NOT EXISTS syp_rate_attempted_at timestamptz;
+
 -- Which pound the prices are in.
 --
 -- Syria redenominated at 100 old pounds to 1 new, and SP Today still reports

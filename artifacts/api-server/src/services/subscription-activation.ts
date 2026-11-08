@@ -21,7 +21,7 @@
  * until the new one is paid for.
  */
 
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   db,
   paymentSubmissionsTable,
@@ -30,6 +30,7 @@ import {
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { addBillingCycle } from "./entitlement-policy";
+import { skipLevelWithoutLessons } from "./learning";
 
 // Re-exported: callers of the activation service should not have to know the
 // date arithmetic lives in the db-free policy module.
@@ -43,7 +44,14 @@ export type ActivationOutcome =
 export type ActivationFailure =
   | "submission_not_found"
   | "already_rejected"
-  | "plan_not_found";
+  | "plan_not_found"
+  /**
+   * The subscription this payment was for is no longer waiting for one: a
+   * different submission already activated it, or it was cancelled. The money
+   * may well be real (a student who paid twice), so this needs a person, not
+   * a second activation that would restart the period and reset the quota.
+   */
+  | "subscription_not_pending";
 
 /**
  * Approve a payment submission and activate the subscription it paid for.
@@ -60,7 +68,9 @@ export async function activateSubscription(
   reviewerId: number | null,
   reviewNote?: string,
 ): Promise<ActivationOutcome> {
-  return db.transaction(async (tx) => {
+  let activatedUserId: number | null = null;
+
+  const result = await db.transaction(async (tx): Promise<ActivationOutcome> => {
     // FOR UPDATE: two admins clicking approve on the same row, or an admin
     // racing the verifier, must serialise here rather than both activating.
     const [submission] = await tx
@@ -86,13 +96,32 @@ export async function activateSubscription(
       return { ok: false, reason: "already_rejected" as const };
     }
 
+    // One activation per student at a time. The row locks below cover one
+    // subscription; two payments settling at once for DIFFERENT plans would
+    // each see no other active row and both activate, leaving the student on
+    // two plans with whichever `.limit(1)` happened to return deciding access.
+    // Classid 4243 namespaces this against the lesson-start lock (4242).
+    await tx.execute(sql`select pg_advisory_xact_lock(4243, ${submission.userId})`);
+
+    // Locked too: two different submissions for one subscription (two tx
+    // hashes, or a stale receipt approved after the SMS path activated it)
+    // each hold their own submission lock, so only this one serialises them.
     const [subscription] = await tx
       .select()
       .from(studentSubscriptionsTable)
       .where(eq(studentSubscriptionsTable.id, submission.subscriptionId))
-      .limit(1);
+      .limit(1)
+      .for("update");
 
     if (!subscription) return { ok: false, reason: "submission_not_found" as const };
+
+    // Activation happens once per subscription. Re-activating an active one
+    // would restart its period (the student pays twice for one month) and
+    // reset the monthly quota; activating a cancelled one would cancel the
+    // plan the student is on now in favour of one they abandoned.
+    if (subscription.status !== "pending_payment") {
+      return { ok: false, reason: "subscription_not_pending" as const };
+    }
 
     // `student_subscriptions.planCode` is plain text while
     // `subscription_plans.code` is a narrow enum, so this compares as text.
@@ -171,8 +200,19 @@ export async function activateSubscription(
       "Subscription activated",
     );
 
+    activatedUserId = subscription.userId;
     return { ok: true, subscriptionId: subscription.id, alreadyActive: false };
   });
+
+  // After the commit, and never allowed to fail it: the student has paid, and
+  // where they sit in the curriculum can be corrected later.
+  if (activatedUserId !== null) {
+    await skipLevelWithoutLessons(activatedUserId).catch((err) => {
+      logger.error({ err, userId: activatedUserId }, "Could not skip an empty level after activation");
+    });
+  }
+
+  return result;
 }
 
 /**
@@ -248,4 +288,33 @@ export async function expireSubscriptions(): Promise<number> {
   }
 
   return result.length;
+}
+
+/**
+ * Hand an unresolved submission to an admin, with the reason recorded.
+ *
+ * Used by the automatic verifiers when they cannot finish the job themselves.
+ * Conditional on the submission still being unresolved: a verifier's check
+ * runs outside any lock, so by the time it writes, an admin or a concurrent
+ * run may already have approved or rejected the row, and that decision must
+ * not be overwritten back to `pending`.
+ */
+export async function flagForReview(
+  submissionId: number,
+  log: Record<string, unknown>,
+): Promise<void> {
+  await db
+    .update(paymentSubmissionsTable)
+    .set({
+      status: "pending",
+      verificationLog: sql`coalesce(${paymentSubmissionsTable.verificationLog}, '{}'::jsonb) || ${JSON.stringify(
+        { ...log, needsReview: true },
+      )}::jsonb`,
+    })
+    .where(
+      and(
+        eq(paymentSubmissionsTable.id, submissionId),
+        inArray(paymentSubmissionsTable.status, ["pending", "verifying"]),
+      ),
+    );
 }

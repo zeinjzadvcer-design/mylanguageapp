@@ -3758,6 +3758,12 @@ components:
             The SYP price quoted when this subscription was opened — what the
             payment step shows and what the payment is checked against, so a
             rate refresh mid-payment does not fail a correct transfer.
+        amountUsdt:
+          type: ["string", "null"]
+          description: >-
+            The exact USDT amount held for this subscription: the plan price
+            plus a tag no other open subscription has, which is what ties a
+            public transfer to one student. Null off the crypto path.
         paymentNote:
           type: ["string", "null"]
 

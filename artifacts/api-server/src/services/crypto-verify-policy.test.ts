@@ -6,6 +6,8 @@ import {
   hexToBigInt,
   topicToAddress,
   isValidTxHash,
+  usdtAmountWithTag,
+  freeUsdtAmounts,
   type RpcReceipt,
 } from "./crypto-verify-policy";
 import { USDT_BSC_CONTRACT, TRANSFER_TOPIC } from "./crypto-config";
@@ -43,7 +45,11 @@ const baseInput = {
   walletAddress: WALLET,
   amountExpected: 2,
   confirmations: 15,
-  amountTolerance: 0.02,
+  // Mined an hour after the subscription opened, submitted a minute later.
+  blockTimestamp: Date.parse("2026-11-01T11:00:00Z") / 1000,
+  subscriptionOpenedAt: new Date("2026-11-01T10:00:00Z"),
+  submittedAt: new Date("2026-11-01T11:01:00Z"),
+  maxAgeDays: 7,
 };
 
 describe("verifyTransfer — the happy path", () => {
@@ -53,23 +59,6 @@ describe("verifyTransfer — the happy path", () => {
     expect(result.failure).toBeNull();
     expect(result.amountUsdt).toBe("2");
     expect(result.senderAddress).toBe(SENDER.toLowerCase());
-  });
-
-  it("accepts an overpayment and records it", () => {
-    const result = verifyTransfer({
-      ...baseInput,
-      receipt: receipt({
-        logs: [
-          {
-            address: USDT_BSC_CONTRACT,
-            topics: [TRANSFER_TOPIC, addressTopic(SENDER), addressTopic(WALLET)],
-            data: amountData("5"),
-          },
-        ],
-      }),
-    });
-    expect(result.ok).toBe(true);
-    expect(result.detail.overpaid).toBe("3");
   });
 
   it("sums several transfers in one transaction", () => {
@@ -184,41 +173,106 @@ describe("verifyTransfer — state and finality", () => {
   });
 });
 
-describe("verifyTransfer — amount tolerance", () => {
-  it("accepts a few cents short, because the student typed it by hand", () => {
+function paying(usdt: string): RpcReceipt {
+  return receipt({
+    logs: [
+      {
+        address: USDT_BSC_CONTRACT,
+        topics: [TRANSFER_TOPIC, addressTopic(SENDER), addressTopic(WALLET)],
+        data: amountData(usdt),
+      },
+    ],
+  });
+}
+
+describe("verifyTransfer — the amount identifies the student", () => {
+  it("accepts exactly the amount owed, tag included", () => {
     const result = verifyTransfer({
       ...baseInput,
-      receipt: receipt({
-        logs: [
-          {
-            address: USDT_BSC_CONTRACT,
-            topics: [TRANSFER_TOPIC, addressTopic(SENDER), addressTopic(WALLET)],
-            data: amountData("1.98"),
-          },
-        ],
-      }),
+      amountExpected: "2.0037",
+      receipt: paying("2.0037"),
     });
     expect(result.ok).toBe(true);
   });
 
-  it("refuses an amount beyond the tolerance", () => {
+  it("refuses another student's transfer, however real it is", () => {
+    // Student B copies A's hash from an explorer. A's tag is not B's.
     const result = verifyTransfer({
       ...baseInput,
-      receipt: receipt({
-        logs: [
-          {
-            address: USDT_BSC_CONTRACT,
-            topics: [TRANSFER_TOPIC, addressTopic(SENDER), addressTopic(WALLET)],
-            data: amountData("1.5"),
-          },
-        ],
-      }),
+      amountExpected: "2.0081",
+      receipt: paying("2.0037"),
     });
     expect(result.ok).toBe(false);
     expect(result.failure).toBe("amount_too_low");
-    // The observed amount is still recorded, so an admin can see what arrived
-    // and decide whether to accept it anyway.
-    expect(result.amountUsdt).toBe("1.5");
+  });
+
+  it("sends an overpayment to review rather than accepting it", () => {
+    // Anyone could otherwise claim a stranger's larger payment.
+    const result = verifyTransfer({
+      ...baseInput,
+      amountExpected: "2.0037",
+      receipt: paying("7.0099"),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.failure).toBe("amount_not_exact");
+    // Recorded, so an admin can see what arrived and decide.
+    expect(result.amountUsdt).toBe("7.0099");
+  });
+});
+
+describe("usdtAmountWithTag", () => {
+  it("adds a tag of under ten cents", () => {
+    expect(usdtAmountWithTag(2, 37)).toBe("2.0037");
+    expect(usdtAmountWithTag(7, 999)).toBe("7.0999");
+  });
+
+  it("keeps a fractional price exact", () => {
+    expect(usdtAmountWithTag(4.99, 1)).toBe("4.9901");
+  });
+});
+
+describe("freeUsdtAmounts", () => {
+  it("never offers an amount another subscription holds", () => {
+    const free = freeUsdtAmounts(2, new Set(["2.0037"]));
+    expect(free).not.toContain("2.0037");
+    expect(free).toHaveLength(998);
+  });
+
+  it("is empty when every amount is held", () => {
+    const all = new Set(freeUsdtAmounts(2, new Set()));
+    expect(freeUsdtAmounts(2, all)).toEqual([]);
+  });
+});
+
+describe("verifyTransfer — the transaction's age", () => {
+  it("refuses a transfer from before the subscription existed", () => {
+    const result = verifyTransfer({
+      ...baseInput,
+      blockTimestamp: Date.parse("2026-11-01T09:00:00Z") / 1000,
+      receipt: receipt(),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.failure).toBe("tx_too_old");
+  });
+
+  it("allows a few minutes of clock drift around the subscription opening", () => {
+    const result = verifyTransfer({
+      ...baseInput,
+      blockTimestamp: Date.parse("2026-11-01T09:58:00Z") / 1000,
+      receipt: receipt(),
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses a transfer past the age limit, even on an old open subscription", () => {
+    const result = verifyTransfer({
+      ...baseInput,
+      subscriptionOpenedAt: new Date("2026-01-01T00:00:00Z"),
+      blockTimestamp: Date.parse("2026-10-20T00:00:00Z") / 1000,
+      receipt: receipt(),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.failure).toBe("tx_too_old");
   });
 });
 

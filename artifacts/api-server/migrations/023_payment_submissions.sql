@@ -72,9 +72,10 @@ CREATE TABLE IF NOT EXISTS payment_submissions (
 --
 -- lower() because hex hashes arrive in mixed case and 0xAB… is 0xab…. Partial
 -- so the ShamCash rows, which have no hash, do not all collide on NULL.
-CREATE UNIQUE INDEX IF NOT EXISTS payment_submissions_tx_hash_key
-  ON payment_submissions (lower(tx_hash))
-  WHERE tx_hash IS NOT NULL;
+--
+-- The index itself is created by 029, as a partial index that leaves rejected
+-- claims out. Creating the old form here would fail on any re-run once a
+-- rejected hash had been legitimately resubmitted.
 
 -- The admin review queue reads pending rows oldest-first; a student's own page
 -- reads their submissions newest-first.

@@ -1255,7 +1255,14 @@ export function LessonPlayer({
 }) {
   const lessonId = lesson.id;
   const isPreview = !!preview;
-  const startLesson = useStartLesson();
+  // Retried because everything after it depends on it: the server refuses
+  // answers for a lesson it never saw opened. A 4xx is an answer, not a blip.
+  const startLesson = useStartLesson({
+    mutation: {
+      retry: (count, err) =>
+        count < 2 && ((err as { status?: number })?.status ?? 500) >= 500,
+    },
+  });
   const submitActivity = useSubmitLessonActivity();
   const completeLesson = useCompleteLesson();
   const [, setLocation] = useLocation();
@@ -1772,7 +1779,10 @@ export function LessonPlayer({
   const isAlreadySubmitted = currentState?.submitted ?? false;
 
   // Continue is disabled during submit or if MCQ required and nothing selected yet
-  let isContinueDisabled = isSubmitting || completeLesson.isPending;
+  // Held until the server has recorded the start, or a quick first answer
+  // would race it and be refused.
+  const startUnsettled = startLesson.isPending || startLesson.isError;
+  let isContinueDisabled = isSubmitting || completeLesson.isPending || startUnsettled;
   if (!showIntro && currentBlock && !isAlreadySubmitted && !isSubmitting) {
     if (currentBlock.type === "mcq" && currentBlock.isRequired && !currentState?.selectedOptionId) {
       isContinueDisabled = true;
@@ -2085,6 +2095,14 @@ export function LessonPlayer({
             : "fixed bottom-16 md:bottom-0 end-0 start-0 md:start-64 p-4 border-t border-border bg-card/80 backdrop-blur-md shrink-0 z-10"
         }
       >
+        {startLesson.isError && (
+          <div className="max-w-2xl mx-auto w-full flex items-center justify-between gap-3 mb-3 text-sm text-destructive">
+            <span>{ls.startFailed}</span>
+            <Button variant="outline" size="sm" onClick={() => startLesson.mutate({ lessonId })}>
+              {t.common.retry}
+            </Button>
+          </div>
+        )}
         <div className="max-w-2xl mx-auto w-full flex justify-between items-center gap-4">
           <Button
             variant="ghost"
@@ -2101,7 +2119,7 @@ export function LessonPlayer({
               variant="outline"
               size="lg"
               onClick={moveNext}
-              disabled={isSubmitting || completeLesson.isPending}
+              disabled={isSubmitting || completeLesson.isPending || startUnsettled}
               className="h-14 rounded-xl"
             >
               {ls.skip}

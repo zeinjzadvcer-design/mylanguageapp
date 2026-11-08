@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useI18n } from "@/lib/i18n";
+import { formatAmount } from "@/lib/utils";
 import { uploadPaymentImage, MediaUploadError } from "@/lib/media-api";
 import {
   AlertTriangle,
@@ -84,8 +85,16 @@ export default function AdminPayments() {
           });
           void submissions.refetch();
         },
-        onError: () =>
-          toast({ variant: "destructive", title: t.subscription.error, description: pa.activateFailed }),
+        onError: (err) => {
+          // The server explains the one refusal an admin can act on (the
+          // subscription was already activated); anything else is generic.
+          const data = (err as ApiErr)?.data;
+          toast({
+            variant: "destructive",
+            title: t.subscription.error,
+            description: (lang === "ar" ? data?.errorAr : data?.error) ?? pa.activateFailed,
+          });
+        },
       },
     );
   };
@@ -185,7 +194,7 @@ export default function AdminPayments() {
                 </div>
                 <div className="text-end">
                   <p className="font-bold text-primary" dir="ltr">
-                    ${row.amountExpected}
+                    ${formatAmount(row.amountExpected)}
                   </p>
                   <Badge variant="outline">{pick(row.planNameAr, row.planName)}</Badge>
                 </div>
@@ -228,11 +237,6 @@ export default function AdminPayments() {
                   <p>
                     <strong>operation:</strong> {row.operationNumber}
                   </p>
-                  {row.amountClaimedSyp && (
-                    <p>
-                      <strong>claimed:</strong> {row.amountClaimedSyp} SYP
-                    </p>
-                  )}
                   {row.amountExpectedSyp && (
                     <p>
                       <strong>expected:</strong> {row.amountExpectedSyp} SYP

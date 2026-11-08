@@ -582,10 +582,11 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
       // Only counted when it can actually change the answer. An unlimited plan
       // and a resume both short-circuit, so the common paths skip the count.
       lessonsStarted:
-        entitlement.lessonQuota !== null && !existing
+        entitlement.lessonQuota !== null && !existing?.startedAt
           ? await countLessonsStarted(userId, entitlement.periodStartedAt, tx)
           : 0,
-      alreadyStarted: Boolean(existing),
+      // `startedAt`, not the row: a not_started row has opened nothing.
+      alreadyStarted: Boolean(existing?.startedAt),
     });
     if (denial) return;
 
@@ -621,7 +622,12 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
       .returning();
 
     payload = { ...progress, nextLessonUnlocked: false };
-  }, { isolationLevel: "serializable" });
+    // Default READ COMMITTED, deliberately. Each statement takes its snapshot
+    // after the advisory lock is granted, so the count above sees a concurrent
+    // start's committed insert. SERIALIZABLE takes the snapshot at the lock call
+    // itself, before the lock is granted: the second request would count from
+    // stale data and fail at commit with a 40001 nothing retries.
+  });
 
   if (denial) {
     res.status(403).json({ ...DENIAL_MESSAGES[denial], reason: denial });
@@ -632,6 +638,53 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
 });
 
 // ─── POST /lessons/:lessonId/blocks/:blockId/submit ───────────────────────────
+
+/**
+ * Refuse work on a lesson this student was never let into.
+ *
+ * The paywall lives on /start, where the quota is counted under its lock, so
+ * everything after it only has to ask whether /start happened. Without this a
+ * student past their allowance could skip it: submit a lesson's blocks by id,
+ * spending AI budget, then POST /complete and collect the pass and the XP.
+ *
+ * Sends the refusal itself and returns true when the caller should stop.
+ */
+async function refuseUnopenedLesson(
+  res: import("express").Response,
+  userId: number,
+  role: string | undefined,
+  lesson: { id: number; track: string },
+): Promise<boolean> {
+  const entitlement = await getEntitlement(userId, role);
+  if (entitlement.unlimited) return false;
+
+  if (!isLessonInTrack(entitlement, lesson.track)) {
+    res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
+    return true;
+  }
+
+  // Not rechecked against the quota: a lesson already started can always be
+  // finished, including after the allowance has run out.
+  const [progress] = await db
+    .select({ startedAt: lessonProgressTable.startedAt })
+    .from(lessonProgressTable)
+    .where(
+      and(
+        eq(lessonProgressTable.userId, userId),
+        eq(lessonProgressTable.lessonId, lesson.id),
+      ),
+    )
+    .limit(1);
+
+  if (progress?.startedAt) return false;
+
+  res.status(403).json({
+    error: "Open this lesson before submitting work in it",
+    errorAr: "افتح هذا الدرس أولاً قبل إرسال أي إجابات فيه.",
+    reason: "not_started",
+  });
+  return true;
+}
 
 const submitBlockSchema = z.object({
   clientSubmissionId: z.string().min(1),
@@ -719,6 +772,8 @@ router.post(
       res.status(404).json({ error: "Lesson not found" });
       return;
     }
+
+    if (await refuseUnopenedLesson(res, userId, req.session.role, lessonRow)) return;
 
     // Validate block belongs to lesson and is active
     const [block] = await db
@@ -1114,15 +1169,10 @@ router.post("/lessons/:lessonId/complete", requireAuth, async (req, res): Promis
     return;
   }
 
-  // Enforce plan access. Only the track is checked, not the quota: completing
-  // is the end of a lesson the student was already allowed to start, and the
-  // quota counts starts. Re-checking it here would strand a free student who
-  // started their one lesson inside a lesson they can never finish.
-  const entitlement = await getEntitlement(userId, req.session.role);
-  if (!isLessonInTrack(entitlement, lesson.track)) {
-    res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
-    return;
-  }
+  // Enforce plan access. The quota itself is not re-checked: completing is the
+  // end of a lesson the student was already allowed to start, and re-counting
+  // here would strand a free student inside the one lesson they were given.
+  if (await refuseUnopenedLesson(res, userId, req.session.role, lesson)) return;
 
   // Check for missing required blocks
   const missingRequiredBlockIds = await getMissingRequiredBlockIds(

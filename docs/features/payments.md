@@ -45,7 +45,11 @@ TRON (`T…`) address is refused with its own message — it is the likeliest wr
 paste, and saved here it would make every payment fail verification.
 
 How the chain is read stays in env, with working defaults: BNB Chain's public
-RPC, 15 confirmations, 2% amount tolerance, 7-day maximum transaction age.
+RPC, 15 confirmations, 7-day maximum transaction age. A transaction must also be newer
+than the subscription it pays for, and must carry the exact amount: the plan price
+plus a small tag (for example 2.0037) held for that subscription for 48 hours and
+given to nobody else meanwhile, which is what ties a public transfer to one
+student. Any other amount goes to the admin queue.
 
 ### Syrian pound prices
 

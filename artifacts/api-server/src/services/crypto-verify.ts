@@ -13,8 +13,8 @@
  * plus someone else's interpretation of it.
  */
 
-import { and, eq } from "drizzle-orm";
-import { db, paymentSubmissionsTable } from "@workspace/db";
+import { and, eq, inArray } from "drizzle-orm";
+import { db, paymentSubmissionsTable, studentSubscriptionsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { cryptoConfig } from "./crypto-config";
 import {
@@ -22,7 +22,23 @@ import {
   type RpcReceipt,
   type VerifyResult,
 } from "./crypto-verify-policy";
-import { activateSubscription } from "./subscription-activation";
+import { activateSubscription, flagForReview } from "./subscription-activation";
+
+/**
+ * Every write this verifier makes is conditional on the row still being open.
+ *
+ * The check itself runs outside any lock (it is an RPC round trip), and two
+ * runs can overlap: the fire-and-forget check from the POST and the sweeper.
+ * Without the condition, a run that saw "not enough confirmations yet" could
+ * write `verifying` over an `approved` the other run had just set, or over an
+ * admin's decision.
+ */
+function stillUnresolved(submissionId: number) {
+  return and(
+    eq(paymentSubmissionsTable.id, submissionId),
+    inArray(paymentSubmissionsTable.status, ["pending", "verifying"]),
+  );
+}
 
 /** How long one RPC call may take before the next endpoint is tried. */
 const RPC_TIMEOUT_MS = parseInt(process.env.BSC_RPC_TIMEOUT_MS ?? "10000", 10);
@@ -93,13 +109,15 @@ export interface ChainCheck {
  */
 export async function checkTransaction(
   txHash: string,
-  amountExpected: number,
+  amountExpected: number | string,
   /**
    * The address that must have received the transfer — the one snapshotted on
    * the submission, not the current setting, so an admin changing the address
    * cannot re-point a payment that is already being checked.
    */
   walletAddress: string,
+  /** The two moments a transaction's age is judged against. */
+  timing: { subscriptionOpenedAt: Date; submittedAt: Date },
 ): Promise<ChainCheck> {
   const config = cryptoConfig();
 
@@ -118,13 +136,25 @@ export async function checkTransaction(
 
     const currentBlock = Number(BigInt(blockHex));
 
+    // The receipt has no timestamp; the block it was mined in does. A node that
+    // cannot return a block it just gave a receipt for is lagging, not a
+    // statement about the payment.
+    const block = await rpcCall<{ timestamp: string } | null>("eth_getBlockByNumber", [
+      receipt.blockNumber,
+      false,
+    ]);
+    if (!block) return { reachable: false, found: false, result: null };
+
     const result = verifyTransfer({
       receipt,
       currentBlock,
       walletAddress,
       amountExpected,
       confirmations: config.confirmations,
-      amountTolerance: config.amountTolerance,
+      blockTimestamp: Number(BigInt(block.timestamp)),
+      subscriptionOpenedAt: timing.subscriptionOpenedAt,
+      submittedAt: timing.submittedAt,
+      maxAgeDays: config.maxAgeDays,
     });
 
     return { reachable: true, found: true, result };
@@ -175,7 +205,7 @@ export async function verifySubmission(submissionId: number): Promise<void> {
             note: "No receiving address was configured when this was submitted, so it cannot be verified on chain. Check the transaction by hand.",
           },
         })
-        .where(eq(paymentSubmissionsTable.id, submissionId));
+        .where(stillUnresolved(submissionId));
     }
     return;
   }
@@ -183,11 +213,27 @@ export async function verifySubmission(submissionId: number): Promise<void> {
   // Already decided — by an admin, or by an earlier run of this job.
   if (submission.status === "approved" || submission.status === "rejected") return;
 
-  const amountExpected = Number(submission.amountExpected);
+  const [subscription] = await db
+    .select({
+      createdAt: studentSubscriptionsTable.createdAt,
+      usdtAmountAt: studentSubscriptionsTable.usdtAmountAt,
+    })
+    .from(studentSubscriptionsTable)
+    .where(eq(studentSubscriptionsTable.id, submission.subscriptionId))
+    .limit(1);
+
+  // Passed as the stored string: the amount is compared exactly.
   const check = await checkTransaction(
     submission.txHash,
-    amountExpected,
+    submission.amountExpected,
     submission.expectedWalletAddress,
+    {
+      // From when this amount was given out, so a later holder of a released
+      // amount cannot claim a transfer made before they held it.
+      subscriptionOpenedAt:
+        subscription?.usdtAmountAt ?? subscription?.createdAt ?? submission.createdAt,
+      submittedAt: submission.createdAt,
+    },
   );
 
   const previousLog = (submission.verificationLog ?? {}) as Record<string, unknown>;
@@ -199,14 +245,16 @@ export async function verifySubmission(submissionId: number): Promise<void> {
     await db
       .update(paymentSubmissionsTable)
       .set({
+        // `attempts` deliberately not advanced. It counts real answers from
+        // the chain, and spending the retry budget on an outage would send a
+        // good payment to manual review as soon as the network came back.
         verificationLog: {
           ...previousLog,
-          attempts,
           lastCheckedAt: new Date().toISOString(),
           lastOutcome: "rpc_unreachable",
         },
       })
-      .where(eq(paymentSubmissionsTable.id, submissionId));
+      .where(stillUnresolved(submissionId));
     return;
   }
 
@@ -229,7 +277,7 @@ export async function verifySubmission(submissionId: number): Promise<void> {
             : "Not seen on chain yet; still checking.",
         },
       })
-      .where(eq(paymentSubmissionsTable.id, submissionId));
+      .where(stillUnresolved(submissionId));
     return;
   }
 
@@ -257,7 +305,7 @@ export async function verifySubmission(submissionId: number): Promise<void> {
         senderAddress: result.senderAddress,
         verificationLog: { ...log, needsReview: !retryable || exhausted },
       })
-      .where(eq(paymentSubmissionsTable.id, submissionId));
+      .where(stillUnresolved(submissionId));
     return;
   }
 
@@ -271,7 +319,7 @@ export async function verifySubmission(submissionId: number): Promise<void> {
       confirmedAt: new Date(),
       verificationLog: log,
     })
-    .where(eq(paymentSubmissionsTable.id, submissionId));
+    .where(stillUnresolved(submissionId));
 
   // reviewerId null: nobody approved this, the chain did.
   const outcome = await activateSubscription(submissionId, null);
@@ -281,6 +329,9 @@ export async function verifySubmission(submissionId: number): Promise<void> {
       { submissionId, reason: outcome.reason },
       "On-chain payment verified but activation failed",
     );
+    // The money is on chain; a person has to decide what it bought. Without
+    // this the row would sit in `verifying` and be re-checked forever.
+    await flagForReview(submissionId, { activationFailed: outcome.reason });
     return;
   }
 

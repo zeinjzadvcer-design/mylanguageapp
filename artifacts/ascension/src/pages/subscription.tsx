@@ -24,6 +24,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { CheckCircle2, Crown, Loader2, AlertTriangle, X } from "lucide-react";
 import { SubscriptionInputPlanCode, SubscriptionInputPaymentMethod } from "@workspace/api-client-react";
 import { useI18n } from "@/lib/i18n";
+import { formatAmount } from "@/lib/utils";
 
 /** localStorage key for rejection notices the student has closed. */
 const DISMISSED_KEY = "ascension:dismissed-payment-rejections";
@@ -135,6 +136,8 @@ export default function Subscription() {
   const [pending, setPending] = useState<{
     id: number;
     priceUsd: number;
+    /** The exact USDT amount for this student, tag included. */
+    amountUsdt: string;
     /** The plan's Syrian pound price. Null means the wallet cannot sell it. */
     priceSyp: string | null;
   } | null>(null);
@@ -166,6 +169,7 @@ export default function Subscription() {
           setPending({
             id: sub.id,
             priceUsd: plan?.priceUsd ?? 0,
+            amountUsdt: sub.amountUsdt ?? "",
             // The quote taken when the subscription opened, not the plan's
             // live price: with an automatic rate the two can differ, and the
             // payment is checked against the quote.
@@ -214,7 +218,7 @@ export default function Subscription() {
                   : sb.underReviewCrypto}
               </p>
               <div className="flex flex-wrap gap-3 mt-3 text-xs text-muted-foreground">
-                <span dir="ltr">${pendingSubmission.amountExpected}</span>
+                <span dir="ltr">${formatAmount(pendingSubmission.amountExpected)}</span>
                 <span>
                   {pendingSubmission.method === "syriatel_cash" ? sb.walletName : sb.cryptoName}
                 </span>
@@ -435,7 +439,7 @@ export default function Subscription() {
             ) : (
               <CryptoPayment
                 subscriptionId={pending.id}
-                priceUsd={pending.priceUsd}
+                amountUsdt={pending.amountUsdt}
                 onSubmitted={() => {
                   setSelectedPlanCode(null);
                   setPending(null);

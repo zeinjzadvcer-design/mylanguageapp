@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { parseConfirmationSms } from "./wallet-sms-policy";
+import {
+  parseConfirmationSms,
+  parseAllowedSenders,
+  isTrustedSender,
+  toAsciiDigits,
+} from "./wallet-sms-policy";
 
 /**
  * The message Syriatel actually sends, as reported by the merchant:
@@ -32,11 +37,11 @@ describe("parseConfirmationSms — tolerating a reworded message", () => {
     // Syriatel can reword at will. Anchoring on «رقم العملية» and taking the
     // digits that follow survives a colon, or nothing at all, in between.
     expect(
-      parseConfirmationSms("استلمت مبلغ 5000 ل.س. رقم العملية: 600111222333")
+      parseConfirmationSms("تم استلام مبلغ 5000 ل.س. رقم العملية: 600111222333")
         .operationNumber,
     ).toBe("600111222333");
     expect(
-      parseConfirmationSms("مبلغ 5000 رقم العملية 600111222333").operationNumber,
+      parseConfirmationSms("تم استلام مبلغ 5000 رقم العملية 600111222333").operationNumber,
     ).toBe("600111222333");
   });
 
@@ -49,7 +54,7 @@ describe("parseConfirmationSms — tolerating a reworded message", () => {
   });
 
   it("strips thousands separators — 25,000 and 25000 are one payment", () => {
-    expect(parseConfirmationSms("مبلغ 25,000 ل.س رقم العملية 6001").amountSyp).toBe(
+    expect(parseConfirmationSms("تم استلام مبلغ 25,000 ل.س رقم العملية 6001").amountSyp).toBe(
       "25000",
     );
   });
@@ -95,15 +100,55 @@ describe("parseConfirmationSms — failing visibly", () => {
   });
 });
 
+describe("isTrustedSender", () => {
+  const allowed = parseAllowedSenders("Syriatel, Syriatel Cash");
+
+  it("accepts a listed sender, ignoring case and spacing", () => {
+    expect(isTrustedSender("SYRIATEL", allowed)).toBe(true);
+    expect(isTrustedSender(" Syriatel Cash ", allowed)).toBe(true);
+  });
+
+  it("refuses a student's number and a lookalike name", () => {
+    expect(isTrustedSender("+963944123456", allowed)).toBe(false);
+    expect(isTrustedSender("Syriatel-Offers", allowed)).toBe(false);
+  });
+
+  it("refuses a message with no sender", () => {
+    expect(isTrustedSender(null, allowed)).toBe(false);
+  });
+
+  it("defaults to Syriatel when nothing is configured", () => {
+    expect(parseAllowedSenders(undefined)).toEqual(["syriatel"]);
+  });
+});
+
+describe("toAsciiDigits", () => {
+  it("normalises Arabic-Indic and Persian digits, so one number compares equal", () => {
+    expect(toAsciiDigits("٦٠٠١٢٣")).toBe("600123");
+    expect(toAsciiDigits("۶۰۰۱۲۳")).toBe("600123");
+    expect(toAsciiDigits("600123")).toBe("600123");
+  });
+});
+
+describe("parseConfirmationSms — only money received counts", () => {
+  it("ignores an outgoing transfer, whose number the other party also knows", () => {
+    const result = parseConfirmationSms(
+      "تم تحويل مبلغ 250000 ل.س بنجاح. رقم العملية هو 600123456789",
+    );
+    expect(result.operationNumber).toBeNull();
+    expect(result.amountSyp).toBeNull();
+  });
+});
+
 describe("parseConfirmationSms — amounts are never floats", () => {
   it("returns the amount as a string, so no precision is lost on the way", () => {
-    const result = parseConfirmationSms("مبلغ 1234567.89 ل.س رقم العملية 600123456");
+    const result = parseConfirmationSms("تم استلام مبلغ 1234567.89 ل.س رقم العملية 600123456");
     expect(typeof result.amountSyp).toBe("string");
     expect(result.amountSyp).toBe("1234567.89");
   });
 
   it("rejects an unparseable amount rather than reporting NaN", () => {
-    expect(parseConfirmationSms("مبلغ ... ل.س رقم العملية 600123456").amountSyp).toBeNull();
+    expect(parseConfirmationSms("تم استلام مبلغ ... ل.س رقم العملية 600123456").amountSyp).toBeNull();
   });
 });
 

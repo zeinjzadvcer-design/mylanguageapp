@@ -23,7 +23,7 @@
  * against a guess at it.
  */
 
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import {
   db,
   paymentSettingsTable,
@@ -33,6 +33,8 @@ import {
 import { logger } from "../lib/logger";
 import { SETTINGS_ROW_ID } from "./payment-settings";
 import {
+  isTrustedSender,
+  parseAllowedSenders,
   parseConfirmationSms,
   SUBMISSION_WINDOW_MS,
   type ParsedSms,
@@ -41,7 +43,10 @@ import {
 // Re-exported so callers have one import for the whole concern; the parsing
 // rules live in wallet-sms-policy.ts, which has no database import.
 export { parseConfirmationSms, SUBMISSION_WINDOW_MS, type ParsedSms };
-import { activateSubscription } from "./subscription-activation";
+import { activateSubscription, flagForReview } from "./subscription-activation";
+
+/** Who a confirmation may come from. See isTrustedSender. */
+const ALLOWED_SENDERS = parseAllowedSenders(process.env.WALLET_SMS_SENDERS);
 
 /** What became of an ingested message. */
 export type IngestOutcome =
@@ -52,6 +57,12 @@ export type IngestOutcome =
    * wording changed — the raw text is kept so it can be re-parsed later.
    */
   | "stored_unparsed"
+  /**
+   * Stored but not believed: it did not come from a sender in
+   * WALLET_SMS_SENDERS. Kept, with its sender, so a wrong setting can be seen
+   * and corrected.
+   */
+  | "stored_untrusted_sender"
   /**
    * Stored, but no submission carries this operation number YET.
    *
@@ -74,7 +85,12 @@ export async function ingestSms(input: {
   sender: string | null;
   receivedAt: Date;
 }): Promise<{ outcome: IngestOutcome; messageId: number | null }> {
-  const parsed = parseConfirmationSms(input.rawText);
+  // An untrusted message is stored with nothing parsed out of it, so no sweep
+  // or later submission can ever pair with it.
+  const trusted = isTrustedSender(input.sender, ALLOWED_SENDERS);
+  const parsed = trusted
+    ? parseConfirmationSms(input.rawText)
+    : { operationNumber: null, amountSyp: null };
 
   // Stored unconditionally, including a redelivery of a message already seen.
   //
@@ -99,6 +115,14 @@ export async function ingestSms(input: {
     .returning({ id: walletSmsMessagesTable.id });
   const messageId = row.id;
 
+  if (!trusted) {
+    logger.warn(
+      { messageId, sender: input.sender },
+      "Wallet SMS ignored: sender is not in WALLET_SMS_SENDERS",
+    );
+    return { outcome: "stored_untrusted_sender", messageId };
+  }
+
   if (!parsed.operationNumber) {
     // Stored but unreadable. Worth a warning rather than a silent row: this is
     // how a reworded message announces itself.
@@ -114,6 +138,11 @@ export async function ingestSms(input: {
     outcome: matched ? "matched" : "stored_unmatched",
     messageId,
   };
+}
+
+/** Whether this claim re-uses an identifier an admin has already rejected. */
+function isResubmission(log: unknown): boolean {
+  return (log as { resubmittedAfterRejection?: boolean } | null)?.resubmittedAfterRejection === true;
 }
 
 /**
@@ -134,14 +163,15 @@ async function matchMessage(
       and(
         eq(paymentSubmissionsTable.operationNumber, operationNumber),
         eq(paymentSubmissionsTable.method, "syriatel_cash"),
+        // A number can have a rejected claim and a later open one; the unique
+        // index allows at most one that is not rejected.
+        ne(paymentSubmissionsTable.status, "rejected"),
       ),
     )
     .limit(1);
 
   if (!submission) return false;
-  if (submission.status === "approved" || submission.status === "rejected") {
-    return false;
-  }
+  if (submission.status === "approved") return false;
 
   const [message] = await db
     .select()
@@ -151,10 +181,13 @@ async function matchMessage(
 
   if (!message) return false;
 
-  // The window is measured from when the handset received the message, so a
-  // companion app that was offline does not eat the student's time.
-  const age = Date.now() - message.receivedAt.getTime();
-  const withinWindow = age <= SUBMISSION_WINDOW_MS;
+  // The window runs from the payment (when the handset received the SMS) to
+  // when the student submitted the number. Measured between those two events,
+  // not against the clock at match time: a student who submitted promptly
+  // must not fall outside it because the companion app forwarded late. A
+  // negative gap (submitted before the SMS arrived) is inside the window.
+  const gap = submission.createdAt.getTime() - message.receivedAt.getTime();
+  const withinWindow = gap <= SUBMISSION_WINDOW_MS;
 
   // Amounts are compared as strings through Number only for the comparison
   // itself; both sides are SQL numeric, so neither was ever a float.
@@ -162,20 +195,39 @@ async function matchMessage(
   const observed = Number(message.parsedAmountSyp ?? "0");
   const amountOk = expected > 0 && observed >= expected;
 
+  // A person already said no to this identifier once, so the SMS is evidence
+  // for them to weigh and never grounds to activate on its own.
+  const resubmitted = isResubmission(submission.verificationLog);
+
   const verification = {
     source: "wallet_sms",
+    ...(resubmitted ? { resubmittedAfterRejection: true } : {}),
     smsMessageId: messageId,
     operationNumber,
     amountExpectedSyp: submission.amountExpectedSyp,
     amountObservedSyp: message.parsedAmountSyp,
     receivedAt: message.receivedAt.toISOString(),
+    submittedAt: submission.createdAt.toISOString(),
     withinWindow,
     amountOk,
   };
 
-  if (!withinWindow || !amountOk) {
+  // Recorded whichever way this goes: the message has found its submission.
+  await db
+    .update(walletSmsMessagesTable)
+    .set({ matchedSubmissionId: submission.id, matchedAt: new Date() })
+    .where(eq(walletSmsMessagesTable.id, messageId));
+
+  // Every write below is conditional on the submission still being open: this
+  // runs outside any lock, and an admin may have decided it meanwhile.
+  const stillOpen = and(
+    eq(paymentSubmissionsTable.id, submission.id),
+    inArray(paymentSubmissionsTable.status, ["pending", "verifying"]),
+  );
+
+  if (!withinWindow || !amountOk || resubmitted) {
     // Left for an admin rather than rejected. A short payment or a late
-    // submission is a judgement call — the money did arrive — and the log
+    // submission is a judgement call (the money did arrive), and the log
     // above tells them exactly what was seen.
     await db
       .update(paymentSubmissionsTable)
@@ -184,10 +236,10 @@ async function matchMessage(
         amountObserved: message.parsedAmountSyp,
         verificationLog: { ...verification, needsReview: true },
       })
-      .where(eq(paymentSubmissionsTable.id, submission.id));
+      .where(stillOpen);
 
     logger.info(
-      { submissionId: submission.id, withinWindow, amountOk },
+      { submissionId: submission.id, withinWindow, amountOk, resubmitted },
       "Wallet SMS matched a submission but needs review",
     );
     return false;
@@ -200,12 +252,7 @@ async function matchMessage(
       confirmedAt: new Date(),
       verificationLog: verification,
     })
-    .where(eq(paymentSubmissionsTable.id, submission.id));
-
-  await db
-    .update(walletSmsMessagesTable)
-    .set({ matchedSubmissionId: submission.id, matchedAt: new Date() })
-    .where(eq(walletSmsMessagesTable.id, messageId));
+    .where(stillOpen);
 
   // reviewerId null: no human approved this, the SMS did.
   const outcome = await activateSubscription(submission.id, null);
@@ -215,6 +262,8 @@ async function matchMessage(
       { submissionId: submission.id, reason: outcome.reason },
       "Wallet SMS verified but activation failed",
     );
+    // The money arrived; a person has to decide what it bought.
+    await flagForReview(submission.id, { activationFailed: outcome.reason });
     return false;
   }
 
@@ -226,41 +275,92 @@ async function matchMessage(
 }
 
 /**
- * Pair stored messages with submissions that arrived after them.
+ * Try to settle one submission against the messages already stored.
  *
- * The common ordering: a student pays, the SMS lands, and only then do they
- * open the app and type the number. Nothing triggers a re-check at that
- * moment, so without this sweep that payment would wait for an admin.
+ * Called the moment a student submits (the SMS usually landed first) and by
+ * the sweep. Looks the message up by operation number with no age limit, so a
+ * late submission still finds its SMS and reaches the needs-review path,
+ * rather than sitting in `verifying` with nothing ever touching it.
  */
-export async function sweepUnmatchedSms(): Promise<number> {
-  const rows = await db
+export async function matchSubmission(submissionId: number): Promise<boolean> {
+  const [submission] = await db
     .select({
-      id: walletSmsMessagesTable.id,
-      operationNumber: walletSmsMessagesTable.parsedOperationNumber,
+      id: paymentSubmissionsTable.id,
+      status: paymentSubmissionsTable.status,
+      operationNumber: paymentSubmissionsTable.operationNumber,
+      createdAt: paymentSubmissionsTable.createdAt,
+      verificationLog: paymentSubmissionsTable.verificationLog,
     })
-    .from(walletSmsMessagesTable)
+    .from(paymentSubmissionsTable)
     .where(
       and(
-        isNull(walletSmsMessagesTable.matchedSubmissionId),
-        sql`${walletSmsMessagesTable.parsedOperationNumber} is not null`,
-        // Older than the window can never match now; leaving them out keeps
-        // the sweep bounded as the table grows.
-        sql`${walletSmsMessagesTable.receivedAt} > now() - make_interval(secs => ${
-          SUBMISSION_WINDOW_MS / 1000
-        })`,
+        eq(paymentSubmissionsTable.id, submissionId),
+        eq(paymentSubmissionsTable.method, "syriatel_cash"),
       ),
     )
+    .limit(1);
+
+  if (!submission?.operationNumber) return false;
+  // A resubmission is already in the admin queue, and comes through here only
+  // to have its SMS attached as evidence.
+  if (submission.status !== "verifying" && !isResubmission(submission.verificationLog)) {
+    return false;
+  }
+
+  // The newest copy: a redelivered message is stored again, and any copy
+  // carries the same payment.
+  const [message] = await db
+    .select({ id: walletSmsMessagesTable.id })
+    .from(walletSmsMessagesTable)
+    .where(eq(walletSmsMessagesTable.parsedOperationNumber, submission.operationNumber))
     .orderBy(desc(walletSmsMessagesTable.receivedAt))
+    .limit(1);
+
+  if (message) return matchMessage(message.id, submission.operationNumber);
+
+  // No SMS has ever carried this number. Waiting is right for a while (the
+  // forwarder may be offline), but not forever: past the window it is most
+  // likely a mistyped number, and only an admin can sort that out with the
+  // student, who is blocked from resubmitting while this is open.
+  if (Date.now() - submission.createdAt.getTime() > SUBMISSION_WINDOW_MS) {
+    await flagForReview(submission.id, {
+      source: "wallet_sms",
+      lastOutcome: "no_sms_received",
+      note: "No confirmation SMS with this operation number arrived. The number may be mistyped, or the companion app may not be forwarding.",
+    });
+    logger.info({ submissionId }, "Wallet submission saw no SMS within the window; sent for review");
+  }
+  return false;
+}
+
+/**
+ * Settle submissions still waiting on their SMS.
+ *
+ * Walks open SUBMISSIONS rather than stored messages. Messages accumulate
+ * without bound (retries, redeliveries, transfers unrelated to the app) and a
+ * sweep over them starved real payments behind noise; open submissions are
+ * few, each one is a student waiting, and the oldest go first.
+ */
+export async function sweepWalletSubmissions(): Promise<number> {
+  const rows = await db
+    .select({ id: paymentSubmissionsTable.id })
+    .from(paymentSubmissionsTable)
+    .where(
+      and(
+        eq(paymentSubmissionsTable.method, "syriatel_cash"),
+        eq(paymentSubmissionsTable.status, "verifying"),
+      ),
+    )
+    .orderBy(asc(paymentSubmissionsTable.createdAt))
     .limit(100);
 
   let matched = 0;
   for (const row of rows) {
-    if (!row.operationNumber) continue;
     try {
-      if (await matchMessage(row.id, row.operationNumber)) matched++;
+      if (await matchSubmission(row.id)) matched++;
     } catch (err) {
-      // One bad message must not stop the sweep for everyone else.
-      logger.error({ err, messageId: row.id }, "Wallet SMS sweep failed for a message");
+      // One bad row must not stop the sweep for everyone else.
+      logger.error({ err, submissionId: row.id }, "Wallet SMS sweep failed for a submission");
     }
   }
   return matched;

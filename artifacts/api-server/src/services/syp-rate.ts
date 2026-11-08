@@ -11,7 +11,7 @@
  * and prices fall back to the admin's manual figures.
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, paymentSettingsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { invalidate, CK } from "./cache";
@@ -100,6 +100,13 @@ export async function refreshSypRate(): Promise<RefreshOutcome> {
   const key = process.env.SPTODAY_API_KEY?.trim();
   if (!key) return record({ ok: false, error: "SPTODAY_API_KEY is not set" });
 
+  // Stamped here too, so a manual refresh also resets the scheduler's interval
+  // rather than being followed by a second call on the next tick.
+  await db
+    .update(paymentSettingsTable)
+    .set({ sypRateAttemptedAt: new Date() })
+    .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID));
+
   const config = await getPricingConfig();
 
   let body: unknown;
@@ -161,9 +168,31 @@ async function record(outcome: { ok: false; error: string }): Promise<RefreshOut
  * spend a call from a hundred-a-month quota.
  */
 export async function refreshSypRateIfDue(): Promise<void> {
-  const config = await getPricingConfig();
-  if (!config.auto || !sptodayConfigured()) return;
-  const age = config.fetchedAt ? Date.now() - config.fetchedAt.getTime() : Infinity;
-  if (age < RATE_REFRESH_MS) return;
+  if (!sptodayConfigured()) return;
+
+  // Claim the slot before fetching, in one conditional UPDATE. Only the
+  // instance whose UPDATE matches fetches; every other instance, and every
+  // later tick, sees the new timestamp and skips.
+  //
+  // Measured from the last ATTEMPT, not the last success. Measuring from
+  // success retried a failing source every minute, which spent the whole
+  // monthly quota in under two hours of outage. A failed fetch therefore
+  // waits the full interval too; the last good rate stays in use meanwhile,
+  // and an admin can still refresh by hand.
+  const claimed = await db
+    .update(paymentSettingsTable)
+    .set({ sypRateAttemptedAt: new Date() })
+    .where(
+      and(
+        eq(paymentSettingsTable.id, SETTINGS_ROW_ID),
+        eq(paymentSettingsTable.sypRateAuto, true),
+        // Falls back to the last success for rows from before the column.
+        sql`coalesce(${paymentSettingsTable.sypRateAttemptedAt}, ${paymentSettingsTable.sypRateFetchedAt}, '-infinity'::timestamptz)
+            <= now() - make_interval(secs => ${RATE_REFRESH_MS / 1000})`,
+      ),
+    )
+    .returning({ id: paymentSettingsTable.id });
+
+  if (claimed.length === 0) return;
   await refreshSypRate();
 }

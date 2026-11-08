@@ -83,3 +83,6 @@ docker-compose.override.yml
 
 # The stray NUL that Windows shell redirection leaves behind.
 NUL
+
+# Hand-made test payloads for the SMS ingest; they carry a live token.
+sms.json

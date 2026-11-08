@@ -22,6 +22,38 @@ export const SUBMISSION_WINDOW_MS = parseInt(
   10,
 );
 
+/**
+ * Rewrite Arabic-Indic and Persian digits as ASCII.
+ *
+ * A handset may deliver or type either, and the same operation number has to
+ * compare equal however it was entered.
+ */
+export function toAsciiDigits(text: string): string {
+  return text
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+}
+
+/** The sender ids a confirmation may come from, from a comma-separated setting. */
+export function parseAllowedSenders(raw: string | undefined): string[] {
+  return (raw ?? "Syriatel")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Whether a forwarded message really came from the operator.
+ *
+ * Exact, ignoring case. The filter on the phone is per-app setup that can be
+ * missing or mistyped, and without this check anyone could text the merchant
+ * SIM a confirmation they wrote themselves and then submit its number. A
+ * message with no sender is not trusted: nothing says who wrote it.
+ */
+export function isTrustedSender(sender: string | null, allowed: readonly string[]): boolean {
+  return sender !== null && allowed.includes(sender.trim().toLowerCase());
+}
+
 export interface ParsedSms {
   operationNumber: string | null;
   amountSyp: string | null;
@@ -37,16 +69,23 @@ export interface ParsedSms {
  * and silence is the worst failure here: payments would stop activating with
  * nothing to show why.
  *
+ * The one thing it is strict about is direction: the message must say money
+ * was RECEIVED («استلام مبلغ»). An outgoing transfer or refund also carries an
+ * amount and an operation number, and the student on the other end knows that
+ * number, so reading it as a payment would activate a subscription for money
+ * that left the account. A reworded message therefore stops activating and
+ * waits for an admin, which is the safe way round to be wrong.
+ *
  * Returns nulls rather than throwing when it cannot read the message. The
  * caller stores that as-is, and a null is itself the signal that the format
  * changed and an admin should look.
  */
 export function parseConfirmationSms(text: string): ParsedSms {
-  // Arabic-Indic digits (٠-٩) alongside ASCII: a handset may deliver either,
-  // and the same message can mix them.
-  const normalised = text.replace(/[٠-٩]/g, (d) =>
-    String(d.charCodeAt(0) - 0x0660),
-  );
+  const normalised = toAsciiDigits(text);
+
+  if (!/استلام\s*مبلغ/.test(normalised)) {
+    return { operationNumber: null, amountSyp: null };
+  }
 
   // The amount: digits, optionally with a decimal part, after «مبلغ».
   // Thousands separators are stripped before parsing — 25,000 and 25000 are

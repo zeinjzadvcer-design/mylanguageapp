@@ -181,6 +181,19 @@ router.post(
 
     if (!outcome.ok) {
       const code = outcome.reason === "submission_not_found" ? 404 : 409;
+      if (outcome.reason === "subscription_not_pending") {
+        // Approving would restart a subscription that is already active (or
+        // revive a cancelled one). The payment is probably a second one for
+        // the same plan, which is a refund conversation, not an activation.
+        res.status(code).json({
+          error:
+            "This subscription is no longer waiting for payment; it was already activated or cancelled. Reject this submission and settle it with the student.",
+          errorAr:
+            "هذا الاشتراك لم يعد بانتظار الدفع، فقد تم تفعيله أو إلغاؤه. ارفض هذا الطلب وتواصل مع الطالب.",
+          code: outcome.reason,
+        });
+        return;
+      }
       res.status(code).json({ error: outcome.reason });
       return;
     }
@@ -413,6 +426,17 @@ router.patch("/admin/payment-settings", requireAdmin, async (req, res): Promise<
     .set(update)
     .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID))
     .returning();
+
+  // A quote is a number in the unit that was set when it was taken, so a unit
+  // change makes every open quote wrong by a factor of 100: a student could
+  // send a hundredth of the price and be checked against the stale figure.
+  // Cleared, so their next step is priced in the new unit.
+  if (update.sypUnit) {
+    await db
+      .update(studentSubscriptionsTable)
+      .set({ quotedPriceSyp: null, quotedAt: null })
+      .where(eq(studentSubscriptionsTable.status, "pending_payment"));
+  }
 
   const pricingChanged = "sypRateAuto" in patch || "sypUnit" in patch;
 

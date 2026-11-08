@@ -40,9 +40,7 @@ describe("addBillingCycle — month ends", () => {
     // the student a few days they did not pay for and moving their billing
     // date permanently.
     const jan31 = new Date("2026-01-31T12:00:00.000Z");
-    const result = addBillingCycle(jan31, "monthly");
-    expect(result.getUTCMonth()).toBe(2); // March — JS clamps into early March
-    expect(result.getUTCDate()).toBeLessThanOrEqual(3);
+    expect(addBillingCycle(jan31, "monthly").toISOString()).toBe("2026-02-28T12:00:00.000Z");
   });
 
   it("handles a leap day", () => {

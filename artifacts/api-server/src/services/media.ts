@@ -15,7 +15,7 @@
  * rather than something the client asserted.
  */
 
-import { eq, and, gte, sql } from "drizzle-orm";
+import { eq, and, gte, ne, sql } from "drizzle-orm";
 import { db, mediaAssetsTable } from "@workspace/db";
 import {
   storage,
@@ -102,7 +102,18 @@ export class MediaValidationError extends Error {
  */
 const DAILY_RECORDING_LIMIT = parseInt(process.env.MEDIA_DAILY_UPLOAD_LIMIT ?? "200", 10);
 
-async function countTodaysUploads(userId: number): Promise<number> {
+/**
+ * Payment receipts one student may start in a day.
+ *
+ * Separate from the recording cap so a student who practised all day can
+ * still send a receipt, but not uncapped: any student can request a receipt
+ * upload, and without a limit one account could fill the bucket. A real
+ * payment needs one or two; ten leaves room for retakes.
+ */
+const DAILY_RECEIPT_LIMIT = 10;
+
+/** Uploads this user started in the last 24 hours: receipts, or everything else. */
+async function countTodaysUploads(userId: number, receipts: boolean): Promise<number> {
   const since = new Date(Date.now() - 24 * 3_600_000);
   const [{ used }] = await db
     .select({ used: sql<number>`count(*)::int` })
@@ -111,6 +122,9 @@ async function countTodaysUploads(userId: number): Promise<number> {
       and(
         eq(mediaAssetsTable.ownerUserId, userId),
         gte(mediaAssetsTable.createdAt, since),
+        receipts
+          ? eq(mediaAssetsTable.purpose, "payment_receipt")
+          : ne(mediaAssetsTable.purpose, "payment_receipt"),
       ),
     );
   return used;
@@ -179,11 +193,23 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
   // The daily cap counts recordings. A payment image is not one, and a student
   // who has been practising all day must still be able to send a receipt.
   if (!isCurriculum && !isPaymentImage) {
-    const used = await countTodaysUploads(userId);
+    const used = await countTodaysUploads(userId, false);
     if (used >= DAILY_RECORDING_LIMIT) {
       throw new MediaValidationError(
         "DAILY_LIMIT",
         "You have reached today's recording limit. Try again tomorrow.",
+      );
+    }
+  }
+
+  // Receipts have their own, much smaller cap. The admin's QR upload is not
+  // counted: only admins can make one, and it is replaced rather than piled up.
+  if (purpose === "payment_receipt") {
+    const used = await countTodaysUploads(userId, true);
+    if (used >= DAILY_RECEIPT_LIMIT) {
+      throw new MediaValidationError(
+        "DAILY_LIMIT",
+        "You have uploaded too many receipts today. Try again tomorrow.",
       );
     }
   }
@@ -258,7 +284,14 @@ export async function completeUpload(
     );
   }
 
-  const maxBytes = asset.purpose === "curriculum" ? MAX_CMS_BYTES : MAX_RECORDING_BYTES;
+  // The same cap beginUpload applied to the declared size. This is the check
+  // that counts: the declared size is only what the client claimed.
+  const maxBytes =
+    asset.purpose === "payment_receipt" || asset.purpose === "payment_qr"
+      ? MAX_PAYMENT_IMAGE_BYTES
+      : asset.purpose === "curriculum"
+        ? MAX_CMS_BYTES
+        : MAX_RECORDING_BYTES;
 
   /** Delete the object and mark the row failed, then refuse. */
   const reject = async (code: string, message: string): Promise<never> => {

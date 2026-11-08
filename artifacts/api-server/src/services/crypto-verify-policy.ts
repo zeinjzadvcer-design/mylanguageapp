@@ -34,6 +34,8 @@ export type VerifyFailure =
   | "insufficient_confirmations"
   | "no_matching_transfer"
   | "amount_too_low"
+  /** More than the exact amount: real money, but not provably this student's. */
+  | "amount_not_exact"
   | "tx_too_old";
 
 export interface VerifyInput {
@@ -41,11 +43,57 @@ export interface VerifyInput {
   currentBlock: number;
   /** The wallet we expect to have been paid. Lowercased. */
   walletAddress: string;
-  /** What the plan costs, in whole USDT. */
-  amountExpected: number;
+  /** The exact amount owed, tag included. See usdtAmountWithTag. */
+  amountExpected: number | string;
   confirmations: number;
-  /** Fractional tolerance, e.g. 0.02 for 2%. */
-  amountTolerance: number;
+  /** When the transaction's block was mined, in Unix seconds. */
+  blockTimestamp: number;
+  /** A payment cannot predate the amount it was told to send. */
+  subscriptionOpenedAt: Date;
+  /** When the student claimed the transaction; the age limit counts back from here. */
+  submittedAt: Date;
+  maxAgeDays: number;
+}
+
+/** Drift allowed between a block's timestamp and this server's clock. */
+const CLOCK_SKEW_MS = 5 * 60_000;
+
+/** How many distinct tags exist for one price. */
+export const USDT_TAG_COUNT = 999;
+
+/**
+ * A plan's price plus a tag, as the exact amount a student is asked to send.
+ *
+ * WHY THE AMOUNT CARRIES AN IDENTITY
+ * ──────────────────────────────────
+ * A blockchain transfer says nothing about who it is for, and the receiving
+ * wallet and its history are public. Checking only "this hash paid our wallet"
+ * lets anyone copy a stranger's unclaimed hash from an explorer and be
+ * activated on it, leaving the real payer with "already used". The sender
+ * address cannot help: it is just as public, and an exchange withdrawal comes
+ * from a hot wallet shared by thousands.
+ *
+ * So the amount is the proof. It is held for one subscription while that
+ * subscription waits for payment (see services/usdt-amount.ts), and nobody else
+ * can be given it during that time, however many accounts they open.
+ *
+ * Tags are 1 to 999 ten-thousandths: under ten cents.
+ */
+export function usdtAmountWithTag(priceUsd: number, tag: number): string {
+  // Integer ten-thousandths throughout, so no float decides the digits.
+  const total = Math.round(priceUsd * 10_000) + tag;
+  const whole = Math.floor(total / 10_000);
+  return `${whole}.${String(total % 10_000).padStart(4, "0")}`;
+}
+
+/** Every amount for this price not currently held by another subscription. */
+export function freeUsdtAmounts(priceUsd: number, held: ReadonlySet<string>): string[] {
+  const free: string[] = [];
+  for (let tag = 1; tag <= USDT_TAG_COUNT; tag++) {
+    const amount = usdtAmountWithTag(priceUsd, tag);
+    if (!held.has(amount)) free.push(amount);
+  }
+  return free;
 }
 
 export interface VerifyResult {
@@ -147,7 +195,10 @@ export function verifyTransfer(input: VerifyInput): VerifyResult {
     walletAddress,
     amountExpected,
     confirmations,
-    amountTolerance,
+    blockTimestamp,
+    subscriptionOpenedAt,
+    submittedAt,
+    maxAgeDays,
   } = input;
 
   const wallet = walletAddress.toLowerCase();
@@ -223,14 +274,6 @@ export function verifyTransfer(input: VerifyInput): VerifyResult {
     };
   }
 
-  // The student types the amount by hand, so a few cents short is ordinary.
-  // Tolerance is applied to the expected amount, in base units, so no float
-  // comparison decides whether someone paid.
-  const expectedRaw = usdtToBaseUnits(amountExpected);
-  const toleranceRaw =
-    (expectedRaw * BigInt(Math.round(amountTolerance * 10_000))) / 10_000n;
-  const minimumRaw = expectedRaw - toleranceRaw;
-
   const observed = {
     amountRaw: total,
     amountUsdt: formatUnits(total),
@@ -238,29 +281,50 @@ export function verifyTransfer(input: VerifyInput): VerifyResult {
     confirmationsSeen,
   };
 
-  if (total < minimumRaw) {
+  // A transaction from before the student was given this amount cannot have
+  // paid it, and without an age limit students recycle forgotten transfers.
+  const minedAtMs = blockTimestamp * 1000;
+  const earliestMs = Math.max(
+    subscriptionOpenedAt.getTime() - CLOCK_SKEW_MS,
+    submittedAt.getTime() - maxAgeDays * 86_400_000,
+  );
+  if (minedAtMs < earliestMs) {
     return {
       ...observed,
       ok: false,
-      failure: "amount_too_low",
+      failure: "tx_too_old",
       detail: {
-        expected: amountExpected.toFixed(2),
-        minimumAccepted: formatUnits(minimumRaw),
+        minedAt: new Date(minedAtMs).toISOString(),
+        earliestAccepted: new Date(earliestMs).toISOString(),
         observed: formatUnits(total),
       },
     };
   }
 
-  // Overpayment is accepted and the difference is not credited. Stated on the
-  // payment page; refusing it would strand money that genuinely arrived.
+  // Exact, in base units, so no float decides whether someone paid. There is
+  // no tolerance because the last digits are what identify the student: see
+  // usdtAmountWithTag. Anything else goes to an admin rather than being
+  // refused, since the money did arrive; the observed amount is kept for them.
+  const expectedRaw = usdtToBaseUnits(amountExpected);
+  if (total !== expectedRaw) {
+    return {
+      ...observed,
+      ok: false,
+      failure: total < expectedRaw ? "amount_too_low" : "amount_not_exact",
+      detail: {
+        expected: String(amountExpected),
+        observed: formatUnits(total),
+      },
+    };
+  }
+
   return {
     ...observed,
     ok: true,
     failure: null,
     detail: {
-      expected: amountExpected.toFixed(2),
+      expected: String(amountExpected),
       observed: formatUnits(total),
-      overpaid: total > expectedRaw ? formatUnits(total - expectedRaw) : null,
       confirmationsSeen,
       contract: USDT_BSC_CONTRACT,
       wallet,

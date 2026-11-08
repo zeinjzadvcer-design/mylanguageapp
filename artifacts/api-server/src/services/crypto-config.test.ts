@@ -13,7 +13,6 @@ describe("loadCryptoConfig — how the chain is read", () => {
     const config = loadCryptoConfig({});
     expect(config.rpcUrls.length).toBeGreaterThan(0);
     expect(config.confirmations).toBe(15);
-    expect(config.amountTolerance).toBeCloseTo(0.02);
     expect(config.maxAgeDays).toBe(7);
   });
 
@@ -31,11 +30,6 @@ describe("loadCryptoConfig — how the chain is read", () => {
     expect(() => loadCryptoConfig({ BSC_CONFIRMATIONS: "0" })).toThrow(/BSC_CONFIRMATIONS/);
   });
 
-  it("rejects an absurd tolerance rather than accepting half price", () => {
-    expect(() => loadCryptoConfig({ CRYPTO_AMOUNT_TOLERANCE_PCT: "90" })).toThrow(
-      /CRYPTO_AMOUNT_TOLERANCE_PCT/,
-    );
-  });
 });
 
 describe("checkWalletAddress — what an admin may save", () => {
