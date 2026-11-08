@@ -16,7 +16,8 @@ import { RedisStore, type SendCommandFn } from "rate-limit-redis";
 import router from "./routes";
 import docsRouter from "./routes/docs";
 import { logger } from "./lib/logger";
-import { clientIp } from "./lib/client-ip";
+import { clientAddressIsKnown, clientIp } from "./lib/client-ip";
+import { isKnownDevice } from "./lib/known-device";
 import { pool } from "@workspace/db";
 import { redis } from "./services/redis";
 import { createRedisSessionStore } from "./services/session-store";
@@ -376,8 +377,8 @@ const authLimiter = rateLimit({
 // it has passed TRUST_PROXY hops — so a client reaching the API directly can
 // claim a new address on every request and guess passwords without limit.
 // Keying on the email being guessed closes that whatever the proxy chain
-// looks like. The cost is that someone can lock an account out of password
-// login for one window; that is the usual trade, and the window keeps it short.
+// looks like. A browser that has signed in to this account before counts in a
+// bucket of its own, so someone hammering the login cannot lock its owner out.
 const loginAccountLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "900000", 10),
   limit: parseInt(process.env.RATE_LIMIT_LOGIN_ACCOUNT ?? "10", 10),
@@ -387,7 +388,8 @@ const loginAccountLimiter = rateLimit({
   skipSuccessfulRequests: true,
   keyGenerator: (req) => {
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
-    return email ? `email:${email}` : clientIp(req);
+    if (!email) return clientIp(req);
+    return isKnownDevice(req, email) ? `known:${email}` : `email:${email}`;
   },
   message: { error: "Too many authentication attempts, please try again later" },
 });
@@ -404,6 +406,7 @@ const forgotPasswordLimiter = rateLimit({
   legacyHeaders: false,
   store: makeRedisStore("rl:forgot:"),
   keyGenerator: (req) => clientIp(req),
+  skip: () => !clientAddressIsKnown(),
   message: { error: "Too many requests, please try again later" },
 });
 
@@ -418,8 +421,15 @@ const registerLimiter = rateLimit({
   legacyHeaders: false,
   store: makeRedisStore("rl:register:"),
   keyGenerator: (req) => clientIp(req),
+  skip: () => !clientAddressIsKnown(),
   message: { error: "Too many accounts created from this address, please try again later" },
 });
+
+if (!clientAddressIsKnown()) {
+  logger.warn(
+    "CLIENT_IP_HEADER is not set: per-address limits on sign-up and forgot-password are off",
+  );
+}
 
 app.use("/api", failOpen(apiLimiter));
 app.use(`/api${PRACTICE_POLL_PATH}`, failOpen(practicePollLimiter));
