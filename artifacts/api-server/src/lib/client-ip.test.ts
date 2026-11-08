@@ -1,11 +1,30 @@
 import { describe, it, expect } from "vitest";
-import { clientIp } from "./client-ip";
+import { clientAddressIsKnown, clientIp } from "./client-ip";
 
 /** A request with these headers and this `req.ip`. */
 function req(headers: Record<string, string>, ip = "10.0.0.1") {
   const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
   return { ip, get: (name: string) => lower[name.toLowerCase()] } as Parameters<typeof clientIp>[0];
 }
+
+describe("whether visitors can be told apart", () => {
+  const env = (vars: Record<string, string>) => vars as unknown as NodeJS.ProcessEnv;
+
+  it("is no in production without a client-IP header", () => {
+    expect(clientAddressIsKnown(env({ NODE_ENV: "production" }))).toBe(false);
+    expect(clientAddressIsKnown(env({ NODE_ENV: "production", CLIENT_IP_HEADER: "  " }))).toBe(false);
+  });
+
+  it("is yes in production once the header is set", () => {
+    expect(
+      clientAddressIsKnown(env({ NODE_ENV: "production", CLIENT_IP_HEADER: "do-connecting-ip" })),
+    ).toBe(true);
+  });
+
+  it("is yes outside production, where no ingress hides the visitor", () => {
+    expect(clientAddressIsKnown(env({ NODE_ENV: "development" }))).toBe(true);
+  });
+});
 
 describe("the address rate limits are keyed on", () => {
   it("is req.ip when no header is configured, as before", () => {

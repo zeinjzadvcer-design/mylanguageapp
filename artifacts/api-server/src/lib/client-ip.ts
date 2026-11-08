@@ -20,6 +20,18 @@ import { isIP } from "node:net";
 import type { Request } from "express";
 import { ipKeyGenerator } from "express-rate-limit";
 
+/**
+ * Whether per-address limits can tell visitors apart in this deployment.
+ *
+ * In production without CLIENT_IP_HEADER the address may be the platform's own,
+ * and a limit keyed on it would be one bucket for the whole site: five
+ * forgot-password requests in a window, for every user at once. Local runs have
+ * no such ingress in front of them.
+ */
+export function clientAddressIsKnown(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV !== "production" || Boolean(env.CLIENT_IP_HEADER?.trim());
+}
+
 export function clientIp(
   req: Pick<Request, "get" | "ip">,
   header: string | undefined = process.env.CLIENT_IP_HEADER,
