@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import type { Request } from "express";
+import type { Request, Response } from "express";
 import { eq, and, isNull, lt, gt } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomBytes, createHash } from "node:crypto";
@@ -10,6 +10,7 @@ import { requireAuth } from "../middlewares/auth";
 import { validate, registerSchema, passwordSchema } from "../lib/validate";
 import { mailer } from "../services/mailer";
 import { destroyUserSessions } from "../services/session-store";
+import { rememberDevice } from "../lib/known-device";
 import { logger } from "../lib/logger";
 import { z } from "zod";
 
@@ -24,6 +25,7 @@ const router: IRouter = Router();
  */
 async function signIn(
   req: Request,
+  res: Response,
   user: Pick<typeof usersTable.$inferSelect, "id" | "role" | "name" | "email">,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) =>
@@ -33,6 +35,7 @@ async function signIn(
   req.session.role = user.role;
   req.session.name = user.name;
   req.session.email = user.email;
+  rememberDevice(res, user.email);
 }
 
 /** Look up the default curriculum (first active one by id) */
@@ -81,7 +84,7 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     placementCompleted: false,
   });
 
-  await signIn(req, user);
+  await signIn(req, res, user);
 
   res.status(201).json({
     user: {
@@ -116,7 +119,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
-  await signIn(req, user);
+  await signIn(req, res, user);
 
   res.json({
     user: {
@@ -287,13 +290,16 @@ router.post("/auth/reset-password", async (req, res): Promise<void> => {
     .set({ passwordHash })
     .where(eq(usersTable.id, row.userId));
 
+  // A reset is often how someone takes their account back. Any session opened
+  // with the old password — including one a thief holds — ends here. Before the
+  // token is spent: if the session store is unreachable this throws, and the
+  // student can use the same link again rather than being left with old
+  // sessions alive and a link that no longer works.
+  await destroyUserSessions(req.sessionStore, row.userId);
+
   await db.update(passwordResetTokensTable)
     .set({ usedAt: new Date() })
     .where(eq(passwordResetTokensTable.id, row.id));
-
-  // A reset is often how someone takes their account back. Any session opened
-  // with the old password — including one a thief holds — ends here.
-  await destroyUserSessions(req.sessionStore, row.userId);
 
   // Housekeeping, not security: spent and expired rows have no further use.
   await db.delete(passwordResetTokensTable)
