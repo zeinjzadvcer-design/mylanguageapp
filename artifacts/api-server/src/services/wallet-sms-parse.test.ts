@@ -1,5 +1,35 @@
 import { describe, it, expect } from "vitest";
 import {
+  isTrustedServiceCenter,
+  parseAllowedServiceCenters,
+} from "./wallet-sms-policy";
+
+describe("SMS centre check", () => {
+  const allowed = parseAllowedServiceCenters("+963 933 000001, 963933000002");
+
+  it("reads a comma-separated list, digits only", () => {
+    expect(allowed).toEqual(["963933000001", "963933000002"]);
+  });
+
+  it("is off when nothing is configured", () => {
+    expect(parseAllowedServiceCenters(undefined)).toEqual([]);
+    expect(isTrustedServiceCenter(null, [])).toBe(true);
+    expect(isTrustedServiceCenter("+1555", [])).toBe(true);
+  });
+
+  it("accepts a listed centre however it is formatted", () => {
+    expect(isTrustedServiceCenter("+963933000001", allowed)).toBe(true);
+  });
+
+  it("refuses an unlisted centre", () => {
+    expect(isTrustedServiceCenter("+15550001111", allowed)).toBe(false);
+  });
+
+  it("refuses a message that reports no centre once a list is set", () => {
+    expect(isTrustedServiceCenter(null, allowed)).toBe(false);
+  });
+});
+import {
   parseConfirmationSms,
   parseAllowedSenders,
   isTrustedSender,

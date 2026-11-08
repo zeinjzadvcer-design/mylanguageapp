@@ -54,6 +54,41 @@ export function isTrustedSender(sender: string | null, allowed: readonly string[
   return sender !== null && allowed.includes(sender.trim().toLowerCase());
 }
 
+/** The SMS centres a confirmation may arrive through; empty means any. */
+export function parseAllowedServiceCenters(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.replace(/[^\d]/g, ""))
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Whether a message came through a known SMS centre.
+ *
+ * The sender name alone can be forged: bulk-SMS services let a customer choose
+ * it, so a fake confirmation can reach the merchant SIM reading "Syriatel". The
+ * SMS centre is a second signal such a message has to match. Off until
+ * WALLET_SMS_SERVICE_CENTERS is set, because the real value has to be read off
+ * a genuine message first.
+ */
+export function isTrustedServiceCenter(
+  serviceCenter: string | null,
+  allowed: readonly string[],
+): boolean {
+  if (allowed.length === 0) return true;
+  return serviceCenter !== null && allowed.includes(serviceCenter.replace(/[^\d]/g, ""));
+}
+
+/**
+ * How many subscriptions the SMS path may activate in an hour, with nobody
+ * looking. Forged or not, a burst past this waits for an admin: a limit on how
+ * much a fake confirmation can buy before someone notices.
+ */
+export const SMS_ACTIVATIONS_PER_HOUR = parseInt(
+  process.env.WALLET_SMS_AUTO_MAX_PER_HOUR ?? "30",
+  10,
+);
+
 export interface ParsedSms {
   operationNumber: string | null;
   amountSyp: string | null;
