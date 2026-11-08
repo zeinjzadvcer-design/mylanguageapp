@@ -36,7 +36,9 @@ export type VerifyFailure =
   | "amount_too_low"
   /** More than the exact amount: real money, but not provably this student's. */
   | "amount_not_exact"
-  | "tx_too_old";
+  | "tx_too_old"
+  /** Mined after this subscription's hold on the amount lapsed. */
+  | "amount_hold_expired";
 
 export interface VerifyInput {
   receipt: RpcReceipt;
@@ -50,6 +52,12 @@ export interface VerifyInput {
   blockTimestamp: number;
   /** A payment cannot predate the amount it was told to send. */
   subscriptionOpenedAt: Date;
+  /**
+   * When this subscription's hold on the amount ends; null for one with no
+   * recorded hold. After this the amount can be given to someone else, so a
+   * transfer of it no longer says who paid.
+   */
+  amountHeldUntil?: Date | null;
   /** When the student claimed the transaction; the age limit counts back from here. */
   submittedAt: Date;
   maxAgeDays: number;
@@ -197,6 +205,7 @@ export function verifyTransfer(input: VerifyInput): VerifyResult {
     confirmations,
     blockTimestamp,
     subscriptionOpenedAt,
+    amountHeldUntil,
     submittedAt,
     maxAgeDays,
   } = input;
@@ -220,17 +229,6 @@ export function verifyTransfer(input: VerifyInput): VerifyResult {
       ok: false,
       failure: "tx_failed",
       detail: { reason: "transaction reverted", blockNumber },
-    };
-  }
-
-  // Success is not finality. BSC has reorgs, and a transfer that is undone
-  // after we activated is a subscription nobody paid for.
-  if (confirmationsSeen < confirmations) {
-    return {
-      ...base,
-      ok: false,
-      failure: "insufficient_confirmations",
-      detail: { blockNumber, currentBlock, confirmationsSeen, required: confirmations },
     };
   }
 
@@ -301,6 +299,23 @@ export function verifyTransfer(input: VerifyInput): VerifyResult {
     };
   }
 
+  // The amount only identifies its holder while the hold lasts. Once it lapses
+  // the amount can be given to another student, and without this the old
+  // subscription could claim that student's transfer as its own. Goes to an
+  // admin rather than being refused: the money may well be this student's.
+  if (amountHeldUntil && minedAtMs > amountHeldUntil.getTime() + CLOCK_SKEW_MS) {
+    return {
+      ...observed,
+      ok: false,
+      failure: "amount_hold_expired",
+      detail: {
+        minedAt: new Date(minedAtMs).toISOString(),
+        amountHeldUntil: amountHeldUntil.toISOString(),
+        observed: formatUnits(total),
+      },
+    };
+  }
+
   // Exact, in base units, so no float decides whether someone paid. There is
   // no tolerance because the last digits are what identify the student: see
   // usdtAmountWithTag. Anything else goes to an admin rather than being
@@ -318,6 +333,19 @@ export function verifyTransfer(input: VerifyInput): VerifyResult {
     };
   }
 
+  // Success is not finality. BSC has reorgs, and a transfer that is undone
+  // after we activated is a subscription nobody paid for. Checked last, so a
+  // transaction that can never match is known at once rather than a minute
+  // later: while it waits it holds the hash against the student who really paid.
+  if (confirmationsSeen < confirmations) {
+    return {
+      ...observed,
+      ok: false,
+      failure: "insufficient_confirmations",
+      detail: { blockNumber, currentBlock, confirmationsSeen, required: confirmations },
+    };
+  }
+
   return {
     ...observed,
     ok: true,
@@ -330,6 +358,15 @@ export function verifyTransfer(input: VerifyInput): VerifyResult {
       wallet,
     },
   };
+}
+
+/**
+ * Whether a result shows this subscription's own held amount was what the
+ * transaction paid. Short of confirmations still counts: the identity is
+ * settled, only finality is outstanding.
+ */
+export function provesClaim(result: VerifyResult): boolean {
+  return result.ok || result.failure === "insufficient_confirmations";
 }
 
 /** A 32-byte transaction hash. */

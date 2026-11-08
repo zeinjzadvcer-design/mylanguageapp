@@ -8,6 +8,7 @@ import {
   isValidTxHash,
   usdtAmountWithTag,
   freeUsdtAmounts,
+  provesClaim,
   type RpcReceipt,
 } from "./crypto-verify-policy";
 import { USDT_BSC_CONTRACT, TRANSFER_TOPIC } from "./crypto-config";
@@ -273,6 +274,83 @@ describe("verifyTransfer — the transaction's age", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.failure).toBe("tx_too_old");
+  });
+});
+
+describe("verifyTransfer — the hold on the amount", () => {
+  const minedAt = Date.parse("2026-11-03T12:00:00Z");
+  const held = {
+    ...baseInput,
+    receipt: receipt(),
+    blockTimestamp: minedAt / 1000,
+    subscriptionOpenedAt: new Date("2026-11-01T10:00:00Z"),
+    submittedAt: new Date(minedAt + 60_000),
+  };
+
+  it("refuses a transfer mined after the hold ended, when the amount may be someone else's", () => {
+    const r = verifyTransfer({ ...held, amountHeldUntil: new Date("2026-11-03T10:00:00Z") });
+    expect(r.ok).toBe(false);
+    expect(r.failure).toBe("amount_hold_expired");
+  });
+
+  it("accepts a transfer mined inside the hold, however late it is submitted", () => {
+    const r = verifyTransfer({
+      ...held,
+      amountHeldUntil: new Date("2026-11-03T13:00:00Z"),
+      submittedAt: new Date("2026-11-06T12:00:00Z"),
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("allows a few minutes of clock drift at the end of the hold", () => {
+    const r = verifyTransfer({ ...held, amountHeldUntil: new Date(minedAt - 60_000) });
+    expect(r.ok).toBe(true);
+  });
+
+  it("does not apply to a subscription with no recorded hold", () => {
+    expect(verifyTransfer({ ...held, amountHeldUntil: null }).ok).toBe(true);
+  });
+});
+
+describe("verifyTransfer — a transaction that cannot match says so at once", () => {
+  it("reports the wrong amount before waiting on confirmations", () => {
+    const r = verifyTransfer({
+      ...baseInput,
+      receipt: receipt(),
+      amountExpected: "2.0037",
+      currentBlock: 101,
+    });
+    expect(r.failure).toBe("amount_too_low");
+  });
+
+  it("still waits on confirmations when the amount is right", () => {
+    const r = verifyTransfer({ ...baseInput, receipt: receipt(), currentBlock: 101 });
+    expect(r.failure).toBe("insufficient_confirmations");
+    expect(r.amountUsdt).toBe("2");
+  });
+});
+
+describe("provesClaim", () => {
+  it("is true for a verified transfer and for one only short of confirmations", () => {
+    expect(provesClaim(verifyTransfer({ ...baseInput, receipt: receipt() }))).toBe(true);
+    expect(
+      provesClaim(verifyTransfer({ ...baseInput, receipt: receipt(), currentBlock: 101 })),
+    ).toBe(true);
+  });
+
+  it("is false for a transfer of a different amount", () => {
+    expect(
+      provesClaim(verifyTransfer({ ...baseInput, receipt: receipt(), amountExpected: "2.0037" })),
+    ).toBe(false);
+  });
+
+  it("is false for a transfer outside the hold", () => {
+    const r = verifyTransfer({
+      ...baseInput,
+      receipt: receipt(),
+      amountHeldUntil: new Date(baseInput.subscriptionOpenedAt.getTime() + 1000),
+    });
+    expect(provesClaim(r)).toBe(false);
   });
 });
 
