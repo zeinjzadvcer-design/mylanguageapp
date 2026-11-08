@@ -56,6 +56,7 @@ import {
   practiceSessionsTable,
   studentSubscriptionsTable,
   subscriptionPlansTable,
+  usersTable,
 } from "@workspace/db";
 
 /** The free plan's code in `subscription_plans`. */
@@ -117,17 +118,25 @@ export async function getEntitlement(
   /**
    * The caller's role, when known.
    *
-   * Passed in rather than looked up: every caller already has it on the
-   * session, and a staff member must not be metered. Omitting it falls back to
-   * plan resolution, which is the safe direction — a student is never granted
-   * more by accident.
+   * Passed in so that a student, nearly every caller, costs no extra query. It
+   * comes from the login session and can be out of date, so a claim to be staff
+   * is confirmed against the database below. Omitting it falls back to plan
+   * resolution, which is the safe direction — a student is never granted more
+   * by accident.
    */
   role?: string,
 ): Promise<Entitlement> {
   // Staff are not metered. routes/lessons.ts admits them to the student flow
   // deliberately so they can review their own content, and a quota that stops
   // an admin opening a lesson makes that content unreviewable.
-  if (roleIsUnmetered(role)) return unmeteredEntitlement(role!);
+  if (roleIsUnmetered(role)) {
+    const [user] = await db
+      .select({ role: usersTable.role })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId))
+      .limit(1);
+    if (user && roleIsUnmetered(user.role)) return unmeteredEntitlement(user.role);
+  }
 
   const [active] = await db
     .select({
