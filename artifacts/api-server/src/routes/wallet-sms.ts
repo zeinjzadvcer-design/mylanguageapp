@@ -38,6 +38,8 @@ const ingestSchema = z.object({
   rawText: z.string().min(1).max(2000),
   /** Syriatel's sender id, as the handset reported it. */
   sender: z.string().max(100).nullish(),
+  /** The SMS centre the handset reports it arrived through. */
+  serviceCenter: z.string().max(100).nullish(),
   /**
    * When the HANDSET received it, ISO 8601.
    *
@@ -88,6 +90,7 @@ router.post("/wallet-sms", async (req, res): Promise<void> => {
   const result = await ingestSms({
     rawText: parsed.data.rawText,
     sender: parsed.data.sender ?? null,
+    serviceCenter: parsed.data.serviceCenter ?? null,
     receivedAt,
   });
 

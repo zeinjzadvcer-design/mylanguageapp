@@ -23,7 +23,7 @@
  * against a guess at it.
  */
 
-import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, ne } from "drizzle-orm";
 import {
   db,
   paymentSettingsTable,
@@ -34,8 +34,11 @@ import { logger } from "../lib/logger";
 import { SETTINGS_ROW_ID } from "./payment-settings";
 import {
   isTrustedSender,
+  isTrustedServiceCenter,
   parseAllowedSenders,
+  parseAllowedServiceCenters,
   parseConfirmationSms,
+  SMS_ACTIVATIONS_PER_HOUR,
   SUBMISSION_WINDOW_MS,
   type ParsedSms,
 } from "./wallet-sms-policy";
@@ -48,6 +51,9 @@ import { activateSubscription, flagForReview } from "./subscription-activation";
 /** Who a confirmation may come from. See isTrustedSender. */
 const ALLOWED_SENDERS = parseAllowedSenders(process.env.WALLET_SMS_SENDERS);
 
+/** Which SMS centres a confirmation may arrive through. See isTrustedServiceCenter. */
+const ALLOWED_SERVICE_CENTERS = parseAllowedServiceCenters(process.env.WALLET_SMS_SERVICE_CENTERS);
+
 /** What became of an ingested message. */
 export type IngestOutcome =
   /** Paired with a submission, which is now active. */
@@ -58,9 +64,9 @@ export type IngestOutcome =
    */
   | "stored_unparsed"
   /**
-   * Stored but not believed: it did not come from a sender in
-   * WALLET_SMS_SENDERS. Kept, with its sender, so a wrong setting can be seen
-   * and corrected.
+   * Stored but not believed: its sender is not in WALLET_SMS_SENDERS, or it
+   * came through an SMS centre not in WALLET_SMS_SERVICE_CENTERS. Kept, with
+   * its sender, so a wrong setting can be seen and corrected.
    */
   | "stored_untrusted_sender"
   /**
@@ -83,11 +89,16 @@ export type IngestOutcome =
 export async function ingestSms(input: {
   rawText: string;
   sender: string | null;
+  serviceCenter?: string | null;
   receivedAt: Date;
 }): Promise<{ outcome: IngestOutcome; messageId: number | null }> {
+  const serviceCenter = input.serviceCenter ?? null;
+
   // An untrusted message is stored with nothing parsed out of it, so no sweep
   // or later submission can ever pair with it.
-  const trusted = isTrustedSender(input.sender, ALLOWED_SENDERS);
+  const trusted =
+    isTrustedSender(input.sender, ALLOWED_SENDERS) &&
+    isTrustedServiceCenter(serviceCenter, ALLOWED_SERVICE_CENTERS);
   const parsed = trusted
     ? parseConfirmationSms(input.rawText)
     : { operationNumber: null, amountSyp: null };
@@ -115,10 +126,14 @@ export async function ingestSms(input: {
     .returning({ id: walletSmsMessagesTable.id });
   const messageId = row.id;
 
+  // Logged, not stored: this is how the value for WALLET_SMS_SERVICE_CENTERS
+  // is read off a genuine message.
+  logger.info({ messageId, sender: input.sender, serviceCenter }, "Wallet SMS received");
+
   if (!trusted) {
     logger.warn(
-      { messageId, sender: input.sender },
-      "Wallet SMS ignored: sender is not in WALLET_SMS_SENDERS",
+      { messageId, sender: input.sender, serviceCenter },
+      "Wallet SMS ignored: sender or SMS centre is not on the allowed list",
     );
     return { outcome: "stored_untrusted_sender", messageId };
   }
@@ -138,6 +153,23 @@ export async function ingestSms(input: {
     outcome: matched ? "matched" : "stored_unmatched",
     messageId,
   };
+}
+
+/** Whether the SMS path has used up this hour's unreviewed activations. */
+async function smsActivationLimitReached(): Promise<boolean> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(paymentSubmissionsTable)
+    .where(
+      and(
+        eq(paymentSubmissionsTable.method, "syriatel_cash"),
+        eq(paymentSubmissionsTable.status, "approved"),
+        // No reviewer means the SMS approved it, not a person.
+        isNull(paymentSubmissionsTable.reviewedBy),
+        gte(paymentSubmissionsTable.reviewedAt, new Date(Date.now() - 3_600_000)),
+      ),
+    );
+  return (row?.value ?? 0) >= SMS_ACTIVATIONS_PER_HOUR;
 }
 
 /** Whether this claim re-uses an identifier an admin has already rejected. */
@@ -199,6 +231,16 @@ async function matchMessage(
   // for them to weigh and never grounds to activate on its own.
   const resubmitted = isResubmission(submission.verificationLog);
 
+  // Asked last and only for a payment that would otherwise activate.
+  const overLimit =
+    withinWindow && amountOk && !resubmitted && (await smsActivationLimitReached());
+  if (overLimit) {
+    logger.error(
+      { submissionId: submission.id, limit: SMS_ACTIVATIONS_PER_HOUR },
+      "Wallet SMS activation limit reached; sending to review. Check for forged confirmations.",
+    );
+  }
+
   const verification = {
     source: "wallet_sms",
     ...(resubmitted ? { resubmittedAfterRejection: true } : {}),
@@ -210,6 +252,7 @@ async function matchMessage(
     submittedAt: submission.createdAt.toISOString(),
     withinWindow,
     amountOk,
+    ...(overLimit ? { overHourlyLimit: true } : {}),
   };
 
   // Recorded whichever way this goes: the message has found its submission.
@@ -225,7 +268,7 @@ async function matchMessage(
     inArray(paymentSubmissionsTable.status, ["pending", "verifying"]),
   );
 
-  if (!withinWindow || !amountOk || resubmitted) {
+  if (!withinWindow || !amountOk || resubmitted || overLimit) {
     // Left for an admin rather than rejected. A short payment or a late
     // submission is a judgement call (the money did arrive), and the log
     // above tells them exactly what was seen.
