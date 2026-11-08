@@ -17,7 +17,7 @@ import { subscriptionInForce } from "../services/entitlements";
 import { isValidTxHash } from "../services/crypto-verify-policy";
 import { reserveUsdtAmount, USDT_AMOUNT_HOLD_MS } from "../services/usdt-amount";
 import { toAsciiDigits } from "../services/wallet-sms-policy";
-import { verifySubmission } from "../services/crypto-verify";
+import { displaceUnprovenClaim, verifySubmission } from "../services/crypto-verify";
 import { matchSubmission } from "../services/wallet-sms";
 import { logger } from "../lib/logger";
 
@@ -46,6 +46,15 @@ async function isUsableReceipt(mediaId: number, userId: number): Promise<boolean
     asset.status === "ready" &&
     asset.ownerUserId === userId
   );
+}
+
+/** Whether a database error is a unique index refusing a duplicate. */
+function isUniqueViolation(err: unknown): boolean {
+  // Drizzle wraps the driver error, so the Postgres code can be on either.
+  const code =
+    (err as { code?: string })?.code ??
+    (err as { cause?: { code?: string } })?.cause?.code;
+  return code === "23505";
 }
 
 /**
@@ -614,14 +623,15 @@ router.post(
         and(
           sql`lower(${paymentSubmissionsTable.txHash}) = ${txHash}`,
           eq(paymentSubmissionsTable.status, "rejected"),
+          // This student's own rejection only. Hashes are public, so someone
+          // else's rejected claim on it says nothing about this one.
+          eq(paymentSubmissionsTable.userId, userId),
         ),
       )
       .limit(1);
     const initialStatus = crypto.autoVerify && !rejectedBefore ? "verifying" : "pending";
 
-    let submissionId: number;
-
-    try {
+    const insertClaim = async (): Promise<number> => {
       const [submission] = await db
         .insert(paymentSubmissionsTable)
         .values({
@@ -641,23 +651,43 @@ router.post(
           expectedWalletAddress: crypto.walletAddress,
         })
         .returning();
-      submissionId = submission.id;
+      return submission.id;
+    };
+
+    // The unique index on lower(tx_hash) is what stops one paid transaction
+    // buying ten subscriptions. Catching the violation here turns it into a
+    // clear refusal rather than a 500 — and it is the database, not a prior
+    // SELECT, that decides, so two simultaneous submissions cannot both win.
+    const alreadyUsed = () =>
+      res.status(409).json({
+        error: "That transaction has already been used for a subscription",
+        errorAr: "تم استخدام معرّف هذه العملية مسبقاً لاشتراك آخر.",
+      });
+
+    let submissionId: number;
+
+    try {
+      submissionId = await insertClaim();
     } catch (err) {
-      // The unique index on lower(tx_hash) is what stops one paid transaction
-      // buying ten subscriptions. Catching the violation here turns it into a
-      // clear refusal rather than a 500 — and it is the database, not a prior
-      // SELECT, that decides, so two simultaneous submissions cannot both win.
-      const code =
-        (err as { code?: string })?.code ??
-        (err as { cause?: { code?: string } })?.cause?.code;
-      if (code === "23505") {
-        res.status(409).json({
-          error: "That transaction has already been used for a subscription",
-          errorAr: "تم استخدام معرّف هذه العملية مسبقاً لاشتراك آخر.",
-        });
+      if (!isUniqueViolation(err)) throw err;
+
+      // Taken by a claim the chain may not support. The hash is public, so
+      // being first proves nothing; the held amount does.
+      const freed =
+        crypto.walletAddress !== null &&
+        (await displaceUnprovenClaim(txHash, subscription, crypto.walletAddress));
+      if (!freed) {
+        alreadyUsed();
         return;
       }
-      throw err;
+
+      try {
+        submissionId = await insertClaim();
+      } catch (retryErr) {
+        if (!isUniqueViolation(retryErr)) throw retryErr;
+        alreadyUsed();
+        return;
+      }
     }
 
     // Check now so a student who already has their confirmations is activated
@@ -858,12 +888,7 @@ router.post(
       // several subscriptions. Catching it here turns the violation into a
       // clear refusal rather than a 500 — and it is the database, not a prior
       // SELECT, that decides, so two simultaneous claims cannot both win.
-      // Drizzle wraps the driver error, so the Postgres code can be on the
-      // error or on its cause.
-      if (
-        (err as { code?: string })?.code === "23505" ||
-        (err as { cause?: { code?: string } })?.cause?.code === "23505"
-      ) {
+      if (isUniqueViolation(err)) {
         res.status(409).json({
           error: "That operation number has already been used",
           errorAr: "تم استخدام رقم هذه العملية مسبقاً.",

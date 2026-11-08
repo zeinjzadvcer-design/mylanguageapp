@@ -13,16 +13,18 @@
  * plus someone else's interpretation of it.
  */
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, paymentSubmissionsTable, studentSubscriptionsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { cryptoConfig } from "./crypto-config";
 import {
+  provesClaim,
   verifyTransfer,
   type RpcReceipt,
   type VerifyResult,
 } from "./crypto-verify-policy";
 import { activateSubscription, flagForReview } from "./subscription-activation";
+import { USDT_AMOUNT_HOLD_MS } from "./usdt-amount";
 
 /**
  * Every write this verifier makes is conditional on the row still being open.
@@ -93,6 +95,32 @@ async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
   );
 }
 
+/** The moments a transaction is judged against. */
+interface ClaimTiming {
+  subscriptionOpenedAt: Date;
+  amountHeldUntil: Date | null;
+  submittedAt: Date;
+}
+
+/**
+ * The window a subscription's amount was its own.
+ *
+ * From when the amount was given out, so a later holder of a released amount
+ * cannot claim a transfer made before they held it, and until the hold ended,
+ * so an earlier holder cannot claim one made after.
+ */
+function claimTiming(
+  subscription: { usdtAmountAt: Date | null; createdAt: Date } | undefined,
+  submittedAt: Date,
+): ClaimTiming {
+  const heldFrom = subscription?.usdtAmountAt;
+  return {
+    subscriptionOpenedAt: heldFrom ?? subscription?.createdAt ?? submittedAt,
+    amountHeldUntil: heldFrom ? new Date(heldFrom.getTime() + USDT_AMOUNT_HOLD_MS) : null,
+    submittedAt,
+  };
+}
+
 export interface ChainCheck {
   /** False when the chain could not be reached — NOT a failed payment. */
   reachable: boolean;
@@ -116,8 +144,7 @@ export async function checkTransaction(
    * cannot re-point a payment that is already being checked.
    */
   walletAddress: string,
-  /** The two moments a transaction's age is judged against. */
-  timing: { subscriptionOpenedAt: Date; submittedAt: Date },
+  timing: ClaimTiming,
 ): Promise<ChainCheck> {
   const config = cryptoConfig();
 
@@ -153,6 +180,7 @@ export async function checkTransaction(
       confirmations: config.confirmations,
       blockTimestamp: Number(BigInt(block.timestamp)),
       subscriptionOpenedAt: timing.subscriptionOpenedAt,
+      amountHeldUntil: timing.amountHeldUntil,
       submittedAt: timing.submittedAt,
       maxAgeDays: config.maxAgeDays,
     });
@@ -227,13 +255,7 @@ export async function verifySubmission(submissionId: number): Promise<void> {
     submission.txHash,
     submission.amountExpected,
     submission.expectedWalletAddress,
-    {
-      // From when this amount was given out, so a later holder of a released
-      // amount cannot claim a transfer made before they held it.
-      subscriptionOpenedAt:
-        subscription?.usdtAmountAt ?? subscription?.createdAt ?? submission.createdAt,
-      submittedAt: submission.createdAt,
-    },
+    claimTiming(subscription, submission.createdAt),
   );
 
   const previousLog = (submission.verificationLog ?? {}) as Record<string, unknown>;
@@ -344,6 +366,63 @@ export async function verifySubmission(submissionId: number): Promise<void> {
     },
     "Subscription activated by on-chain verification",
   );
+}
+
+/**
+ * Free a transaction hash from a claim the chain does not support.
+ *
+ * Hashes are public: anyone can copy a stranger's from the receiving wallet's
+ * history and submit it. Such a claim can never verify, but it holds the unique
+ * index, so the student who really paid would be told "already used". When the
+ * chain shows the hash paid exactly the amount this subscription holds, the
+ * unproven claim is closed so the real one can take its place.
+ *
+ * Returns whether the hash is now free. A claim already confirmed on chain, or
+ * approved, is never touched.
+ */
+export async function displaceUnprovenClaim(
+  txHash: string,
+  claimant: {
+    id: number;
+    usdtAmount: string | null;
+    usdtAmountAt: Date | null;
+    createdAt: Date;
+  },
+  walletAddress: string,
+): Promise<boolean> {
+  if (claimant.usdtAmount === null) return false;
+
+  const { result } = await checkTransaction(
+    txHash,
+    claimant.usdtAmount,
+    walletAddress,
+    claimTiming(claimant, new Date()),
+  );
+  if (!result || !provesClaim(result)) return false;
+
+  const displaced = await db
+    .update(paymentSubmissionsTable)
+    .set({
+      status: "rejected",
+      reviewedAt: new Date(),
+      reviewNote: "This transaction was matched to a different payment.",
+    })
+    .where(
+      and(
+        sql`lower(${paymentSubmissionsTable.txHash}) = ${txHash}`,
+        inArray(paymentSubmissionsTable.status, ["pending", "verifying"]),
+        isNull(paymentSubmissionsTable.confirmedAt),
+      ),
+    )
+    .returning({ id: paymentSubmissionsTable.id });
+
+  if (displaced.length === 0) return false;
+
+  logger.warn(
+    { txHash, displacedSubmissionId: displaced[0].id, subscriptionId: claimant.id },
+    "Closed a claim on a transaction that paid a different subscription",
+  );
+  return true;
 }
 
 /**
