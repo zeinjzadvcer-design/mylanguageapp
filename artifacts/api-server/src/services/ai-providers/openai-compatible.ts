@@ -331,6 +331,7 @@ export async function testConnection(
       inputPricePerMtok: null,
       outputPricePerMtok: null,
       pricePerMinute: null,
+      systemPrompt: null,
     },
     [{ role: "user", content: "Reply with the single word: ready" }],
   );

@@ -53,6 +53,12 @@ import {
   type PracticeSeeker,
 } from "./scoring/practice-match";
 import { logger } from "../lib/logger";
+import {
+  getEntitlement,
+  countCallsStarted,
+  checkCallAccess,
+  CALL_DENIAL_MESSAGES,
+} from "./entitlements";
 import { audit } from "./cms-audit";
 
 // ─── Server-enforced bounds ───────────────────────────────────────────────────
@@ -103,14 +109,26 @@ export type PracticeBlockedReason =
   | "NOT_WAITING"
   | "SESSION_ENDED"
   | "SELF"
-  | "DAILY_LIMIT";
+  | "DAILY_LIMIT"
+  /** The plan's monthly call allowance is spent. Distinct from DAILY_LIMIT: an
+   *  upgrade fixes this one, waiting fixes the other. */
+  | "PLAN_LIMIT";
 
 export class PracticeBlockedError extends Error {
   readonly reason: PracticeBlockedReason;
-  constructor(reason: PracticeBlockedReason, message: string) {
+  /**
+   * Arabic message, where one exists.
+   *
+   * Optional rather than required: the existing reasons are developer-facing
+   * strings the client already localises by `reason`, and PLAN_LIMIT is the
+   * first that carries student-facing wording from the policy module.
+   */
+  readonly messageAr?: string;
+  constructor(reason: PracticeBlockedReason, message: string, messageAr?: string) {
     super(message);
     this.name = "PracticeBlockedError";
     this.reason = reason;
+    this.messageAr = messageAr;
   }
 }
 
@@ -523,7 +541,11 @@ export async function closeAbandonedSessions(): Promise<number> {
   return stale.length;
 }
 
-export async function joinQueue(userId: number): Promise<QueueResult> {
+export async function joinQueue(
+  userId: number,
+  /** The caller's role, so staff are not metered against a plan they lack. */
+  role?: string,
+): Promise<QueueResult> {
   const { levelOrder, preferences } = await loadStudent(userId);
 
   if (!preferences?.isAvailable) {
@@ -545,6 +567,31 @@ export async function joinQueue(userId: number): Promise<QueueResult> {
     throw new PracticeBlockedError(
       "DAILY_LIMIT",
       `You have reached today's limit of ${DAILY_CALL_LIMIT} practice calls.`,
+    );
+  }
+
+  // The plan's call allowance, checked beside the daily cap above rather than
+  // instead of it: the daily cap is abuse control applied to everyone, this is
+  // what the student bought. Both apply and whichever is stricter bites.
+  //
+  // Checked here, at the queue, rather than when a call connects: a student
+  // whose allowance is spent should be told before they wait for a partner,
+  // and matching two people only to refuse one of them wastes the other's
+  // time as well.
+  const entitlement = await getEntitlement(userId, role);
+  const callDenial = checkCallAccess({
+    entitlement,
+    callsStarted:
+      entitlement.callQuota === null
+        ? 0
+        : await countCallsStarted(userId, entitlement.periodStartedAt),
+  });
+
+  if (callDenial) {
+    throw new PracticeBlockedError(
+      "PLAN_LIMIT",
+      CALL_DENIAL_MESSAGES[callDenial].error,
+      CALL_DENIAL_MESSAGES[callDenial].errorAr,
     );
   }
 

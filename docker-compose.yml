@@ -22,8 +22,13 @@ services:
   redis:
     image: redis:7-alpine
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # 6380 on the host, not 6379. The API reaches Redis by service name over
+    # the compose network, so this mapping exists only for local tooling —
+    # and 6379 is contested often enough on a developer machine (another
+    # project's container, a system redis) that claiming it costs more than
+    # it is worth. Connect from the host with `redis-cli -p 6380`.
     ports:
-      - '6379:6379'
+      - '6380:6379'
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -205,6 +210,22 @@ services:
       MAIL_FROM: ${MAIL_FROM:-}
       MAIL_API_KEY: ${MAIL_API_KEY:-}
       MAIL_TIMEOUT_MS: ${MAIL_TIMEOUT_MS:-10000}
+
+      # USDT (BEP-20): how the chain is read. The receiving address and QR are
+      # admin settings, and crypto is offered once either is set there.
+      BSC_RPC_URL: ${BSC_RPC_URL:-https://bsc-dataseed.binance.org}
+      BSC_RPC_URL_FALLBACK: ${BSC_RPC_URL_FALLBACK:-https://bsc-dataseed1.defibit.io}
+      BSC_CONFIRMATIONS: ${BSC_CONFIRMATIONS:-15}
+      CRYPTO_TXID_MAX_AGE_DAYS: ${CRYPTO_TXID_MAX_AGE_DAYS:-7}
+      CRYPTO_VERIFY_INTERVAL_MS: ${CRYPTO_VERIFY_INTERVAL_MS:-60000}
+      CRYPTO_VERIFY_MAX_ATTEMPTS: ${CRYPTO_VERIFY_MAX_ATTEMPTS:-8}
+
+      # Automatic Syrian pound pricing (SP Today / الليرة اليوم). Only read when
+      # an admin turns automatic pricing on; unset, manual prices are used.
+      SPTODAY_API_KEY: ${SPTODAY_API_KEY:-}
+      WALLET_SMS_SENDERS: ${WALLET_SMS_SENDERS:-Syriatel}
+      SPTODAY_CITY: ${SPTODAY_CITY:-damascus}
+      SYP_RATE_REFRESH_MS: ${SYP_RATE_REFRESH_MS:-43200000}
     ports:
       - '8080:8080'
     depends_on:

@@ -113,6 +113,7 @@ export default function AdminDashboard() {
         {[
           { href: "/admin/students", title: ad.studentsTitle, body: ad.studentsBody },
           { href: "/admin/lessons", title: ad.lessonsTitle, body: ad.lessonsBody },
+          { href: "/admin/payments", title: ad.paymentsTitle, body: ad.paymentsBody },
           { href: "/admin/ai", title: ad.aiTitle, body: ad.aiBody },
         ].map(({ href, title, body }) => (
           <Card key={href} className="hover:border-primary/50 transition-colors">

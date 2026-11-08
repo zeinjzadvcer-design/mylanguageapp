@@ -45,6 +45,7 @@ import {
   Play,
   Square,
   AlertCircle,
+  Crown,
   Target,
 } from "lucide-react";
 
@@ -1188,6 +1189,40 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     );
   }
 
+  // A 403 from the plan gate is not a failure to load — it is the paywall
+  // doing its job, and the student needs an upgrade prompt rather than
+  // "something went wrong". The server sends `reason` to say which case it is.
+  const denial = (() => {
+    const status = (error as { status?: number } | null)?.status;
+    if (status !== 403) return null;
+    const reason = (error as { data?: { reason?: string } } | null)?.data?.reason;
+    return reason === "quota_exhausted" || reason === "wrong_track" ? reason : null;
+  })();
+
+  if (denial) {
+    return (
+      <div className="p-8 text-center mt-20 max-w-md mx-auto">
+        <div className="h-16 w-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+          <Crown className="h-8 w-8 text-amber-500" />
+        </div>
+        <h2 className="text-xl font-bold mb-3">
+          {denial === "quota_exhausted" ? ls.quotaTitle : ls.wrongTrackTitle}
+        </h2>
+        <p className="text-muted-foreground mb-6 leading-relaxed">
+          {denial === "quota_exhausted" ? ls.quotaBody : ls.wrongTrackBody}
+        </p>
+        <div className="flex gap-3 justify-center">
+          <Link href="/subscription">
+            <Button className="bg-primary text-white">{ls.viewPlans}</Button>
+          </Link>
+          <Link href="/learn">
+            <Button variant="outline">{t.level.backToCurriculum}</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (error || !lesson) {
     return (
       <div className="p-8 text-center mt-20">
@@ -1220,7 +1255,14 @@ export function LessonPlayer({
 }) {
   const lessonId = lesson.id;
   const isPreview = !!preview;
-  const startLesson = useStartLesson();
+  // Retried because everything after it depends on it: the server refuses
+  // answers for a lesson it never saw opened. A 4xx is an answer, not a blip.
+  const startLesson = useStartLesson({
+    mutation: {
+      retry: (count, err) =>
+        count < 2 && ((err as { status?: number })?.status ?? 500) >= 500,
+    },
+  });
   const submitActivity = useSubmitLessonActivity();
   const completeLesson = useCompleteLesson();
   const [, setLocation] = useLocation();
@@ -1737,7 +1779,10 @@ export function LessonPlayer({
   const isAlreadySubmitted = currentState?.submitted ?? false;
 
   // Continue is disabled during submit or if MCQ required and nothing selected yet
-  let isContinueDisabled = isSubmitting || completeLesson.isPending;
+  // Held until the server has recorded the start, or a quick first answer
+  // would race it and be refused.
+  const startUnsettled = startLesson.isPending || startLesson.isError;
+  let isContinueDisabled = isSubmitting || completeLesson.isPending || startUnsettled;
   if (!showIntro && currentBlock && !isAlreadySubmitted && !isSubmitting) {
     if (currentBlock.type === "mcq" && currentBlock.isRequired && !currentState?.selectedOptionId) {
       isContinueDisabled = true;
@@ -2050,6 +2095,14 @@ export function LessonPlayer({
             : "fixed bottom-16 md:bottom-0 end-0 start-0 md:start-64 p-4 border-t border-border bg-card/80 backdrop-blur-md shrink-0 z-10"
         }
       >
+        {startLesson.isError && (
+          <div className="max-w-2xl mx-auto w-full flex items-center justify-between gap-3 mb-3 text-sm text-destructive">
+            <span>{ls.startFailed}</span>
+            <Button variant="outline" size="sm" onClick={() => startLesson.mutate({ lessonId })}>
+              {t.common.retry}
+            </Button>
+          </div>
+        )}
         <div className="max-w-2xl mx-auto w-full flex justify-between items-center gap-4">
           <Button
             variant="ghost"
@@ -2066,7 +2119,7 @@ export function LessonPlayer({
               variant="outline"
               size="lg"
               onClick={moveNext}
-              disabled={isSubmitting || completeLesson.isPending}
+              disabled={isSubmitting || completeLesson.isPending || startUnsettled}
               className="h-14 rounded-xl"
             >
               {ls.skip}

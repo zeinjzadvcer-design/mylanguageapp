@@ -35,7 +35,7 @@
  *   v1:curricula:list
  *   v1:sub:plans
  *   v1:levels:c:{curriculumId}
- *   v1:lesson:{lessonId}:content
+ *   v3:lesson:{lessonId}:content
  *   v1:vocab:lesson:{lessonId}
  *   v1:vocab:level:{levelId}
  */
@@ -65,9 +65,13 @@ export const CK = {
   curriculaList:      () => "v1:curricula:list",
   subPlans:           () => "v1:sub:plans",
   levelsByCurriculum: (cid: number) => `v1:levels:c:${cid}`,
-  // v2: blocks gained expectsReferenceReading and groupId. A v1 entry lacks
-  // them, so read-aloud and grouped blocks would show wrong until it expired.
-  lessonContent:      (lid: number) => `v2:lesson:${lid}:content`,
+  // v3: two independent changes each bumped this key to v2 — main added
+  // expectsReferenceReading and groupId to blocks, and the payment branch added
+  // `lesson.track`, which the paywall matches against the student's plan. A v2
+  // entry written by either build lacks the other's field, and a missing track
+  // compares against undefined and 403s a paying student until it expires. v3
+  // retires every entry from both.
+  lessonContent:      (lid: number) => `v3:lesson:${lid}:content`,
   vocabByLesson:      (lid: number) => `v1:vocab:lesson:${lid}`,
   vocabByLevel:       (lid: number) => `v1:vocab:level:${lid}`,
 } as const;

@@ -12,6 +12,12 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import {
+  getEntitlement,
+  lessonTrackFilter,
+  previousLessonInTrack,
+  subscriptionInForce,
+} from "../services/entitlements";
+import {
   getCompletedLessonIds,
   deriveLessonStateWithOrders,
   getCurriculumLevels,
@@ -33,12 +39,8 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
     db
       .select()
       .from(studentSubscriptionsTable)
-      .where(
-        and(
-          eq(studentSubscriptionsTable.userId, userId),
-          eq(studentSubscriptionsTable.status, "active"),
-        ),
-      )
+      // In force, not merely `active`: the same test the lesson gate uses.
+      .where(subscriptionInForce(userId))
       .limit(1),
   ]);
 
@@ -109,7 +111,9 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
     ? await getCurriculumLevels(profile.curriculumId)
     : [];
 
-  // Get all published lessons in current level
+  // Get all published lessons in current level, in the student's track only:
+  // the other track's lessons are not theirs to see or count.
+  const entitlement = await getEntitlement(userId, req.session.role);
   const allLessonsInLevel = currentLevel
     ? await db
         .select()
@@ -117,6 +121,7 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
         .where(
           and(
             eq(lessonsTable.levelId, currentLevel.id),
+            lessonTrackFilter(entitlement),
             publishedLessonFilter(),
           ),
         )
@@ -132,7 +137,7 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
   const currentLevelOrder = currentLevel?.order ?? null;
   const lessonStateCounts = { LOCKED: 0, AVAILABLE: 0, IN_PROGRESS: 0, COMPLETED: 0 };
   const lessonSummaries = allLessonsInLevel.map((lesson, idx) => {
-    const prevLessonId = idx > 0 ? allLessonsInLevel[idx - 1].id : null;
+    const prevLessonId = previousLessonInTrack(allLessonsInLevel, idx);
     const progressRow = allProgress.find((p) => p.lessonId === lesson.id);
     const state = deriveLessonStateWithOrders(
       lesson,

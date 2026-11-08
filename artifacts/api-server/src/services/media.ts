@@ -15,14 +15,17 @@
  * rather than something the client asserted.
  */
 
-import { eq, and, gte, sql } from "drizzle-orm";
+import { eq, and, gte, ne, sql } from "drizzle-orm";
 import { db, mediaAssetsTable } from "@workspace/db";
 import {
   storage,
   recordingKey,
   curriculumKey,
+  paymentImageKey,
   ALLOWED_AUDIO_TYPES,
   ALLOWED_CMS_TYPES,
+  ALLOWED_PAYMENT_IMAGE_TYPES,
+  MAX_PAYMENT_IMAGE_BYTES,
   MAX_RECORDING_BYTES,
   MAX_CMS_BYTES,
   MAX_RECORDING_SECONDS,
@@ -30,6 +33,7 @@ import {
   type PresignedUpload,
 } from "./storage";
 import { logger } from "../lib/logger";
+import { canReadMediaAsset } from "./entitlement-policy";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,7 +47,21 @@ export type MediaPurpose =
    * reachable by a route that accepts a student's own `lesson_activity`
    * recording, and it is deleted once the transcript exists.
    */
-  | "practice_call";
+  | "practice_call"
+  /**
+   * A student's proof of a ShamCash transfer. Owned by that student, readable
+   * by them and by staff reviewing the payment — the same rule as a recording,
+   * which is why it reuses `ownerUserId` rather than needing its own.
+   */
+  | "payment_receipt"
+  /**
+   * The ShamCash receive QR an admin uploads for students to scan.
+   *
+   * The one payment asset with NO owner: every student must be able to see it,
+   * exactly like curriculum material. Setting an owner here would hide the QR
+   * from everyone but the admin who uploaded it.
+   */
+  | "payment_qr";
 
 export interface BeginUploadInput {
   userId: number;
@@ -84,7 +102,18 @@ export class MediaValidationError extends Error {
  */
 const DAILY_RECORDING_LIMIT = parseInt(process.env.MEDIA_DAILY_UPLOAD_LIMIT ?? "200", 10);
 
-async function countTodaysUploads(userId: number): Promise<number> {
+/**
+ * Payment receipts one student may start in a day.
+ *
+ * Separate from the recording cap so a student who practised all day can
+ * still send a receipt, but not uncapped: any student can request a receipt
+ * upload, and without a limit one account could fill the bucket. A real
+ * payment needs one or two; ten leaves room for retakes.
+ */
+const DAILY_RECEIPT_LIMIT = 10;
+
+/** Uploads this user started in the last 24 hours: receipts, or everything else. */
+async function countTodaysUploads(userId: number, receipts: boolean): Promise<number> {
   const since = new Date(Date.now() - 24 * 3_600_000);
   const [{ used }] = await db
     .select({ used: sql<number>`count(*)::int` })
@@ -93,6 +122,9 @@ async function countTodaysUploads(userId: number): Promise<number> {
       and(
         eq(mediaAssetsTable.ownerUserId, userId),
         gte(mediaAssetsTable.createdAt, since),
+        receipts
+          ? eq(mediaAssetsTable.purpose, "payment_receipt")
+          : ne(mediaAssetsTable.purpose, "payment_receipt"),
       ),
     );
   return used;
@@ -104,8 +136,18 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
   const { userId, purpose, contentType, sizeBytes, durationSec, originalName } = input;
 
   const isCurriculum = purpose === "curriculum";
-  const allowed = isCurriculum ? ALLOWED_CMS_TYPES : ALLOWED_AUDIO_TYPES;
-  const maxBytes = isCurriculum ? MAX_CMS_BYTES : MAX_RECORDING_BYTES;
+  const isPaymentImage = purpose === "payment_receipt" || purpose === "payment_qr";
+
+  const allowed = isPaymentImage
+    ? ALLOWED_PAYMENT_IMAGE_TYPES
+    : isCurriculum
+      ? ALLOWED_CMS_TYPES
+      : ALLOWED_AUDIO_TYPES;
+  const maxBytes = isPaymentImage
+    ? MAX_PAYMENT_IMAGE_BYTES
+    : isCurriculum
+      ? MAX_CMS_BYTES
+      : MAX_RECORDING_BYTES;
 
   // MediaRecorder reports the codec alongside the type — "audio/webm;codecs=opus".
   // The allowlist holds bare types, so compare on the type and keep the
@@ -138,6 +180,7 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
 
   if (
     !isCurriculum &&
+    !isPaymentImage &&
     durationSec != null &&
     (!Number.isFinite(durationSec) || durationSec > maxSeconds)
   ) {
@@ -147,8 +190,10 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
     );
   }
 
-  if (!isCurriculum) {
-    const used = await countTodaysUploads(userId);
+  // The daily cap counts recordings. A payment image is not one, and a student
+  // who has been practising all day must still be able to send a receipt.
+  if (!isCurriculum && !isPaymentImage) {
+    const used = await countTodaysUploads(userId, false);
     if (used >= DAILY_RECORDING_LIMIT) {
       throw new MediaValidationError(
         "DAILY_LIMIT",
@@ -157,9 +202,23 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
     }
   }
 
-  const key = isCurriculum
-    ? curriculumKey(baseContentType, originalName)
-    : recordingKey(userId, baseContentType);
+  // Receipts have their own, much smaller cap. The admin's QR upload is not
+  // counted: only admins can make one, and it is replaced rather than piled up.
+  if (purpose === "payment_receipt") {
+    const used = await countTodaysUploads(userId, true);
+    if (used >= DAILY_RECEIPT_LIMIT) {
+      throw new MediaValidationError(
+        "DAILY_LIMIT",
+        "You have uploaded too many receipts today. Try again tomorrow.",
+      );
+    }
+  }
+
+  const key = isPaymentImage
+    ? paymentImageKey(purpose === "payment_qr" ? "qr" : "receipt", userId, baseContentType)
+    : isCurriculum
+      ? curriculumKey(baseContentType, originalName)
+      : recordingKey(userId, baseContentType);
 
   const upload = await storage.presignUpload(key, baseContentType);
 
@@ -172,8 +231,10 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
       sizeBytes,
       durationSec: durationSec ?? null,
       // Curriculum media belongs to the curriculum, not to the staff member who
-      // uploaded it — otherwise no student could ever play it back.
-      ownerUserId: isCurriculum ? null : userId,
+      // uploaded it — otherwise no student could ever play it back. The payment
+      // QR is the same case: every student has to be able to see it to pay.
+      // A receipt is the opposite — it is the student's own, like a recording.
+      ownerUserId: isCurriculum || purpose === "payment_qr" ? null : userId,
       status: "pending",
       purpose,
       createdBy: userId,
@@ -223,7 +284,14 @@ export async function completeUpload(
     );
   }
 
-  const maxBytes = asset.purpose === "curriculum" ? MAX_CMS_BYTES : MAX_RECORDING_BYTES;
+  // The same cap beginUpload applied to the declared size. This is the check
+  // that counts: the declared size is only what the client claimed.
+  const maxBytes =
+    asset.purpose === "payment_receipt" || asset.purpose === "payment_qr"
+      ? MAX_PAYMENT_IMAGE_BYTES
+      : asset.purpose === "curriculum"
+        ? MAX_CMS_BYTES
+        : MAX_RECORDING_BYTES;
 
   /** Delete the object and mark the row failed, then refuse. */
   const reject = async (code: string, message: string): Promise<never> => {
@@ -285,12 +353,10 @@ const STAFF_ROLES = new Set(["admin", "content_manager", "content_reviewer"]);
  * it to grade speaking work. Nobody else, ever.
  */
 export function canReadAsset(
-  asset: { ownerUserId: number | null },
+  asset: { ownerUserId: number | null; purpose?: string | null },
   viewer: { userId: number; role: string | undefined },
 ): boolean {
-  if (asset.ownerUserId === null) return true;
-  if (asset.ownerUserId === viewer.userId) return true;
-  return STAFF_ROLES.has(viewer.role ?? "");
+  return canReadMediaAsset(asset, viewer, STAFF_ROLES);
 }
 
 /**

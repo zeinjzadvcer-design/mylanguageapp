@@ -48,7 +48,20 @@ export const lessonsTable = pgTable("lessons", {
   description: text("description"),
   descriptionAr: text("description_ar"),
   order: integer("order").notNull(),
+  /**
+   * The lesson's pedagogical format — reading, pronunciation, speaking,
+   * grammar… Drives weakness targeting (services/weakness.ts) and the icon the
+   * student sees. NOT which plan sells it: that is `track`.
+   */
   lessonType: text("lesson_type").notNull().default("general"),
+  /**
+   * Which plan track sells this lesson: `general` or `professional`. Matched
+   * for equality against `subscription_plans.lessonTrack`.
+   *
+   * Orthogonal to `lessonType` — a professional reading lesson is both
+   * `reading` and `professional`, so the two cannot share a column.
+   */
+  track: text("track").notNull().default("general"),
   estimatedMinutes: integer("estimated_minutes").notNull().default(35),
   /** Legacy field — kept in sync with status='published' for backward compatibility */
   isPublished: boolean("is_published").notNull().default(false),

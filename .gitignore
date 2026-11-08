@@ -60,6 +60,11 @@ Thumbs.db
 # image) that would be wrong on anyone else's machine and on every deployment.
 docker-compose.override.yml
 
+# Backups made while editing .env hold the same secrets the file does.
+.env.bak*
+.env.local
+.env.*.local
+
 # Loose notes, credentials and documents
 #
 # These accumulate at the repo root during development — API keys pasted into a
@@ -71,5 +76,13 @@ docker-compose.override.yml
 # robots.txt is served by the web app, so it has to stay tracked.
 !artifacts/ascension/public/robots.txt
 
+# Per-machine compose overrides. The file in this repo says so itself: it
+# carries local networking workarounds (DNS resolvers, IPv4-first, a substitute
+# image) that would be wrong on anyone else's machine and on every deployment.
+docker-compose.override.yml
+
 # The stray NUL that Windows shell redirection leaves behind.
 NUL
+
+# Hand-made test payloads for the SMS ingest; they carry a live token.
+sms.json

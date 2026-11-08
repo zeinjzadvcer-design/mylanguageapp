@@ -14,6 +14,9 @@ const base = () => `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
 
 export type MediaPurpose = "lesson_activity" | "quiz_response";
 
+/** Image uploads. Receipts go through the student path; the QR is admin-only. */
+export type ImagePurpose = "payment_receipt" | "payment_qr";
+
 export class MediaUploadError extends Error {
   readonly code: string | null;
   readonly status: number;
@@ -123,4 +126,69 @@ export async function uploadRecording(
 export async function getPlaybackUrl(mediaId: number): Promise<string> {
   const { url } = await api<{ url: string }>("GET", `/media/${mediaId}/url`);
   return url;
+}
+
+/** What the server accepts for a payment image. Kept in step with storage.ts. */
+export const PAYMENT_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+export const MAX_PAYMENT_IMAGE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Upload a payment image — a student's transfer receipt, or the admin's
+ * ShamCash QR.
+ *
+ * Same three-step handshake as a recording, but the type and size are checked
+ * here first: a student photographing a receipt gets a clear message rather
+ * than a signed PUT that the bucket rejects, and an oversized phone photo is
+ * caught before it is uploaded rather than after.
+ *
+ * The QR goes to an admin-only endpoint. A QR students scan decides where
+ * their money goes, so it must never come from the student upload path.
+ */
+export async function uploadPaymentImage(
+  file: File,
+  purpose: ImagePurpose,
+): Promise<{ mediaId: number }> {
+  const contentType = (file.type || "").split(";")[0].trim().toLowerCase();
+
+  if (!PAYMENT_IMAGE_TYPES.includes(contentType)) {
+    throw new MediaUploadError(
+      "الرجاء اختيار صورة بصيغة JPG أو PNG أو WEBP",
+      400,
+      "UNSUPPORTED_TYPE",
+    );
+  }
+
+  if (file.size > MAX_PAYMENT_IMAGE_BYTES) {
+    throw new MediaUploadError(
+      "حجم الصورة كبير جداً. الحد الأقصى 8 ميغابايت",
+      400,
+      "TOO_LARGE",
+    );
+  }
+
+  const path = purpose === "payment_qr" ? "/admin/media/payment-qr" : "/media/uploads";
+  const begun = await api<BeginUploadResponse>("POST", path, {
+    ...(purpose === "payment_qr" ? {} : { purpose }),
+    contentType,
+    sizeBytes: file.size,
+    originalName: file.name,
+  });
+
+  const put = await fetch(begun.upload.url, {
+    method: "PUT",
+    body: file,
+    headers: begun.upload.headers,
+    credentials: "omit",
+  });
+
+  if (!put.ok) {
+    throw new MediaUploadError(`Upload failed (${put.status})`, put.status, "UPLOAD_FAILED");
+  }
+
+  const done = await api<{ mediaId: number }>(
+    "POST",
+    `/media/uploads/${begun.mediaId}/complete`,
+  );
+
+  return done;
 }

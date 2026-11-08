@@ -45,6 +45,7 @@ import {
 import type { AIFeature } from "./ai";
 import { getPlanAllowance } from "./ai-config";
 import { logger } from "../lib/logger";
+import { subscriptionInForce } from "./entitlements";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -110,12 +111,10 @@ export async function resolvePlanCode(userId: number): Promise<string> {
   const [sub] = await db
     .select({ planCode: studentSubscriptionsTable.planCode })
     .from(studentSubscriptionsTable)
-    .where(
-      and(
-        eq(studentSubscriptionsTable.userId, userId),
-        eq(studentSubscriptionsTable.status, "active"),
-      ),
-    )
+    // In force, not merely `active`. A lapsed paid subscription otherwise kept
+    // the paid AI allowance until the hourly sweep flipped its status — AI
+    // spend on a plan nobody is paying for.
+    .where(subscriptionInForce(userId))
     .orderBy(desc(studentSubscriptionsTable.startedAt))
     .limit(1);
   return sub?.planCode ?? "free";

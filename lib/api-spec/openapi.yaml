@@ -582,6 +582,177 @@ paths:
 
   # ─── Subscriptions ──────────────────────────────────────────────────────────
 
+  /subscription/payment-details:
+    get:
+      operationId: getPaymentDetails
+      tags: [subscriptions]
+      summary: What a student needs on screen to pay
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wallet:
+                    $ref: "#/components/schemas/WalletDetails"
+                  crypto:
+                    $ref: "#/components/schemas/CryptoPaymentDetails"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /subscription/payment-submissions:
+    get:
+      operationId: getPaymentSubmissions
+      tags: [subscriptions]
+      summary: The student's own payment submissions, newest first
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaymentSubmission"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createPaymentSubmission
+      tags: [subscriptions]
+      summary: Submit proof of a ShamCash transfer for review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentSubmissionInput"
+      responses:
+        "201":
+          description: Created, awaiting review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSubmission"
+        "400":
+          description: Receipt upload unusable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No pending subscription found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A payment for this subscription is already under review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /subscription/wallet-submissions:
+    post:
+      operationId: createWalletSubmission
+      tags: [subscriptions]
+      summary: Submit a Syriatel Cash operation number for automatic matching
+      description: >-
+        Records the claim; it never activates anything itself. The companion app
+        forwards the merchant's copy of the same SMS and the matcher pairs them
+        on the operation number, so a submission that arrives before its SMS —
+        or after, which is the usual order — is handled the same way.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalletSubmissionInput"
+      responses:
+        "201":
+          description: Accepted, matching in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSubmission"
+        "400":
+          description: Malformed operation number or amount
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No pending subscription found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: That operation number has already bought a subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The plan has no Syrian pound price configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /subscription/crypto-submissions:
+    post:
+      operationId: createCryptoSubmission
+      tags: [subscriptions]
+      summary: Submit a BEP-20 transaction hash for automatic verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CryptoSubmissionInput"
+      responses:
+        "201":
+          description: Accepted, verification in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSubmission"
+        "400":
+          description: Malformed transaction hash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No pending subscription found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: That transaction has already bought a subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Crypto payments are not enabled on this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /subscription-plans:
     get:
       operationId: getSubscriptionPlans
@@ -779,6 +950,343 @@ paths:
                 $ref: "#/components/schemas/AdminStudentList"
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-submissions:
+    get:
+      operationId: getPaymentSubmissions1
+      tags: [admin]
+      summary: The payment review queue, oldest first
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, verifying, approved, rejected]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminPaymentSubmission"
+        "403":
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-submissions/count:
+    get:
+      operationId: getPaymentSubmissionCount
+      tags: [admin]
+      summary: How many payments are waiting for review
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending:
+                    type: number
+        "403":
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-submissions/{id}/approve:
+    post:
+      operationId: approvePaymentSubmission
+      tags: [admin]
+      summary: Approve a payment and activate the subscription
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reviewNote:
+                  type: string
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Activated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscriptionId:
+                    type: number
+                  alreadyActive:
+                    type: boolean
+                    description: >-
+                      True when this approval was a no-op because the
+                      submission was already approved - two admins at once, or
+                      a retried request.
+        "404":
+          description: Submission not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Already rejected, or the plan no longer exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-submissions/{id}/reject:
+    post:
+      operationId: rejectPaymentSubmission
+      tags: [admin]
+      summary: Reject a payment, with a reason the student will see
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reviewNote]
+              properties:
+                reviewNote:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "400":
+          description: A reason is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Submission not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-settings:
+    get:
+      operationId: getPaymentSettings
+      tags: [admin]
+      summary: The ShamCash receive details students are shown
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSettings"
+        "403":
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updatePaymentSettings
+      tags: [admin]
+      summary: Change the ShamCash receive details
+      description: >-
+        Partial: an admin reissuing the QR should not have to retype the account
+        number, and a typo in one field must not blank the others.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentSettingsUpdate"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSettings"
+        "400":
+          description: Invalid settings, or the media id is not a completed payment QR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/subscription-plans/{code}/price:
+    patch:
+      operationId: updatePlanPrice
+      tags: [admin]
+      summary: Set a plan's USD and Syrian pound prices
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                priceUsd:
+                  type: number
+                priceSyp:
+                  type: ["number", "null"]
+                  description: >-
+                    Null withdraws the plan from the local wallet. Set by an
+                    admin rather than converted, because the official and
+                    parallel exchange rates differ materially.
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  priceUsd:
+                    type: number
+                  priceSyp:
+                    type: ["string", "null"]
+        "404":
+          description: No such plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-settings/syp-rate/refresh:
+    post:
+      operationId: refreshSypRate
+      tags: [admin]
+      summary: Fetch the SYP rate from SP Today now
+      description: >-
+        Spends one of the free tier's hundred monthly calls, which is why it is
+        a deliberate action rather than something that runs on every visit.
+      responses:
+        "200":
+          description: Refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSettings"
+        "502":
+          description: SP Today could not be reached or returned no usable rate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSettings"
+        "503":
+          description: No SP Today API key is configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-settings/ingest-token:
+    post:
+      operationId: rotateIngestToken
+      tags: [admin]
+      summary: Generate a new companion-app token, invalidating the old one
+      description: >-
+        Returned once, in this response only. Anything that can POST a
+        forwarded SMS can mint a subscription, so the token is never readable
+        again afterwards.
+      responses:
+        "200":
+          description: Generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+        "403":
+          description: Admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/media/payment-qr:
+    post:
+      operationId: beginPaymentQrUpload
+      tags: [admin]
+      summary: Reserve a key and sign a PUT for the ShamCash receive QR
+      description: >-
+        Admin-only and separate from the student upload path: the QR has no
+        owner so every student can see it, and a QR students scan decides where
+        their money goes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contentType, sizeBytes]
+              properties:
+                contentType:
+                  type: string
+                sizeBytes:
+                  type: number
+                originalName:
+                  type: string
+      responses:
+        "201":
+          description: Presigned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mediaId:
+                    type: number
+                  key:
+                    type: string
+                  upload:
+                    type: object
+                    additionalProperties: true
+        "400":
+          description: Unsupported type or size
           content:
             application/json:
               schema:
@@ -2602,6 +3110,14 @@ components:
         state:
           type: string
           enum: [LOCKED, AVAILABLE, IN_PROGRESS, COMPLETED]
+        lockedReason:
+          type: ["string", "null"]
+          enum: [quota_exhausted, null]
+          description: >-
+            Set when the lesson is locked by the student's PLAN rather than by
+            curriculum progression, so the UI can offer an upgrade instead of
+            "finish the previous lesson". Null when the lock is ordinary
+            progression, or when the lesson is not locked.
         isUnlocked:
           type: boolean
         isCompleted:
@@ -2991,7 +3507,7 @@ components:
           type: number
         code:
           type: string
-          enum: [free, general_english, professional_english]
+          enum: [free, general_basic, general_plus, pro_basic, pro_plus]
         name:
           type: string
         nameAr:
@@ -3017,9 +3533,45 @@ components:
             type: string
         includesConversationPartner:
           type: boolean
-        lessonsAccess:
+        lessonTrack:
           type: string
-          enum: [a1_only, full, professional_only]
+          description: >-
+            Which content track this plan unlocks, matched for equality against
+            a lesson's lessonType. The tracks are mutually exclusive, not
+            nested: a general subscriber does not see professional lessons.
+          example: general
+        lessonsPerMonth:
+          type: ["integer", "null"]
+          description: >-
+            Lessons startable per quota period; null means unlimited. The period
+            is `quotaPeriod`, so this covers both the free trial's one lesson
+            ever and a paid tier's monthly allowance.
+        callsPerMonth:
+          type: ["integer", "null"]
+          description: >-
+            Peer calls startable per quota period; null means unlimited.
+            Separate from the deployment-wide daily call cap, which is abuse
+            control applied to everyone.
+        quotaPeriod:
+          type: string
+          enum: [lifetime, monthly]
+          description: >-
+            lifetime counts over the whole account history (the free trial:
+            one lesson, ever); monthly resets from the subscription start date.
+        priceSypManual:
+          type: ["string", "null"]
+          description: >-
+            The admin's own SYP figure, whatever the pricing mode. Edited on the
+            admin screen; students see `priceSyp`.
+        priceSyp:
+          type: ["string", "null"]
+          description: >-
+            The SYP price charged: computed from the fetched rate when automatic
+            pricing is on, the admin's figure otherwise. Null means the wallet
+            cannot sell this plan. A string because it is a SQL
+            numeric — money parsed as a float loses precision. Deliberately not
+            derived from priceUsd: official and parallel exchange rates differ
+            by roughly 18%.
 
     SubscriptionInput:
       type: object
@@ -3027,11 +3579,152 @@ components:
       properties:
         planCode:
           type: string
-          enum: [general_english, professional_english]
+          enum: [general_basic, general_plus, pro_basic, pro_plus]
         paymentMethod:
           type: string
-          enum: [sham_cash, cryptocurrency, manual]
-        paymentReference:
+          enum: [syriatel_cash, crypto_usdt_bep20]
+
+    WalletDetails:
+      type: object
+      description: >-
+        The local wallet's receive details, uploaded by an admin. The student
+        scans the QR or types the account code to pay.
+      properties:
+        provider:
+          type: string
+          example: syriatel_cash
+          description: Which wallet these details belong to, for the label shown.
+        qrUrl:
+          type: ["string", "null"]
+          description: Signed URL for the receive QR, null when none is uploaded.
+        accountName:
+          type: ["string", "null"]
+        accountNumber:
+          type: ["string", "null"]
+          description: >-
+            The account code, shown beside the QR so a student whose app cannot
+            scan can type it, and so anyone can confirm the account first.
+        instructionsAr:
+          type: ["string", "null"]
+        configured:
+          type: boolean
+          description: >-
+            False when no QR has been uploaded, so the payment page can explain
+            rather than showing an empty box the student cannot act on.
+
+    CryptoPaymentDetails:
+      type: object
+      description: >-
+        Where to send USDT, and on which network. `configured` is false until an
+        admin sets an address or a QR; the method is not offered until then.
+      properties:
+        configured:
+          type: boolean
+        walletAddress:
+          type: ["string", "null"]
+          description: >-
+            The BEP-20 receiving address an admin set, or null when only a QR
+            was uploaded.
+        qrUrl:
+          type: ["string", "null"]
+          description: Signed URL for the receiving QR, if one was uploaded.
+        autoVerify:
+          type: boolean
+          description: >-
+            Whether payments are confirmed on chain. Needs an address to check
+            the recipient against; with only a QR, an admin reviews each one.
+        network:
+          type: string
+          example: BEP20
+        networkLabel:
+          type: string
+          description: >-
+            Shown prominently. A student who sends TRC-20 or ERC-20 USDT to
+            this 0x address loses the money permanently.
+        tokenSymbol:
+          type: string
+          example: USDT
+
+    CryptoSubmissionInput:
+      type: object
+      required: [subscriptionId, txHash]
+      properties:
+        subscriptionId:
+          type: number
+        txHash:
+          type: string
+          description: A 0x-prefixed 64-hex-character BNB Smart Chain transaction hash.
+
+    WalletSubmissionInput:
+      type: object
+      required: [subscriptionId, operationNumber, amountSyp]
+      properties:
+        subscriptionId:
+          type: number
+        operationNumber:
+          type: string
+          pattern: '^\d{4,24}$'
+          description: >-
+            رقم العملية from the payer's own confirmation SMS. A bearer secret:
+            Syriatel sends it only to the payer and the merchant, which is what
+            lets the claim be believed. One number buys one subscription, ever.
+        amountSyp:
+          type: number
+          description: What the student says they transferred, in Syrian pounds.
+        studentNote:
+          type: string
+          maxLength: 2000
+        receiptMediaId:
+          type: number
+          description: Optional screenshot, if the student took one.
+
+    PaymentSubmissionInput:
+      type: object
+      required: [subscriptionId, receiptMediaId]
+      properties:
+        subscriptionId:
+          type: number
+        receiptMediaId:
+          type: number
+          description: >-
+            A completed payment_receipt upload belonging to the caller. Required
+            — a claim with no proof is not reviewable.
+        studentNote:
+          type: string
+          maxLength: 2000
+
+    PaymentSubmission:
+      type: object
+      description: >-
+        A claimed payment awaiting verification. ShamCash submissions are
+        reviewed by an admin; crypto submissions are verified on-chain and fall
+        back to the same queue when that check is inconclusive.
+      properties:
+        id:
+          type: number
+        subscriptionId:
+          type: number
+        method:
+          type: string
+          enum: [syriatel_cash, crypto_usdt_bep20]
+        status:
+          type: string
+          enum: [pending, verifying, approved, rejected]
+        amountExpected:
+          type: string
+          description: >-
+            Plan price snapshotted at submission. A string because it is a SQL
+            numeric — parsing it as a float would lose precision on money.
+        txHash:
+          type: ["string", "null"]
+        studentNote:
+          type: ["string", "null"]
+        reviewNote:
+          type: ["string", "null"]
+          description: The admin's reason, shown to the student on a rejection.
+        createdAt:
+          type: string
+        reviewedAt:
           type: ["string", "null"]
 
     StudentSubscription:
@@ -3059,6 +3752,18 @@ components:
           format: date-time
         paymentMethod:
           type: ["string", "null"]
+        priceSyp:
+          type: ["string", "null"]
+          description: >-
+            The SYP price quoted when this subscription was opened — what the
+            payment step shows and what the payment is checked against, so a
+            rate refresh mid-payment does not fail a correct transfer.
+        amountUsdt:
+          type: ["string", "null"]
+          description: >-
+            The exact USDT amount held for this subscription: the plan price
+            plus a tag no other open subscription has, which is what ties a
+            public transfer to one student. Null off the crypto path.
         paymentNote:
           type: ["string", "null"]
 
@@ -3154,6 +3859,146 @@ components:
           type: string
 
     # ─── Admin ─────────────────────────────────────────────────────────────────
+
+    AdminPaymentSubmission:
+      type: object
+      properties:
+        id:
+          type: number
+        subscriptionId:
+          type: number
+        userId:
+          type: number
+        studentName:
+          type: string
+        studentEmail:
+          type: string
+        planCode:
+          type: string
+        planName:
+          type: string
+        planNameAr:
+          type: string
+        method:
+          type: string
+          enum: [syriatel_cash, crypto_usdt_bep20]
+        status:
+          type: string
+          enum: [pending, verifying, approved, rejected]
+        amountExpected:
+          type: string
+        amountExpectedSyp:
+          type: ["string", "null"]
+        amountClaimedSyp:
+          type: ["string", "null"]
+          description: What the student said they transferred, in Syrian pounds.
+        operationNumber:
+          type: ["string", "null"]
+          description: رقم العملية for a local-wallet payment.
+        receiptUrl:
+          type: ["string", "null"]
+          description: Short-lived signed URL for the receipt image.
+        studentNote:
+          type: ["string", "null"]
+        txHash:
+          type: ["string", "null"]
+        amountObserved:
+          type: ["string", "null"]
+        senderAddress:
+          type: ["string", "null"]
+        verificationLog:
+          description: >-
+            What the automatic check saw, so an admin looking at a crypto
+            submission is not guessing why it needs a human.
+        reviewNote:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        reviewedAt:
+          type: ["string", "null"]
+
+    PaymentSettings:
+      type: object
+      properties:
+        walletProvider:
+          type: string
+        walletQrMediaId:
+          type: ["number", "null"]
+        walletAccountName:
+          type: ["string", "null"]
+        walletAccountNumber:
+          type: ["string", "null"]
+        walletInstructionsAr:
+          type: ["string", "null"]
+        walletMerchantPhone:
+          type: ["string", "null"]
+          description: >-
+            The handset that receives the confirmation SMS, so an admin can see
+            where the companion app belongs. The server never sends to it.
+        hasIngestToken:
+          type: boolean
+          description: >-
+            Whether a companion-app token exists. The token itself is never
+            returned — it is shown once when generated.
+        cryptoWalletAddress:
+          type: ["string", "null"]
+        cryptoQrMediaId:
+          type: ["number", "null"]
+        cryptoUpdatedAt:
+          type: ["string", "null"]
+        cryptoUpdatedByName:
+          type: ["string", "null"]
+          description: >-
+            Who last changed the crypto details. Shown because the address
+            decides where money goes and nothing reviews a crypto payment.
+        sypRateAuto:
+          type: boolean
+        sypUnit:
+          type: string
+          enum: [new, old]
+          description: Which Syrian pound prices are in. 100 old = 1 new.
+        sypRate:
+          type: ["string", "null"]
+          description: SYP per USD in sypUnit, as last fetched.
+        sypRateFetchedAt:
+          type: ["string", "null"]
+        sypRateSourceUpdatedAt:
+          type: ["string", "null"]
+        sypRateError:
+          type: ["string", "null"]
+          description: The last fetch failure, cleared on success.
+        sptodayConfigured:
+          type: boolean
+          description: Whether an SP Today API key is set. The key is never returned.
+        updatedAt:
+          type: ["string", "null"]
+
+    PaymentSettingsUpdate:
+      type: object
+      properties:
+        walletQrMediaId:
+          type: ["number", "null"]
+        walletAccountName:
+          type: ["string", "null"]
+        walletAccountNumber:
+          type: ["string", "null"]
+        walletInstructionsAr:
+          type: ["string", "null"]
+        walletMerchantPhone:
+          type: ["string", "null"]
+        cryptoWalletAddress:
+          type: ["string", "null"]
+          description: >-
+            BEP-20 address (0x + 40 hex). A TRON address is refused. Null
+            removes it.
+        cryptoQrMediaId:
+          type: ["number", "null"]
+          description: A completed payment_qr upload. Null removes it.
+        sypRateAuto:
+          type: boolean
+        sypUnit:
+          type: string
+          enum: [new, old]
 
     AdminStats:
       type: object

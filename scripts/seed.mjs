@@ -23,24 +23,66 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
+/**
+ * The two paid plans are mutually exclusive CONTENT TRACKS, not tiers: neither
+ * is a superset of the other, and `lessonTrack` is matched for equality against
+ * `lessons.lesson_type`. A general subscriber never sees professional lessons
+ * and vice versa.
+ *
+ * `freeLessonQuota` is how many distinct lessons may be STARTED; null is
+ * unlimited. The free plan's 1 is the single trial lesson a student gets after
+ * the placement test, before everything locks.
+ */
+/**
+ * Four plans: two content tracks, two sizes each.
+ *
+ * `lessonTrack` is matched for equality against `lessons.track` — the tracks
+ * are mutually exclusive, so `pro_basic` is not `general_basic` plus extras.
+ * `lessonsPerMonth` and `callsPerMonth` are the allowance per monthly period,
+ * counted from the subscription's own start date.
+ *
+ * `priceSyp` is null here on purpose. A figure invented in a seed would be a
+ * guess at an exchange rate, and the official and parallel rates differ by
+ * roughly 18% — so an admin sets it, and the local wallet refuses to sell a
+ * plan until they have. A missing price is a visible gap; a wrong one is not.
+ */
 const PLANS = [
   {
     code: 'free', name: 'Free', nameAr: 'مجاني',
-    priceUsd: 0, lessonsAccess: 'a1_only',
-    description: 'Access to A1.1 only',
-    descriptionAr: 'الوصول إلى المستوى A1.1 فقط',
+    priceUsd: 0, lessonTrack: 'general',
+    // One lesson EVER, not one a month: 'lifetime' is what makes this a trial
+    // rather than a small recurring plan.
+    lessonsPerMonth: 1, callsPerMonth: 0, quotaPeriod: 'lifetime',
+    description: 'Placement test and one free lesson',
+    descriptionAr: 'اختبار تحديد المستوى ودرس مجاني واحد',
   },
   {
-    code: 'general_english', name: 'General English', nameAr: 'الإنجليزية العامة',
-    priceUsd: 2, lessonsAccess: 'full',
-    description: 'Full access to A1–C2',
-    descriptionAr: 'وصول كامل من A1 إلى C2',
+    code: 'general_basic', name: 'General English', nameAr: 'الإنجليزية العامة',
+    priceUsd: 2, lessonTrack: 'general',
+    lessonsPerMonth: 12, callsPerMonth: 8, quotaPeriod: 'monthly',
+    description: '12 lessons and 8 calls a month',
+    descriptionAr: '١٢ درساً و٨ مكالمات شهرياً',
   },
   {
-    code: 'professional_english', name: 'Professional English', nameAr: 'الإنجليزية المهنية',
-    priceUsd: 4, lessonsAccess: 'full',
-    description: 'Full access plus business vocabulary',
-    descriptionAr: 'وصول كامل بالإضافة إلى مفردات الأعمال',
+    code: 'general_plus', name: 'General English Plus', nameAr: 'الإنجليزية العامة بلس',
+    priceUsd: 5, lessonTrack: 'general',
+    lessonsPerMonth: 24, callsPerMonth: 16, quotaPeriod: 'monthly',
+    description: '24 lessons and 16 calls a month',
+    descriptionAr: '٢٤ درساً و١٦ مكالمة شهرياً',
+  },
+  {
+    code: 'pro_basic', name: 'Professional English', nameAr: 'الإنجليزية المهنية',
+    priceUsd: 4, lessonTrack: 'professional',
+    lessonsPerMonth: 12, callsPerMonth: 8, quotaPeriod: 'monthly',
+    description: '12 professional lessons and 8 calls a month',
+    descriptionAr: '١٢ درساً مهنياً و٨ مكالمات شهرياً',
+  },
+  {
+    code: 'pro_plus', name: 'Professional English Plus', nameAr: 'الإنجليزية المهنية بلس',
+    priceUsd: 7, lessonTrack: 'professional',
+    lessonsPerMonth: 24, callsPerMonth: 16, quotaPeriod: 'monthly',
+    description: '24 professional lessons and 16 calls a month',
+    descriptionAr: '٢٤ درساً مهنياً و١٦ مكالمة شهرياً',
   },
 ];
 
@@ -207,11 +249,28 @@ try {
   // ── Subscription plans ────────────────────────────────────────────────────
   for (const p of PLANS) {
     await client.query(
+      // Access columns and copy are UPDATEd on conflict rather than left alone.
+      // Migration 021 backfills lesson_track and free_lesson_quota, but the old
+      // descriptions ("Access to A1.1 only", "Full access plus business
+      // vocabulary") describe a model the product no longer sells, and an
+      // existing database would keep showing them to students. Price is left
+      // untouched on purpose: it is an admin's to set, not the seed's to reset.
+      // price_syp is deliberately absent from the UPDATE: an admin sets it,
+      // and re-seeding must not wipe the figure they chose. price_usd is left
+      // alone on conflict for the same reason.
       `INSERT INTO subscription_plans
-         (code, name, name_ar, price_usd, lessons_access, description, description_ar)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (code) DO NOTHING`,
-      [p.code, p.name, p.nameAr, p.priceUsd, p.lessonsAccess, p.description, p.descriptionAr],
+         (code, name, name_ar, price_usd, lesson_track, lessons_per_month,
+          calls_per_month, quota_period, description, description_ar)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (code) DO UPDATE SET
+         lesson_track      = EXCLUDED.lesson_track,
+         lessons_per_month = EXCLUDED.lessons_per_month,
+         calls_per_month   = EXCLUDED.calls_per_month,
+         quota_period      = EXCLUDED.quota_period,
+         description       = EXCLUDED.description,
+         description_ar    = EXCLUDED.description_ar`,
+      [p.code, p.name, p.nameAr, p.priceUsd, p.lessonTrack, p.lessonsPerMonth,
+       p.callsPerMonth, p.quotaPeriod, p.description, p.descriptionAr],
     );
   }
   console.log(`Subscription plans: ${PLANS.length} ensured.`);

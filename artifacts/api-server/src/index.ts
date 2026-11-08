@@ -1,6 +1,10 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startGradingSweeper, stopGradingSweeper } from "./services/grading-sweeper";
+import {
+  startSubscriptionSweeper,
+  stopSubscriptionSweeper,
+} from "./services/subscription-sweeper";
 import { ensureBootstrapAdmin } from "./services/bootstrap-admin";
 import { closeJobQueue } from "./services/jobs";
 
@@ -50,6 +54,7 @@ async function shutdown(signal: string): Promise<void> {
 
   try {
     stopGradingSweeper();
+    stopSubscriptionSweeper();
     await closeJobQueue();
     logger.info("Shutdown complete");
   } catch (err) {
@@ -82,4 +87,5 @@ app.listen(port, (err) => {
   // grading, and doing that while the process is still coming up would compete
   // with the requests it is meant to be ready for.
   startGradingSweeper();
+  startSubscriptionSweeper();
 });

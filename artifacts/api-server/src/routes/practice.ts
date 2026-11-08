@@ -66,7 +66,12 @@ function handleError(err: unknown, res: import("express").Response): void {
   }
   if (err instanceof PracticeBlockedError) {
     const status = err.reason === "DAILY_LIMIT" ? 429 : err.reason === "NOT_YOURS" ? 403 : 409;
-    res.status(status).json({ error: err.message, code: err.reason });
+    res.status(status).json({
+      error: err.message,
+      code: err.reason,
+      // Only PLAN_LIMIT carries one; the other reasons are localised by code.
+      ...(err.messageAr ? { errorAr: err.messageAr } : {}),
+    });
     return;
   }
   throw err;
@@ -109,7 +114,7 @@ router.put("/practice/profile", requireAuth, async (req, res): Promise<void> => 
 
 router.post("/practice/queue", requireAuth, async (req, res): Promise<void> => {
   try {
-    res.status(201).json(await joinQueue(req.session.userId!));
+    res.status(201).json(await joinQueue(req.session.userId!, req.session.role));
   } catch (err) {
     handleError(err, res);
   }

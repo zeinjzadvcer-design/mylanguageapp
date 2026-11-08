@@ -102,9 +102,14 @@ const STATUS_ORDER: Record<CallEvaluation["status"], number> = {
   expired: 5,
 };
 
+/** Evaluation polling: quick while something is about to change, slow otherwise. */
+const FAST_POLL_MS = 2_000;
+const SLOW_POLL_MS = 15_000;
+const FAST_POLL_WINDOW_MS = 3 * 60_000;
+
 export default function Practice() {
   const { toast } = useToast();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const pr = t.practice;
   const qc = useQueryClient();
 
@@ -146,6 +151,35 @@ export default function Practice() {
    * so the guard and the display are kept separate.
    */
   const inFlightRef = useRef(false);
+  /**
+   * Whether the page is still mounted, for the async work in the effects below.
+   *
+   * NOT a per-effect `cancelled` flag. Those effects depend on `call`, which is
+   * a new object on every render, so their own `setUploading(true)` re-ran them
+   * and marked the request already in flight as cancelled. Its result was then
+   * thrown away: a created request never reached the card (and was sent again,
+   * to be refused as a duplicate), and a failed upload never said so — the card
+   * sat on "sending" with nothing happening.
+   */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  /**
+   * Until when evaluations are polled quickly. Raised whenever the other side
+   * may act any second — a call just ended, or an evaluation moved a step — and
+   * bounded, so a request nobody answers does not poll every two seconds for
+   * the life of the page. Bumping `pollBoost` restarts the loop at once.
+   */
+  const fastPollUntilRef = useRef(0);
+  const [pollBoost, setPollBoost] = useState(0);
+  const boostPolling = useCallback(() => {
+    fastPollUntilRef.current = Date.now() + FAST_POLL_WINDOW_MS;
+    setPollBoost((n) => n + 1);
+  }, []);
   /**
    * Evaluation ids whose upload has already been attempted.
    *
@@ -216,9 +250,12 @@ export default function Practice() {
                 e.status === "analyzing" ||
                 e.status === "completed"
               : // The consenting side has nothing to do while the uploader
-                // uploads, so they are shown the card once there is something
-                // in it for them.
-                e.status === "analyzing" || e.status === "completed"),
+                // uploads, but is shown where things stand: without the card
+                // they saw nothing at all between agreeing and the result.
+                e.status === "consented" ||
+                e.status === "uploaded" ||
+                e.status === "analyzing" ||
+                e.status === "completed"),
         );
         const fresh =
           evaluations.find((e) => prev && e.id === prev.id && !dismissedRef.current.has(e.id)) ??
@@ -296,8 +333,11 @@ export default function Practice() {
   // Hold on to the ended call: the evaluation is requested against its id, and
   // `session` is cleared as soon as it ends.
   useEffect(() => {
-    if (session?.status === "ended") endedSessionRef.current = session;
-  }, [session]);
+    if (session?.status === "ended") {
+      endedSessionRef.current = session;
+      boostPolling();
+    }
+  }, [session, boostPolling]);
 
   // The recording is finished and the student asked for feedback: create the
   // request, then upload. Nothing reaches the server until the partner agrees,
@@ -327,20 +367,19 @@ export default function Practice() {
       return;
     }
 
-    let cancelled = false;
     inFlightRef.current = true;
     setUploading(true);
     void (async () => {
       try {
         const { evaluation: created } = await practiceApi.requestEvaluation(ended.sessionId);
-        if (cancelled) return;
+        if (!mountedRef.current) return;
         setEvaluation(created);
         toast({
           title: pr.requestSent,
           description: pr.requestSentBody,
         });
       } catch (err) {
-        if (cancelled) return;
+        if (!mountedRef.current) return;
         // Both students asked for the same call. Only one request can exist, so
         // the loser is not in an error state — they are the person being asked
         // to consent, and the consent card is already on its way to them from
@@ -362,16 +401,12 @@ export default function Practice() {
         setWantsEvaluation(false);
         call.discardRecording();
       } finally {
-        // Unconditional: the work really has finished, whether or not this
-        // effect instance was superseded while it ran.
+        // Unconditional: the work really has finished.
         inFlightRef.current = false;
         setUploading(false);
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
     // `uploading` is deliberately NOT a dependency: it is set inside this
     // effect, so depending on it makes the effect cancel itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -385,7 +420,6 @@ export default function Practice() {
     if (!blob || inFlightRef.current) return;
     if (uploadAttemptedRef.current.has(evaluation.id)) return;
 
-    let cancelled = false;
     // Claimed BEFORE the request, so a failure cannot re-enter here.
     uploadAttemptedRef.current.add(evaluation.id);
     inFlightRef.current = true;
@@ -408,13 +442,13 @@ export default function Practice() {
           begun.mediaId,
           call.recordedStereo,
         );
-        if (cancelled) return;
+        if (!mountedRef.current) return;
         setEvaluation(updated);
         // The audio has left the browser; there is no reason to keep a copy.
         call.discardRecording();
         toast({ title: pr.uploaded, description: pr.uploadedBody });
       } catch {
-        if (!cancelled) {
+        if (mountedRef.current) {
           // The recording is deliberately NOT discarded: it is the only copy,
           // and keeping it is what makes the retry button below possible.
           toast({
@@ -429,20 +463,36 @@ export default function Practice() {
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [evaluation, call, toast]);
 
-  // Pick up consent requests and finished analyses. Slow on purpose: analysis
-  // is ASR plus a model pass, so there is nothing to see for a while.
+  // Pick up consent requests and finished analyses. Quick for a while after a
+  // call ends and after every step of an evaluation, when the other student may
+  // act any second; slow the rest of the time.
   useEffect(() => {
     if (!optedIn) return;
-    void refreshEvaluations();
-    const id = window.setInterval(() => void refreshEvaluations(), 15_000);
-    return () => window.clearInterval(id);
-  }, [optedIn, refreshEvaluations]);
+    let stopped = false;
+    let timer: number | undefined;
+    const tick = async () => {
+      await refreshEvaluations();
+      if (stopped) return;
+      const fast = Date.now() < fastPollUntilRef.current;
+      timer = window.setTimeout(() => void tick(), fast ? FAST_POLL_MS : SLOW_POLL_MS);
+    };
+    void tick();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [optedIn, refreshEvaluations, pollBoost]);
+
+  // Every step of an evaluation in progress is a moment the other side acts on.
+  useEffect(() => {
+    const status = evaluation?.status;
+    if (status === "requested" || status === "consented" || status === "uploaded" || status === "analyzing") {
+      boostPolling();
+    }
+  }, [evaluation?.id, evaluation?.status, boostPolling]);
 
   // A call the server has ended is over here too, whatever the peer connection
   // still thinks.
@@ -469,10 +519,12 @@ export default function Practice() {
   const fail = useCallback(
     (err: unknown) => {
       const message =
-        err instanceof PracticeError ? err.message : pr.genericError;
+        err instanceof PracticeError
+          ? (lang === "ar" && err.messageAr) || err.message
+          : pr.genericError;
       toast({ title: pr.actionFailed, description: message, variant: "destructive" });
     },
-    [toast, pr],
+    [toast, pr, lang],
   );
 
   // ─── Actions ───────────────────────────────────────────────────────────────
@@ -651,8 +703,12 @@ export default function Practice() {
           evaluation={pendingConsent}
           onAnswer={async (agree) => {
             try {
-              await practiceApi.respondToEvaluation(pendingConsent.id, agree);
+              const { evaluation: answered } = await practiceApi.respondToEvaluation(
+                pendingConsent.id,
+                agree,
+              );
               setPendingConsent(null);
+              if (agree) setEvaluation(answered);
               toast({
                 title: agree ? pr.agreed : pr.declined,
                 description: agree ? pr.agreedBody : pr.declinedBody,
@@ -1120,11 +1176,22 @@ function EvaluationCard({
         </div>
 
         {uploading && (
-          <p className="text-sm text-muted-foreground">{ev.sending}</p>
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+            {ev.sending}
+          </p>
         )}
 
+        {/* A spinner, not just a sentence: every one of these states moves on
+            by itself, and a still line of text read as "stuck". The one
+            exception is a failed upload, which waits on the button below. */}
         {waiting[evaluation.status] && !uploading && (
-          <p className="text-sm text-muted-foreground">{waiting[evaluation.status]}</p>
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            {!canRetryUpload && (
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+            )}
+            {waiting[evaluation.status]}
+          </p>
         )}
 
         {/* The upload is attempted once. If it failed, the recording is still

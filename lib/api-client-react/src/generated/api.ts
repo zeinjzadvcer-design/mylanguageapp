@@ -24,15 +24,21 @@ import type {
   AdminLesson,
   AdminLessonInput,
   AdminLessonUpdate,
+  AdminPaymentSubmission,
   AdminStats,
   AdminStudentList,
+  ApprovePaymentSubmission200,
+  ApprovePaymentSubmissionBody,
   AuthResult,
+  BeginPaymentQrUpload201,
+  BeginPaymentQrUploadBody,
   CodedError,
   ConversationEnded,
   ConversationStart,
   ConversationStartInput,
   ConversationTurn,
   ConversationTurnInput,
+  CryptoSubmissionInput,
   Curriculum,
   DashboardStats,
   ErrorResponse,
@@ -40,6 +46,9 @@ import type {
   ExerciseSubmission,
   GetAdminStudentsParams,
   GetLessonsParams,
+  GetPaymentDetails200,
+  GetPaymentSubmissionCount200,
+  GetPaymentSubmissions1Params,
   GetSkillReportParams,
   GetVocabularyParams,
   HealthStatus,
@@ -62,6 +71,10 @@ import type {
   MediaUploadResult,
   MediaUploadTicket,
   OkResponse,
+  PaymentSettings,
+  PaymentSettingsUpdate,
+  PaymentSubmission,
+  PaymentSubmissionInput,
   PlacementTest,
   PlacementTestResult,
   PlacementTestSubmission,
@@ -93,15 +106,21 @@ import type {
   ReadPracticeSignalsParams,
   ReferralReport,
   RegisterInput,
+  RejectPaymentSubmission200,
+  RejectPaymentSubmissionBody,
+  RotateIngestToken200,
   SkillReport,
   StudentProfile,
   StudentSubscription,
   SubscriptionInput,
   SubscriptionPlan,
   SuccessResponse,
+  UpdatePlanPrice200,
+  UpdatePlanPriceBody,
   User,
   ValidationError,
   VocabularyItem,
+  WalletSubmissionInput,
   WeakAreaSummary
 } from './api.schemas';
 
@@ -1715,6 +1734,374 @@ export function useGetVocabulary<TData = Awaited<ReturnType<typeof getVocabulary
 
 
 
+export const getGetPaymentDetailsUrl = () => {
+
+
+
+
+  return `/api/subscription/payment-details`
+}
+
+/**
+ * @summary What a student needs on screen to pay
+ */
+export const getPaymentDetails = async ( options?: Parameters<typeof customFetch>[1]): Promise<GetPaymentDetails200> => {
+
+  return customFetch<GetPaymentDetails200>(getGetPaymentDetailsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPaymentDetailsQueryKey = () => {
+    return [
+    `/api/subscription/payment-details`
+    ] as const;
+    }
+
+
+export const getGetPaymentDetailsQueryOptions = <TData = Awaited<ReturnType<typeof getPaymentDetails>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentDetails>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPaymentDetailsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPaymentDetails>>> = ({ signal }) => getPaymentDetails({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPaymentDetails>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPaymentDetailsQueryResult = NonNullable<Awaited<ReturnType<typeof getPaymentDetails>>>
+export type GetPaymentDetailsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary What a student needs on screen to pay
+ */
+
+export function useGetPaymentDetails<TData = Awaited<ReturnType<typeof getPaymentDetails>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentDetails>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPaymentDetailsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPaymentSubmissionsUrl = () => {
+
+
+
+
+  return `/api/subscription/payment-submissions`
+}
+
+/**
+ * @summary The student's own payment submissions, newest first
+ */
+export const getPaymentSubmissions = async ( options?: Parameters<typeof customFetch>[1]): Promise<PaymentSubmission[]> => {
+
+  return customFetch<PaymentSubmission[]>(getGetPaymentSubmissionsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPaymentSubmissionsQueryKey = () => {
+    return [
+    `/api/subscription/payment-submissions`
+    ] as const;
+    }
+
+
+export const getGetPaymentSubmissionsQueryOptions = <TData = Awaited<ReturnType<typeof getPaymentSubmissions>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPaymentSubmissionsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPaymentSubmissions>>> = ({ signal }) => getPaymentSubmissions({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPaymentSubmissionsQueryResult = NonNullable<Awaited<ReturnType<typeof getPaymentSubmissions>>>
+export type GetPaymentSubmissionsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary The student's own payment submissions, newest first
+ */
+
+export function useGetPaymentSubmissions<TData = Awaited<ReturnType<typeof getPaymentSubmissions>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPaymentSubmissionsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreatePaymentSubmissionUrl = () => {
+
+
+
+
+  return `/api/subscription/payment-submissions`
+}
+
+/**
+ * @summary Submit proof of a ShamCash transfer for review
+ */
+export const createPaymentSubmission = async (paymentSubmissionInput: PaymentSubmissionInput, options?: Parameters<typeof customFetch>[1]): Promise<PaymentSubmission> => {
+
+  return customFetch<PaymentSubmission>(getCreatePaymentSubmissionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(paymentSubmissionInput)
+  }
+);}
+
+
+
+
+
+export const getCreatePaymentSubmissionMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPaymentSubmission>>, TError,{data: BodyType<PaymentSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createPaymentSubmission>>, TError,{data: BodyType<PaymentSubmissionInput>}, TContext> => {
+
+const mutationKey = ['createPaymentSubmission'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPaymentSubmission>>, {data: BodyType<PaymentSubmissionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createPaymentSubmission(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreatePaymentSubmissionMutationResult = NonNullable<Awaited<ReturnType<typeof createPaymentSubmission>>>
+    export type CreatePaymentSubmissionMutationBody = BodyType<PaymentSubmissionInput>
+    export type CreatePaymentSubmissionMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Submit proof of a ShamCash transfer for review
+ */
+export const useCreatePaymentSubmission = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPaymentSubmission>>, TError,{data: BodyType<PaymentSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createPaymentSubmission>>,
+        TError,
+        {data: BodyType<PaymentSubmissionInput>},
+        TContext
+      > => {
+      return useMutation(getCreatePaymentSubmissionMutationOptions(options));
+    }
+
+export const getCreateWalletSubmissionUrl = () => {
+
+
+
+
+  return `/api/subscription/wallet-submissions`
+}
+
+/**
+ * Records the claim; it never activates anything itself. The companion app forwards the merchant's copy of the same SMS and the matcher pairs them on the operation number, so a submission that arrives before its SMS — or after, which is the usual order — is handled the same way.
+ * @summary Submit a Syriatel Cash operation number for automatic matching
+ */
+export const createWalletSubmission = async (walletSubmissionInput: WalletSubmissionInput, options?: Parameters<typeof customFetch>[1]): Promise<PaymentSubmission> => {
+
+  return customFetch<PaymentSubmission>(getCreateWalletSubmissionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(walletSubmissionInput)
+  }
+);}
+
+
+
+
+
+export const getCreateWalletSubmissionMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createWalletSubmission>>, TError,{data: BodyType<WalletSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createWalletSubmission>>, TError,{data: BodyType<WalletSubmissionInput>}, TContext> => {
+
+const mutationKey = ['createWalletSubmission'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createWalletSubmission>>, {data: BodyType<WalletSubmissionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createWalletSubmission(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateWalletSubmissionMutationResult = NonNullable<Awaited<ReturnType<typeof createWalletSubmission>>>
+    export type CreateWalletSubmissionMutationBody = BodyType<WalletSubmissionInput>
+    export type CreateWalletSubmissionMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Submit a Syriatel Cash operation number for automatic matching
+ */
+export const useCreateWalletSubmission = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createWalletSubmission>>, TError,{data: BodyType<WalletSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createWalletSubmission>>,
+        TError,
+        {data: BodyType<WalletSubmissionInput>},
+        TContext
+      > => {
+      return useMutation(getCreateWalletSubmissionMutationOptions(options));
+    }
+
+export const getCreateCryptoSubmissionUrl = () => {
+
+
+
+
+  return `/api/subscription/crypto-submissions`
+}
+
+/**
+ * @summary Submit a BEP-20 transaction hash for automatic verification
+ */
+export const createCryptoSubmission = async (cryptoSubmissionInput: CryptoSubmissionInput, options?: Parameters<typeof customFetch>[1]): Promise<PaymentSubmission> => {
+
+  return customFetch<PaymentSubmission>(getCreateCryptoSubmissionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(cryptoSubmissionInput)
+  }
+);}
+
+
+
+
+
+export const getCreateCryptoSubmissionMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCryptoSubmission>>, TError,{data: BodyType<CryptoSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createCryptoSubmission>>, TError,{data: BodyType<CryptoSubmissionInput>}, TContext> => {
+
+const mutationKey = ['createCryptoSubmission'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createCryptoSubmission>>, {data: BodyType<CryptoSubmissionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createCryptoSubmission(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateCryptoSubmissionMutationResult = NonNullable<Awaited<ReturnType<typeof createCryptoSubmission>>>
+    export type CreateCryptoSubmissionMutationBody = BodyType<CryptoSubmissionInput>
+    export type CreateCryptoSubmissionMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Submit a BEP-20 transaction hash for automatic verification
+ */
+export const useCreateCryptoSubmission = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCryptoSubmission>>, TError,{data: BodyType<CryptoSubmissionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createCryptoSubmission>>,
+        TError,
+        {data: BodyType<CryptoSubmissionInput>},
+        TContext
+      > => {
+      return useMutation(getCreateCryptoSubmissionMutationOptions(options));
+    }
+
 export const getGetSubscriptionPlansUrl = () => {
 
 
@@ -2408,6 +2795,748 @@ export function useGetAdminStudents<TData = Awaited<ReturnType<typeof getAdminSt
 
 
 
+
+export const getGetPaymentSubmissions1Url = (params?: GetPaymentSubmissions1Params,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/payment-submissions?${stringifiedParams}` : `/api/admin/payment-submissions`
+}
+
+/**
+ * @summary The payment review queue, oldest first
+ */
+export const getPaymentSubmissions1 = async (params?: GetPaymentSubmissions1Params, options?: Parameters<typeof customFetch>[1]): Promise<AdminPaymentSubmission[]> => {
+
+  return customFetch<AdminPaymentSubmission[]>(getGetPaymentSubmissions1Url(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPaymentSubmissions1QueryKey = (params?: GetPaymentSubmissions1Params,) => {
+    return [
+    `/api/admin/payment-submissions`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetPaymentSubmissions1QueryOptions = <TData = Awaited<ReturnType<typeof getPaymentSubmissions1>>, TError = ErrorType<ErrorResponse>>(params?: GetPaymentSubmissions1Params, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissions1>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPaymentSubmissions1QueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPaymentSubmissions1>>> = ({ signal }) => getPaymentSubmissions1(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissions1>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPaymentSubmissions1QueryResult = NonNullable<Awaited<ReturnType<typeof getPaymentSubmissions1>>>
+export type GetPaymentSubmissions1QueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary The payment review queue, oldest first
+ */
+
+export function useGetPaymentSubmissions1<TData = Awaited<ReturnType<typeof getPaymentSubmissions1>>, TError = ErrorType<ErrorResponse>>(
+ params?: GetPaymentSubmissions1Params, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissions1>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPaymentSubmissions1QueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPaymentSubmissionCountUrl = () => {
+
+
+
+
+  return `/api/admin/payment-submissions/count`
+}
+
+/**
+ * @summary How many payments are waiting for review
+ */
+export const getPaymentSubmissionCount = async ( options?: Parameters<typeof customFetch>[1]): Promise<GetPaymentSubmissionCount200> => {
+
+  return customFetch<GetPaymentSubmissionCount200>(getGetPaymentSubmissionCountUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPaymentSubmissionCountQueryKey = () => {
+    return [
+    `/api/admin/payment-submissions/count`
+    ] as const;
+    }
+
+
+export const getGetPaymentSubmissionCountQueryOptions = <TData = Awaited<ReturnType<typeof getPaymentSubmissionCount>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissionCount>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPaymentSubmissionCountQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPaymentSubmissionCount>>> = ({ signal }) => getPaymentSubmissionCount({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissionCount>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPaymentSubmissionCountQueryResult = NonNullable<Awaited<ReturnType<typeof getPaymentSubmissionCount>>>
+export type GetPaymentSubmissionCountQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary How many payments are waiting for review
+ */
+
+export function useGetPaymentSubmissionCount<TData = Awaited<ReturnType<typeof getPaymentSubmissionCount>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSubmissionCount>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPaymentSubmissionCountQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getApprovePaymentSubmissionUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/payment-submissions/${id}/approve`
+}
+
+/**
+ * @summary Approve a payment and activate the subscription
+ */
+export const approvePaymentSubmission = async (id: number,
+    approvePaymentSubmissionBody?: ApprovePaymentSubmissionBody, options?: Parameters<typeof customFetch>[1]): Promise<ApprovePaymentSubmission200> => {
+
+  return customFetch<ApprovePaymentSubmission200>(getApprovePaymentSubmissionUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(approvePaymentSubmissionBody)
+  }
+);}
+
+
+
+
+
+export const getApprovePaymentSubmissionMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approvePaymentSubmission>>, TError,{id: number;data?: BodyType<ApprovePaymentSubmissionBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof approvePaymentSubmission>>, TError,{id: number;data?: BodyType<ApprovePaymentSubmissionBody>}, TContext> => {
+
+const mutationKey = ['approvePaymentSubmission'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approvePaymentSubmission>>, {id: number;data?: BodyType<ApprovePaymentSubmissionBody>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  approvePaymentSubmission(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApprovePaymentSubmissionMutationResult = NonNullable<Awaited<ReturnType<typeof approvePaymentSubmission>>>
+    export type ApprovePaymentSubmissionMutationBody = BodyType<ApprovePaymentSubmissionBody> | undefined
+    export type ApprovePaymentSubmissionMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Approve a payment and activate the subscription
+ */
+export const useApprovePaymentSubmission = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approvePaymentSubmission>>, TError,{id: number;data?: BodyType<ApprovePaymentSubmissionBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof approvePaymentSubmission>>,
+        TError,
+        {id: number;data?: BodyType<ApprovePaymentSubmissionBody>},
+        TContext
+      > => {
+      return useMutation(getApprovePaymentSubmissionMutationOptions(options));
+    }
+
+export const getRejectPaymentSubmissionUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/payment-submissions/${id}/reject`
+}
+
+/**
+ * @summary Reject a payment, with a reason the student will see
+ */
+export const rejectPaymentSubmission = async (id: number,
+    rejectPaymentSubmissionBody: RejectPaymentSubmissionBody, options?: Parameters<typeof customFetch>[1]): Promise<RejectPaymentSubmission200> => {
+
+  return customFetch<RejectPaymentSubmission200>(getRejectPaymentSubmissionUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(rejectPaymentSubmissionBody)
+  }
+);}
+
+
+
+
+
+export const getRejectPaymentSubmissionMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectPaymentSubmission>>, TError,{id: number;data: BodyType<RejectPaymentSubmissionBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectPaymentSubmission>>, TError,{id: number;data: BodyType<RejectPaymentSubmissionBody>}, TContext> => {
+
+const mutationKey = ['rejectPaymentSubmission'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectPaymentSubmission>>, {id: number;data: BodyType<RejectPaymentSubmissionBody>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  rejectPaymentSubmission(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RejectPaymentSubmissionMutationResult = NonNullable<Awaited<ReturnType<typeof rejectPaymentSubmission>>>
+    export type RejectPaymentSubmissionMutationBody = BodyType<RejectPaymentSubmissionBody>
+    export type RejectPaymentSubmissionMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Reject a payment, with a reason the student will see
+ */
+export const useRejectPaymentSubmission = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectPaymentSubmission>>, TError,{id: number;data: BodyType<RejectPaymentSubmissionBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof rejectPaymentSubmission>>,
+        TError,
+        {id: number;data: BodyType<RejectPaymentSubmissionBody>},
+        TContext
+      > => {
+      return useMutation(getRejectPaymentSubmissionMutationOptions(options));
+    }
+
+export const getGetPaymentSettingsUrl = () => {
+
+
+
+
+  return `/api/admin/payment-settings`
+}
+
+/**
+ * @summary The ShamCash receive details students are shown
+ */
+export const getPaymentSettings = async ( options?: Parameters<typeof customFetch>[1]): Promise<PaymentSettings> => {
+
+  return customFetch<PaymentSettings>(getGetPaymentSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPaymentSettingsQueryKey = () => {
+    return [
+    `/api/admin/payment-settings`
+    ] as const;
+    }
+
+
+export const getGetPaymentSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getPaymentSettings>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPaymentSettingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPaymentSettings>>> = ({ signal }) => getPaymentSettings({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPaymentSettings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPaymentSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getPaymentSettings>>>
+export type GetPaymentSettingsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary The ShamCash receive details students are shown
+ */
+
+export function useGetPaymentSettings<TData = Awaited<ReturnType<typeof getPaymentSettings>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPaymentSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdatePaymentSettingsUrl = () => {
+
+
+
+
+  return `/api/admin/payment-settings`
+}
+
+/**
+ * Partial: an admin reissuing the QR should not have to retype the account number, and a typo in one field must not blank the others.
+ * @summary Change the ShamCash receive details
+ */
+export const updatePaymentSettings = async (paymentSettingsUpdate: PaymentSettingsUpdate, options?: Parameters<typeof customFetch>[1]): Promise<PaymentSettings> => {
+
+  return customFetch<PaymentSettings>(getUpdatePaymentSettingsUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(paymentSettingsUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdatePaymentSettingsMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePaymentSettings>>, TError,{data: BodyType<PaymentSettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updatePaymentSettings>>, TError,{data: BodyType<PaymentSettingsUpdate>}, TContext> => {
+
+const mutationKey = ['updatePaymentSettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePaymentSettings>>, {data: BodyType<PaymentSettingsUpdate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updatePaymentSettings(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePaymentSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updatePaymentSettings>>>
+    export type UpdatePaymentSettingsMutationBody = BodyType<PaymentSettingsUpdate>
+    export type UpdatePaymentSettingsMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Change the ShamCash receive details
+ */
+export const useUpdatePaymentSettings = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePaymentSettings>>, TError,{data: BodyType<PaymentSettingsUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updatePaymentSettings>>,
+        TError,
+        {data: BodyType<PaymentSettingsUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdatePaymentSettingsMutationOptions(options));
+    }
+
+export const getUpdatePlanPriceUrl = (code: string,) => {
+
+
+
+
+  return `/api/admin/subscription-plans/${code}/price`
+}
+
+/**
+ * @summary Set a plan's USD and Syrian pound prices
+ */
+export const updatePlanPrice = async (code: string,
+    updatePlanPriceBody: UpdatePlanPriceBody, options?: Parameters<typeof customFetch>[1]): Promise<UpdatePlanPrice200> => {
+
+  return customFetch<UpdatePlanPrice200>(getUpdatePlanPriceUrl(code),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(updatePlanPriceBody)
+  }
+);}
+
+
+
+
+
+export const getUpdatePlanPriceMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePlanPrice>>, TError,{code: string;data: BodyType<UpdatePlanPriceBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updatePlanPrice>>, TError,{code: string;data: BodyType<UpdatePlanPriceBody>}, TContext> => {
+
+const mutationKey = ['updatePlanPrice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePlanPrice>>, {code: string;data: BodyType<UpdatePlanPriceBody>}> = (props) => {
+          const {code,data} = props ?? {};
+
+          return  updatePlanPrice(code,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePlanPriceMutationResult = NonNullable<Awaited<ReturnType<typeof updatePlanPrice>>>
+    export type UpdatePlanPriceMutationBody = BodyType<UpdatePlanPriceBody>
+    export type UpdatePlanPriceMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Set a plan's USD and Syrian pound prices
+ */
+export const useUpdatePlanPrice = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePlanPrice>>, TError,{code: string;data: BodyType<UpdatePlanPriceBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updatePlanPrice>>,
+        TError,
+        {code: string;data: BodyType<UpdatePlanPriceBody>},
+        TContext
+      > => {
+      return useMutation(getUpdatePlanPriceMutationOptions(options));
+    }
+
+export const getRefreshSypRateUrl = () => {
+
+
+
+
+  return `/api/admin/payment-settings/syp-rate/refresh`
+}
+
+/**
+ * Spends one of the free tier's hundred monthly calls, which is why it is a deliberate action rather than something that runs on every visit.
+ * @summary Fetch the SYP rate from SP Today now
+ */
+export const refreshSypRate = async ( options?: Parameters<typeof customFetch>[1]): Promise<PaymentSettings> => {
+
+  return customFetch<PaymentSettings>(getRefreshSypRateUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRefreshSypRateMutationOptions = <TError = ErrorType<PaymentSettings | ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshSypRate>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshSypRate>>, TError,void, TContext> => {
+
+const mutationKey = ['refreshSypRate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshSypRate>>, void> = () => {
+
+
+          return  refreshSypRate(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshSypRateMutationResult = NonNullable<Awaited<ReturnType<typeof refreshSypRate>>>
+
+    export type RefreshSypRateMutationError = ErrorType<PaymentSettings | ErrorResponse>
+
+    /**
+ * @summary Fetch the SYP rate from SP Today now
+ */
+export const useRefreshSypRate = <TError = ErrorType<PaymentSettings | ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshSypRate>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof refreshSypRate>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRefreshSypRateMutationOptions(options));
+    }
+
+export const getRotateIngestTokenUrl = () => {
+
+
+
+
+  return `/api/admin/payment-settings/ingest-token`
+}
+
+/**
+ * Returned once, in this response only. Anything that can POST a forwarded SMS can mint a subscription, so the token is never readable again afterwards.
+ * @summary Generate a new companion-app token, invalidating the old one
+ */
+export const rotateIngestToken = async ( options?: Parameters<typeof customFetch>[1]): Promise<RotateIngestToken200> => {
+
+  return customFetch<RotateIngestToken200>(getRotateIngestTokenUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRotateIngestTokenMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rotateIngestToken>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rotateIngestToken>>, TError,void, TContext> => {
+
+const mutationKey = ['rotateIngestToken'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rotateIngestToken>>, void> = () => {
+
+
+          return  rotateIngestToken(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RotateIngestTokenMutationResult = NonNullable<Awaited<ReturnType<typeof rotateIngestToken>>>
+
+    export type RotateIngestTokenMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Generate a new companion-app token, invalidating the old one
+ */
+export const useRotateIngestToken = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rotateIngestToken>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof rotateIngestToken>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRotateIngestTokenMutationOptions(options));
+    }
+
+export const getBeginPaymentQrUploadUrl = () => {
+
+
+
+
+  return `/api/admin/media/payment-qr`
+}
+
+/**
+ * Admin-only and separate from the student upload path: the QR has no owner so every student can see it, and a QR students scan decides where their money goes.
+ * @summary Reserve a key and sign a PUT for the ShamCash receive QR
+ */
+export const beginPaymentQrUpload = async (beginPaymentQrUploadBody: BeginPaymentQrUploadBody, options?: Parameters<typeof customFetch>[1]): Promise<BeginPaymentQrUpload201> => {
+
+  return customFetch<BeginPaymentQrUpload201>(getBeginPaymentQrUploadUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(beginPaymentQrUploadBody)
+  }
+);}
+
+
+
+
+
+export const getBeginPaymentQrUploadMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof beginPaymentQrUpload>>, TError,{data: BodyType<BeginPaymentQrUploadBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof beginPaymentQrUpload>>, TError,{data: BodyType<BeginPaymentQrUploadBody>}, TContext> => {
+
+const mutationKey = ['beginPaymentQrUpload'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof beginPaymentQrUpload>>, {data: BodyType<BeginPaymentQrUploadBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  beginPaymentQrUpload(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BeginPaymentQrUploadMutationResult = NonNullable<Awaited<ReturnType<typeof beginPaymentQrUpload>>>
+    export type BeginPaymentQrUploadMutationBody = BodyType<BeginPaymentQrUploadBody>
+    export type BeginPaymentQrUploadMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Reserve a key and sign a PUT for the ShamCash receive QR
+ */
+export const useBeginPaymentQrUpload = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof beginPaymentQrUpload>>, TError,{data: BodyType<BeginPaymentQrUploadBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof beginPaymentQrUpload>>,
+        TError,
+        {data: BodyType<BeginPaymentQrUploadBody>},
+        TContext
+      > => {
+      return useMutation(getBeginPaymentQrUploadMutationOptions(options));
+    }
 
 export const getGetAdminLessonsUrl = () => {
 

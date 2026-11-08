@@ -40,6 +40,11 @@ import {
   AIProviderError,
 } from "../services/ai-providers/openai-compatible";
 import { logger } from "../lib/logger";
+import {
+  DEFAULT_TASK_PROMPTS,
+  MAX_TASK_PROMPT_CHARS,
+  isPromptEditable,
+} from "../services/ai-prompts";
 
 const router: IRouter = Router();
 
@@ -430,6 +435,8 @@ const taskSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   maxTokens: z.number().int().min(1).max(32768).optional(),
   enabled: z.boolean().optional(),
+  /** Null, or empty, returns the task to the default instructions. */
+  systemPrompt: z.string().max(MAX_TASK_PROMPT_CHARS).nullable().optional(),
 });
 
 router.patch("/admin/ai/tasks/:task", requireAdmin, async (req, res): Promise<void> => {
@@ -443,6 +450,18 @@ router.patch("/admin/ai/tasks/:task", requireAdmin, async (req, res): Promise<vo
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.errors });
     return;
+  }
+
+  if (parsed.data.systemPrompt !== undefined) {
+    if (!isPromptEditable(task)) {
+      res.status(400).json({ error: `The ${task} task's instructions cannot be edited` });
+      return;
+    }
+    // Stored only when it differs from the default, so an untouched task keeps
+    // following the default when the code improves it.
+    const text = parsed.data.systemPrompt?.trim() ?? "";
+    parsed.data.systemPrompt =
+      text && text !== DEFAULT_TASK_PROMPTS[task]?.trim() ? text : null;
   }
 
   const [current] = await db
@@ -472,7 +491,19 @@ router.patch("/admin/ai/tasks/:task", requireAdmin, async (req, res): Promise<vo
     .where(eq(aiTaskSettingsTable.task, task))
     .returning();
 
-  logger.info({ by: req.session.userId, task, ...parsed.data }, "AI task settings changed");
+  // The prompt itself is not logged — only whether it changed, and its size.
+  const { systemPrompt, ...logged } = parsed.data;
+  logger.info(
+    {
+      by: req.session.userId,
+      task,
+      ...logged,
+      ...(systemPrompt !== undefined && {
+        systemPrompt: systemPrompt === null ? "default" : `custom (${systemPrompt.length} chars)`,
+      }),
+    },
+    "AI task settings changed",
+  );
   res.json(updated);
 });
 

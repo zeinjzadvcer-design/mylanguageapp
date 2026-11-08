@@ -28,6 +28,7 @@ import AdminDashboard from '@/pages/admin/dashboard';
 import AdminStudents from '@/pages/admin/students';
 import AdminLessons from '@/pages/admin/lessons';
 import AdminAiSettings from '@/pages/admin/ai-settings';
+import AdminPayments from '@/pages/admin/payments';
 
 // CMS pages
 import CMSDashboard from '@/pages/cms/index';
@@ -45,7 +46,38 @@ import CMSQuizEditor from '@/pages/cms/quiz-editor';
 import AuditLogPage from '@/pages/cms/audit';
 import CMSPracticeReports from '@/pages/cms/practice-reports';
 
-const queryClient = new QueryClient();
+/**
+ * A 4xx is an answer, not a failure.
+ *
+ * TanStack Query retries three times with backoff by default, which is right
+ * for a dropped connection and wrong for a verdict: a 403 from the paywall or
+ * a 404 for a missing lesson is as true on the fourth attempt as the first.
+ * Retrying them spent about seven seconds re-asking a settled question, and
+ * the student watched a loading skeleton the whole time before being told
+ * their free lesson was used.
+ *
+ * So client errors (except 408 and 429, which genuinely mean "try again")
+ * surface immediately, and everything else keeps the default retries.
+ */
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) => {
+        const status = (error as { status?: number } | null)?.status;
+        if (status != null && status >= 400 && status < 500) {
+          return status === 408 || status === 429 ? failureCount < 2 : false;
+        }
+        return failureCount < 3;
+      },
+    },
+    mutations: {
+      // Mutations are not retried at all by default; a failed POST may have
+      // been applied, and re-sending a payment submission is worse than
+      // showing the error.
+      retry: false,
+    },
+  },
+});
 
 /** Adapter: pulls route param and passes to component as a plain prop */
 function LessonEditorRoute({ params }: { params: { id?: string } }) {
@@ -85,6 +117,7 @@ function Router() {
         <ProtectedRoute path="/admin/students" component={AdminStudents} requireAdmin />
         <ProtectedRoute path="/admin/lessons" component={AdminLessons} requireAdmin />
         <ProtectedRoute path="/admin/ai" component={AdminAiSettings} requireAdmin />
+        <ProtectedRoute path="/admin/payments" component={AdminPayments} requireAdmin />
 
         {/* CMS routes — accessible to admin | content_manager | content_reviewer */}
         <ProtectedRoute path="/cms" component={CMSDashboard} requireCMS />

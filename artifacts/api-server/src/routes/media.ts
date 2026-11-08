@@ -7,7 +7,7 @@
  */
 
 import { Router, type IRouter } from "express";
-import { requireAuth, requireContentManager, currentRole } from "../middlewares/auth";
+import { requireAuth, requireContentManager, requireAdmin, currentRole } from "../middlewares/auth";
 import {
   beginUpload,
   completeUpload,
@@ -29,7 +29,16 @@ const router: IRouter = Router();
 // student's voice, so it is only accepted once both participants have consented
 // — which this generic endpoint cannot check. Those uploads go through
 // POST /practice/evaluations/:id/recording instead.
-const STUDENT_PURPOSES = new Set<MediaPurpose>(["lesson_activity", "quiz_response"]);
+//
+// `payment_receipt` is here: it is the student's own file, owned by them and
+// readable by them and by staff — the same rule a recording follows. The
+// matching `payment_qr` is NOT, because it is admin-uploaded and owned by
+// nobody; it goes through POST /admin/media/payment-qr below.
+const STUDENT_PURPOSES = new Set<MediaPurpose>([
+  "lesson_activity",
+  "quiz_response",
+  "payment_receipt",
+]);
 
 /** Map a service-level refusal onto the right status code. */
 function statusForCode(code: string): number {
@@ -188,6 +197,36 @@ router.post("/cms/media/uploads", requireContentManager, async (req, res): Promi
       contentType,
       sizeBytes: Number(sizeBytes),
       durationSec: durationSec == null ? null : Number(durationSec),
+      originalName: typeof originalName === "string" ? originalName : null,
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+/**
+ * The ShamCash receive QR.
+ *
+ * Admin-only and separate from both other upload paths, because the ownership
+ * rule is unlike either: the QR has no owner, so every student can see it, and
+ * a student must never be able to upload one — a QR students scan decides
+ * where their money goes.
+ */
+router.post("/admin/media/payment-qr", requireAdmin, async (req, res): Promise<void> => {
+  const { contentType, sizeBytes, originalName } = req.body ?? {};
+
+  if (typeof contentType !== "string") {
+    res.status(400).json({ error: "contentType is required", code: "INVALID_TYPE" });
+    return;
+  }
+
+  try {
+    const result = await beginUpload({
+      userId: req.session.userId!,
+      purpose: "payment_qr",
+      contentType,
+      sizeBytes: Number(sizeBytes),
       originalName: typeof originalName === "string" ? originalName : null,
     });
     res.status(201).json(result);
