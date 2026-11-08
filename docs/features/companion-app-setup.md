@@ -130,6 +130,8 @@ class SmsReceiver : BroadcastReceiver() {
             val body = JSONObject().apply {
                 put("rawText", sms.messageBody)
                 put("sender", sms.originatingAddress)
+                // A second check on who sent it: a sender name can be forged.
+                put("serviceCenter", sms.serviceCenterAddress)
                 // The handset's own receipt time, not now(): the submission
                 // window is measured from this.
                 put("receivedAt", Instant.ofEpochMilli(sms.timestampMillis).toString())
@@ -145,6 +147,15 @@ class SmsReceiver : BroadcastReceiver() {
 ```
 
 Keep the token in `EncryptedSharedPreferences`, not in source.
+
+**Pinning the SMS centre.** A sender name can be forged, because bulk-SMS services
+let a customer choose it. Once this app is running, forward one genuine
+confirmation, read `serviceCenter` from the API's "Wallet SMS received" log line,
+and set `WALLET_SMS_SERVICE_CENTERS` to that value (comma-separated if Syriatel
+uses several). Messages through any other centre are then stored but never
+activate anything. Off-the-shelf forwarders usually cannot send this field, so
+leave the setting empty if you use one. Test it on a real phone before relying
+on it: a wrong value sends every payment to manual review.
 
 ---
 
