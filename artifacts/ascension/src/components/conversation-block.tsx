@@ -27,6 +27,7 @@ import {
   endConversation,
   getActiveConversation,
   ConversationError,
+  type ActiveSession,
   type ConversationTurn,
 } from "@/lib/conversation-api";
 import {
@@ -133,6 +134,14 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
     speechRef.current.speak(text, () => markGreeted(id));
   };
 
+  const resumeSession = (session: ActiveSession) => {
+    setSessionId(session.sessionId);
+    setTurns(session.turns);
+    setTurnsRemaining(session.turnsRemaining);
+    setMinutesRemaining(session.minutesRemaining);
+    setVocabUsed(session.vocabularyUsed);
+  };
+
   // Resume whatever is open, so a reload does not lose the thread.
   useEffect(() => {
     let cancelled = false;
@@ -141,22 +150,12 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
       .then(({ session }) => {
         if (cancelled || !session || session.lessonId !== lessonId) return;
 
-        // Another dialogue part of this lesson. Only one conversation can be
-        // open at a time, so one the student walked away from would block this
-        // part from starting at all; it is closed, and this part starts fresh.
-        // Sessions from before blocks were recorded have no block id and are
-        // resumed as before.
-        if (session.blockId != null && session.blockId !== blockId) {
-          void endConversation(session.sessionId).catch(() => {
-            // Starting will report the open conversation if this failed.
-          });
-          return;
-        }
-        setSessionId(session.sessionId);
-        setTurns(session.turns);
-        setTurnsRemaining(session.turnsRemaining);
-        setMinutesRemaining(session.minutesRemaining);
-        setVocabUsed(session.vocabularyUsed);
+        // Another dialogue part of this lesson. This part starts fresh, and the
+        // server closes the other one when it does. Sessions from before blocks
+        // were recorded have no block id and are resumed as before.
+        if (session.blockId != null && session.blockId !== blockId) return;
+
+        resumeSession(session);
 
         // Opening the block on a conversation that has only the greeting so
         // far is the start of that conversation for the student, so the
@@ -217,6 +216,18 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
       setTargetVocab(r.targetVocabulary);
       setEnded(false);
     } catch (e) {
+      // Start was pressed before the check above came back, and this block's
+      // conversation is already open: show it rather than an error.
+      if (e instanceof ConversationError && e.code === "ALREADY_ACTIVE") {
+        const open = await getActiveConversation().then(
+          (r) => r.session,
+          () => null,
+        );
+        if (open?.lessonId === lessonId && (open.blockId == null || open.blockId === blockId)) {
+          resumeSession(open);
+          return;
+        }
+      }
       reportError(e);
     } finally {
       setStarting(false);
