@@ -71,6 +71,8 @@ export interface BeginUploadInput {
   sizeBytes: number;
   durationSec?: number | null;
   originalName?: string | null;
+  /** Staff are exempt from the daily recording cap. */
+  skipDailyRecordingCap?: boolean;
 }
 
 export interface BeginUploadResult {
@@ -192,7 +194,7 @@ export async function beginUpload(input: BeginUploadInput): Promise<BeginUploadR
 
   // The daily cap counts recordings. A payment image is not one, and a student
   // who has been practising all day must still be able to send a receipt.
-  if (!isCurriculum && !isPaymentImage) {
+  if (!isCurriculum && !isPaymentImage && !input.skipDailyRecordingCap) {
     const used = await countTodaysUploads(userId, false);
     if (used >= DAILY_RECORDING_LIMIT) {
       throw new MediaValidationError(

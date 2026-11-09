@@ -7,7 +7,13 @@
  */
 
 import { Router, type IRouter } from "express";
-import { requireAuth, requireContentManager, requireAdmin, currentRole } from "../middlewares/auth";
+import {
+  requireAuth,
+  requireContentManager,
+  requireAdmin,
+  currentRole,
+  isUnmeteredCaller,
+} from "../middlewares/auth";
 import {
   beginUpload,
   completeUpload,
@@ -109,6 +115,7 @@ router.post("/media/uploads", requireAuth, async (req, res): Promise<void> => {
       contentType,
       sizeBytes: Number(sizeBytes),
       durationSec: durationSec == null ? null : Number(durationSec),
+      skipDailyRecordingCap: await isUnmeteredCaller(req),
     });
     res.status(201).json(result);
   } catch (err) {
