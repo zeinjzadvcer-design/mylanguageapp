@@ -40,11 +40,15 @@ import {
   testProvider,
   updateTask,
   setPolicy,
+  getPracticeSettings,
+  updatePracticeSettings,
   AiAdminError,
+  type PracticeSettings,
   type AiConfig,
   type AiProvider,
   type AiTaskSettings,
   type ModelInfo,
+  type PromptPlaceholder,
   type UsageRow,
   type UsageTotals,
   type UsageByUser,
@@ -90,13 +94,20 @@ export default function AiSettings() {
   const [usage, setUsage] = useState<UsageRow[]>([]);
   const [totals, setTotals] = useState<UsageTotals | null>(null);
   const [byUser, setByUser] = useState<UsageByUser[]>([]);
+  const [practice, setPractice] = useState<PracticeSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [c, u] = await Promise.all([getAiConfig(), getAiUsage(30)]);
+      const [c, u, p] = await Promise.all([
+        getAiConfig(),
+        getAiUsage(30),
+        // Its own failure hides only its own card, not the AI configuration.
+        getPracticeSettings().catch(() => null),
+      ]);
       setConfig(c);
+      setPractice(p);
       setUsage(u.rows);
       setTotals(u.totals ?? null);
       setByUser(u.byUser ?? []);
@@ -201,8 +212,13 @@ export default function AiSettings() {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 pt-2 border-t">
-            <BudgetField
+            <NullableNumberField
+              id="budget"
+              label="Monthly ceiling (USD) — blank for none"
               value={settings.monthlyBudgetUsd}
+              min={0}
+              step="0.5"
+              isValid={(n) => n >= 0}
               disabled={busy}
               onSave={(v) => run(() => updateAiSettings({ monthlyBudgetUsd: v }), "Budget saved")}
             />
@@ -220,6 +236,35 @@ export default function AiSettings() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Voice practice */}
+      {practice && (
+        <Card className="border-2">
+          <CardContent className="p-5">
+            <h2 className="font-bold">Voice practice calls</h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Calls running at once across the whole site. When the limit is reached, students
+              stay in the queue until a call ends. Calls already running are not cut off.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NullableNumberField
+                id="max-concurrent-calls"
+                label="Maximum simultaneous calls — blank for no limit"
+                value={practice.maxConcurrentCalls}
+                min={1}
+                step={1}
+                isValid={(n) => Number.isInteger(n) && n >= 1}
+                disabled={busy}
+                onSave={(v) => run(() => updatePracticeSettings(v), "Call limit saved")}
+              />
+              <div>
+                <Label className="text-xs text-muted-foreground">Calls running now</Label>
+                <p className="text-2xl font-bold tabular-nums">{practice.liveCalls}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Providers */}
       <section className="space-y-3">
@@ -259,6 +304,7 @@ export default function AiSettings() {
             task={t}
             providers={t.task === "transcription" ? providers : chatProviders}
             defaultPrompt={config.defaultPrompts?.[t.task]}
+            placeholders={config.promptPlaceholders?.[t.task] ?? []}
             busy={busy}
             onSave={(patch) => run(() => updateTask(t.task, patch), `${t.task} saved`)}
           />
@@ -473,12 +519,23 @@ export default function AiSettings() {
 
 // ─── Pieces ───────────────────────────────────────────────────────────────────
 
-function BudgetField({
+/** A number an admin may leave blank to mean "no limit". */
+function NullableNumberField({
+  id,
+  label,
   value,
+  min,
+  step,
+  isValid,
   disabled,
   onSave,
 }: {
+  id: string;
+  label: string;
   value: number | null;
+  min: number;
+  step: number | string;
+  isValid: (n: number) => boolean;
   disabled: boolean;
   onSave: (v: number | null) => void;
 }) {
@@ -488,25 +545,28 @@ function BudgetField({
     setText(value == null ? "" : String(value));
   }, [value]);
 
+  const parsed = text.trim() === "" ? null : Number(text);
+  const valid = parsed === null || isValid(parsed);
+
   return (
     <div>
-      <Label htmlFor="budget" className="text-xs text-muted-foreground">
-        Monthly ceiling (USD) — blank for none
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
+        {label}
       </Label>
       <div className="flex gap-2 mt-1">
         <Input
-          id="budget"
+          id={id}
           type="number"
-          min={0}
-          step="0.5"
+          min={min}
+          step={step}
           value={text}
           onChange={(e) => setText(e.target.value)}
           className="rounded-xl"
         />
         <Button
           variant="outline"
-          disabled={disabled}
-          onClick={() => onSave(text.trim() === "" ? null : Number(text))}
+          disabled={disabled || !valid || parsed === value}
+          onClick={() => onSave(parsed)}
           className="rounded-xl"
         >
           Save
@@ -874,6 +934,7 @@ function TaskCard({
   task,
   providers,
   defaultPrompt,
+  placeholders,
   busy,
   onSave,
 }: {
@@ -881,6 +942,7 @@ function TaskCard({
   providers: AiProvider[];
   /** Set only for tasks whose instructions may be edited. */
   defaultPrompt?: string;
+  placeholders: PromptPlaceholder[];
   busy: boolean;
   onSave: (patch: Partial<AiTaskSettings>) => void;
 }) {
@@ -1085,6 +1147,7 @@ function TaskCard({
           <PromptEditor
             stored={task.systemPrompt}
             defaultPrompt={defaultPrompt}
+            placeholders={placeholders}
             busy={busy}
             onSave={(systemPrompt) => onSave({ systemPrompt })}
           />
@@ -1099,17 +1162,20 @@ function TaskCard({
  *
  * Starts from the default. Saving the default text unchanged, or resetting,
  * stores nothing, so the task keeps following the default if the code improves
- * it. The reply format the server parses is not shown: it is added on every call
- * and cannot be edited, so no edit here can break the response.
+ * it. The reply format the server parses and the rules that keep student text
+ * from acting as a command are not shown: they are added on every call and
+ * cannot be edited, so no edit here can break the response.
  */
 function PromptEditor({
   stored,
   defaultPrompt,
+  placeholders,
   busy,
   onSave,
 }: {
   stored: string | null;
   defaultPrompt: string;
+  placeholders: PromptPlaceholder[];
   busy: boolean;
   onSave: (systemPrompt: string | null) => void;
 }) {
@@ -1139,9 +1205,27 @@ function PromptEditor({
         dir="ltr"
         className="rounded-xl font-mono text-xs leading-relaxed"
       />
+      {placeholders.length > 0 && (
+        <div className="rounded-xl bg-muted/50 p-3 space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Placeholders are filled in on each call. A line is left out when its placeholder has
+            nothing to show, so keep each one on its own line. You can move the required ones, but
+            not remove them.
+          </p>
+          <ul className="space-y-1">
+            {placeholders.map((p) => (
+              <li key={p.name} className="text-xs flex flex-wrap items-baseline gap-x-2">
+                <code className="font-mono">{`{{${p.name}}}`}</code>
+                <span className="text-muted-foreground">{p.description}</span>
+                {p.required && <span className="text-muted-foreground italic">required</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">
-        The reply format (JSON) is added automatically and cannot be edited here. Changes apply to
-        the next evaluation, with no deploy.
+        Any reply format and the rules that stop student text acting as a command are added
+        automatically and cannot be edited here. Changes apply to the next AI call, with no deploy.
       </p>
       <div className="flex items-center gap-2 flex-wrap">
         <Button

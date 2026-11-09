@@ -97,6 +97,13 @@ export interface AiPlanPolicy {
   dailyLimit: number;
 }
 
+export interface PromptPlaceholder {
+  name: string;
+  description: string;
+  /** The server refuses edited instructions that remove it. */
+  required: boolean;
+}
+
 export interface AiConfig {
   settings: {
     enabled: boolean;
@@ -110,6 +117,8 @@ export interface AiConfig {
   availableTasks: AITask[];
   /** Default instructions, for the tasks whose prompt can be edited. */
   defaultPrompts: Partial<Record<AITask, string>>;
+  /** What each task's instructions may refer to. A task absent here has none. */
+  promptPlaceholders: Partial<Record<AITask, PromptPlaceholder[]>>;
 }
 
 export interface ModelInfo {
@@ -156,7 +165,20 @@ export interface UsageByUser {
   tokens: number;
 }
 
+export interface PracticeSettings {
+  /** Null means no limit. */
+  maxConcurrentCalls: number | null;
+  /** Ringing or connected right now. */
+  liveCalls: number;
+}
+
 // ─── Calls ────────────────────────────────────────────────────────────────────
+
+export const getPracticeSettings = () =>
+  request<PracticeSettings>("GET", "/admin/practice/settings");
+
+export const updatePracticeSettings = (maxConcurrentCalls: number | null) =>
+  request<unknown>("PATCH", "/admin/practice/settings", { maxConcurrentCalls });
 
 export const getAiConfig = () => request<AiConfig>("GET", "/admin/ai/config");
 
