@@ -26,6 +26,20 @@ import { mediaAssetsTable } from "./cms";
  * later addition.
  */
 
+/** Site-wide voice practice settings, edited at /admin/ai. Exactly one row, id = 1. */
+export const practiceSettingsTable = pgTable("practice_settings", {
+  id: integer("id").primaryKey().default(1),
+  /**
+   * Calls that may be ringing or connected at once, across the whole site.
+   * Null means no limit.
+   */
+  maxConcurrentCalls: integer("max_concurrent_calls"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
 /**
  * What a student wants to practise, and whether they are open to being matched.
  *
