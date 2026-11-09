@@ -8,7 +8,7 @@ import {
   paymentSubmissionsTable,
   mediaAssetsTable,
 } from "@workspace/db";
-import { requireAuth } from "../middlewares/auth";
+import { isUnmeteredCaller, requireAuth } from "../middlewares/auth";
 import { cached, CK, TTL } from "../services/cache";
 import { getWalletDetails, getCryptoDetails } from "../services/payment-settings";
 import { checkWalletAddress } from "../services/crypto-config";
@@ -20,6 +20,7 @@ import { toAsciiDigits } from "../services/wallet-sms-policy";
 import { displaceUnprovenClaim, verifySubmission } from "../services/crypto-verify";
 import { matchSubmission } from "../services/wallet-sms";
 import { logger } from "../lib/logger";
+import { isUniqueViolation } from "../lib/db-errors";
 
 const router: IRouter = Router();
 
@@ -46,15 +47,6 @@ async function isUsableReceipt(mediaId: number, userId: number): Promise<boolean
     asset.status === "ready" &&
     asset.ownerUserId === userId
   );
-}
-
-/** Whether a database error is a unique index refusing a duplicate. */
-function isUniqueViolation(err: unknown): boolean {
-  // Drizzle wraps the driver error, so the Postgres code can be on either.
-  const code =
-    (err as { code?: string })?.code ??
-    (err as { cause?: { code?: string } })?.cause?.code;
-  return code === "23505";
 }
 
 /**
@@ -123,16 +115,49 @@ router.get("/subscription-plans", async (_req, res): Promise<void> => {
  */
 router.get("/subscription", requireAuth, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
+
+  // Staff are not on a plan, so a subscription row says nothing true about their
+  // access (and its stored plan name is what an admin was being shown).
+  if (await isUnmeteredCaller(req)) {
+    res.json({
+      id: 0,
+      studentId: userId,
+      planCode: "staff",
+      planName: "Staff account",
+      planNameAr: "حساب فريق العمل",
+      status: "active",
+      startedAt: new Date().toISOString(),
+      expiresAt: null,
+      paymentMethod: null,
+      paymentNote: null,
+    });
+    return;
+  }
+
   // The same test the lesson gate applies (services/entitlements.ts): active
   // AND not past its expiry. Filtering on status alone kept showing a lapsed
   // subscription as "active, valid until …" until the hourly sweep flipped its
   // status — while every lesson was already locked, because the gate checks
   // the timestamp. The page and the gate must agree on what the student has.
-  const [sub] = await db.select().from(studentSubscriptionsTable)
+  //
+  // The name comes from the plan, not the copy on the subscription row, so this
+  // page always shows the plan's current name rather than whatever was stored
+  // when the student subscribed.
+  const [row] = await db
+    .select({
+      sub: studentSubscriptionsTable,
+      currentName: subscriptionPlansTable.name,
+      currentNameAr: subscriptionPlansTable.nameAr,
+    })
+    .from(studentSubscriptionsTable)
+    .leftJoin(
+      subscriptionPlansTable,
+      eq(subscriptionPlansTable.code, studentSubscriptionsTable.planCode),
+    )
     .where(subscriptionInForce(userId))
     .limit(1);
 
-  if (!sub) {
+  if (!row) {
     res.json({
       id: 0,
       studentId: userId,
@@ -148,12 +173,13 @@ router.get("/subscription", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
+  const { sub } = row;
   res.json({
     id: sub.id,
     studentId: userId,
     planCode: sub.planCode,
-    planName: sub.planName,
-    planNameAr: sub.planNameAr,
+    planName: row.currentName ?? sub.planName,
+    planNameAr: row.currentNameAr ?? sub.planNameAr,
     status: sub.status,
     startedAt: sub.startedAt.toISOString(),
     expiresAt: sub.expiresAt?.toISOString() ?? null,
