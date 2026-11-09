@@ -17,6 +17,8 @@
  *   Daily call limit            Counted in Postgres, like the media upload
  *                               limit — not in Redis, because a Redis outage
  *                               must degrade this feature, not stop it.
+ *   Site-wide call limit        Set by an administrator, checked under a lock
+ *                               when a pairing is made.
  *   Maximum call length         Checked whenever either side polls; the server
  *                               ends the call whatever the browser thinks.
  *   Blocks                      Applied in the matching query, in both
@@ -44,6 +46,7 @@ import {
   practiceBlocksTable,
   practiceReportsTable,
   practiceSignalsTable,
+  practiceSettingsTable,
   type PracticeSession,
 } from "@workspace/db";
 import {
@@ -53,6 +56,7 @@ import {
   type PracticeSeeker,
 } from "./scoring/practice-match";
 import { logger } from "../lib/logger";
+import { isUniqueViolation } from "../lib/db-errors";
 import {
   getEntitlement,
   countCallsStarted,
@@ -94,6 +98,9 @@ const ABANDONED_AFTER_MS = parseInt(
  * worst way to tell someone that.
  */
 const CONNECT_TIMEOUT_MS = parseInt(process.env.PRACTICE_CONNECT_TIMEOUT_MS ?? "30000", 10);
+
+/** A session holding a place: ringing or connected. */
+const LIVE_STATUSES = ["waiting", "active"] as const;
 
 /** Tag hygiene: enough to be useful, short enough not to be a message channel. */
 const MAX_TAGS = 10;
@@ -255,7 +262,7 @@ async function busyUserIds(): Promise<number[]> {
       partnerId: practiceSessionsTable.partnerId,
     })
     .from(practiceSessionsTable)
-    .where(inArray(practiceSessionsTable.status, ["waiting", "active"]));
+    .where(inArray(practiceSessionsTable.status, [...LIVE_STATUSES]));
 
   return rows.flatMap((r) => [r.requesterId, r.partnerId]);
 }
@@ -354,7 +361,7 @@ async function liveSessionFor(userId: number): Promise<PracticeSession | null> {
     .from(practiceSessionsTable)
     .where(
       and(
-        inArray(practiceSessionsTable.status, ["waiting", "active"]),
+        inArray(practiceSessionsTable.status, [...LIVE_STATUSES]),
         or(
           eq(practiceSessionsTable.requesterId, userId),
           eq(practiceSessionsTable.partnerId, userId),
@@ -446,6 +453,74 @@ async function closeSession(
     .where(eq(practiceSignalsTable.sessionId, session.id));
 
   return updated ?? session;
+}
+
+// ─── Site-wide call limit ─────────────────────────────────────────────────────
+
+/**
+ * The administrator's limit on simultaneous calls, or null for none.
+ *
+ * Read per match rather than cached, so a change applies to the next pairing.
+ * A failure to read it means no limit: this is capacity management, and losing
+ * the setting must not stop students being matched at all.
+ */
+export async function getMaxConcurrentCalls(): Promise<number | null> {
+  try {
+    const [row] = await db
+      .select({ max: practiceSettingsTable.maxConcurrentCalls })
+      .from(practiceSettingsTable)
+      .limit(1);
+    return row?.max ?? null;
+  } catch (err) {
+    logger.error({ err }, "Could not read the concurrent call limit");
+    return null;
+  }
+}
+
+export async function setMaxConcurrentCalls(maxConcurrentCalls: number | null): Promise<void> {
+  await db
+    .insert(practiceSettingsTable)
+    .values({ id: 1, maxConcurrentCalls })
+    .onConflictDoUpdate({ target: practiceSettingsTable.id, set: { maxConcurrentCalls } });
+}
+
+export async function countLiveCalls(
+  executor: Pick<typeof db, "select"> = db,
+): Promise<number> {
+  const [row] = await executor
+    .select({ live: sql<number>`count(*)::int` })
+    .from(practiceSessionsTable)
+    .where(inArray(practiceSessionsTable.status, [...LIVE_STATUSES]));
+  return row?.live ?? 0;
+}
+
+/**
+ * Open a session if the site has room for one more, or return null.
+ *
+ * The count and the insert share an advisory lock when a limit is set: without
+ * it, every matcher arriving at the last free place would count the same number
+ * and all of them would take it.
+ */
+async function insertSessionWithinLimit(
+  values: typeof practiceSessionsTable.$inferInsert,
+): Promise<PracticeSession | null> {
+  const max = await getMaxConcurrentCalls();
+
+  if (max === null) {
+    const [created] = await db.insert(practiceSessionsTable).values(values).returning();
+    return created!;
+  }
+
+  // Everyone queued polls this every second. While the site is full, this
+  // unlocked count answers them without queueing them all on the lock below.
+  if ((await countLiveCalls()) >= max) return null;
+
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(4245, 0)`);
+    if ((await countLiveCalls(tx)) >= max) return null;
+    const [created] = await tx.insert(practiceSessionsTable).values(values).returning();
+    return created!;
+  });
 }
 
 // ─── The queue ────────────────────────────────────────────────────────────────
@@ -645,29 +720,36 @@ async function tryMatch(
   }
 
   try {
-    const [created] = await db
-      .insert(practiceSessionsTable)
-      .values({
-        // The one who was already waiting places the call, so the person who
-        // just arrived is the one whose screen rings.
-        requesterId: match.userId,
-        partnerId: userId,
-        status: "waiting",
-        matchScore: match.score,
-        matchedAt: now,
-      })
-      .returning();
+    const created = await insertSessionWithinLimit({
+      // The one who was already waiting places the call, so the person who
+      // just arrived is the one whose screen rings.
+      requesterId: match.userId,
+      partnerId: userId,
+      status: "waiting",
+      matchScore: match.score,
+      matchedAt: now,
+    });
+
+    // The site is full. Like an empty pool this is not a refusal: both students
+    // stay queued, and whoever polls after a call ends takes the free place.
+    if (!created) return { session: null, waiting: candidates.length };
 
     await db
       .delete(practiceQueueTable)
       .where(inArray(practiceQueueTable.userId, [userId, match.userId]));
 
-    return { session: await viewFor(created!, userId), waiting: candidates.length - 1 };
+    return { session: await viewFor(created, userId), waiting: candidates.length - 1 };
   } catch (err) {
     // Two matchers picked the same waiting student a millisecond apart and the
     // partial unique index caught the loser. Nothing is broken; this student
-    // simply stays in the queue and tries again on the next poll.
-    logger.debug({ err, userId }, "Practice match lost a race — staying in the queue");
+    // simply stays in the queue and tries again on the next poll. Any other
+    // failure also leaves them queued, but needs to be seen: nothing else would
+    // show that students had stopped being matched.
+    if (isUniqueViolation(err)) {
+      logger.debug({ err, userId }, "Practice match lost a race — staying in the queue");
+    } else {
+      logger.error({ err, userId }, "Practice match failed");
+    }
     return { session: null, waiting: Math.max(0, candidates.length - 1) };
   }
 }
