@@ -1,6 +1,7 @@
 import { type Request, type Response, type NextFunction } from "express";
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
+import { isUnmeteredRole } from "../services/entitlement-policy";
 
 type Role = NonNullable<Request["session"]["role"]>;
 
@@ -32,6 +33,17 @@ export async function currentRole(req: Request): Promise<Role | null> {
   }
   if (req.session.role !== user.role) req.session.role = user.role;
   return user.role;
+}
+
+/**
+ * Whether the caller is staff, and so exempt from the limits placed on students.
+ *
+ * A student costs no extra query. A session's claim to be staff is confirmed
+ * against the database, because it can outlive a demotion.
+ */
+export async function isUnmeteredCaller(req: Request): Promise<boolean> {
+  if (!isUnmeteredRole(req.session?.role)) return false;
+  return isUnmeteredRole((await currentRole(req)) ?? undefined);
 }
 
 /** Answer 401/403 unless the caller's current role is one of `allowed`. */
