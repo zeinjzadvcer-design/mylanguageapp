@@ -44,6 +44,7 @@ import {
   DEFAULT_TASK_PROMPTS,
   MAX_TASK_PROMPT_CHARS,
   isPromptEditable,
+  promptTemplateProblem,
 } from "../services/ai-prompts";
 
 const router: IRouter = Router();
@@ -460,6 +461,11 @@ router.patch("/admin/ai/tasks/:task", requireAdmin, async (req, res): Promise<vo
     // Stored only when it differs from the default, so an untouched task keeps
     // following the default when the code improves it.
     const text = parsed.data.systemPrompt?.trim() ?? "";
+    const problem = text ? promptTemplateProblem(task, text) : null;
+    if (problem) {
+      res.status(400).json({ error: problem });
+      return;
+    }
     parsed.data.systemPrompt =
       text && text !== DEFAULT_TASK_PROMPTS[task]?.trim() ? text : null;
   }

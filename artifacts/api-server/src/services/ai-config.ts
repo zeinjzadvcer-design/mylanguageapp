@@ -29,7 +29,7 @@ import {
   type AITask,
   pool,
 } from "@workspace/db";
-import { DEFAULT_TASK_PROMPTS } from "./ai-prompts";
+import { DEFAULT_TASK_PROMPTS, TASK_PROMPT_PLACEHOLDERS } from "./ai-prompts";
 import { logger } from "../lib/logger";
 
 // ─── Encryption ───────────────────────────────────────────────────────────────
@@ -410,6 +410,7 @@ export async function getAdminConfig() {
     availableTasks: AI_TASKS,
     // Shown in the panel as the starting text, and what "Reset" returns to.
     defaultPrompts: DEFAULT_TASK_PROMPTS,
+    promptPlaceholders: TASK_PROMPT_PLACEHOLDERS,
   };
 }
 
