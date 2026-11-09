@@ -280,13 +280,15 @@ export default function Subscription() {
                 {sb.currentPlan(pick(subscription.planNameAr, subscription.planName))}
               </h3>
               <p className="text-sm text-muted-foreground mt-1">
-                {subscription.expiresAt
-                  ? sb.validUntil(
-                      new Date(subscription.expiresAt).toLocaleDateString(
-                        lang === "ar" ? "ar" : "en",
-                      ),
-                    )
-                  : sb.freePlanLine}
+                {subscription.planCode === "staff"
+                  ? sb.staffPlanLine
+                  : subscription.expiresAt
+                    ? sb.validUntil(
+                        new Date(subscription.expiresAt).toLocaleDateString(
+                          lang === "ar" ? "ar" : "en",
+                        ),
+                      )
+                    : sb.freePlanLine}
               </p>
             </div>
           </CardContent>
