@@ -5,6 +5,10 @@ import {
   startSubscriptionSweeper,
   stopSubscriptionSweeper,
 } from "./services/subscription-sweeper";
+import {
+  startRecordingRetentionSweeper,
+  stopRecordingRetentionSweeper,
+} from "./services/recording-retention";
 import { ensureBootstrapAdmin } from "./services/bootstrap-admin";
 import { closeJobQueue } from "./services/jobs";
 
@@ -55,6 +59,7 @@ async function shutdown(signal: string): Promise<void> {
   try {
     stopGradingSweeper();
     stopSubscriptionSweeper();
+    stopRecordingRetentionSweeper();
     await closeJobQueue();
     logger.info("Shutdown complete");
   } catch (err) {
@@ -88,4 +93,5 @@ app.listen(port, (err) => {
   // with the requests it is meant to be ready for.
   startGradingSweeper();
   startSubscriptionSweeper();
+  startRecordingRetentionSweeper();
 });
