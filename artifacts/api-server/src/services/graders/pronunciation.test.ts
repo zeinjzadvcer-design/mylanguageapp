@@ -1,5 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { combineScores } from "./pronunciation";
+import { combineScores, feedbackSystemPrompt } from "./pronunciation";
+
+describe("feedbackSystemPrompt", () => {
+  it("uses the default when nothing is stored", () => {
+    expect(feedbackSystemPrompt(null)).toContain("You advise an Arabic-speaking student");
+  });
+
+  it("uses an admin's wording, and an edit cannot lose the reply format", () => {
+    const p = feedbackSystemPrompt("Be very encouraging.");
+    expect(p).toContain("Be very encouraging.");
+    expect(p).not.toContain("You advise an Arabic-speaking student");
+    expect(p).toContain('{"feedbackAr": "..."}');
+  });
+});
 
 describe("combineScores", () => {
   it("weights pronunciation above fluency for a read-aloud task", () => {

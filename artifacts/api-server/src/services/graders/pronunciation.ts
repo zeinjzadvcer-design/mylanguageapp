@@ -50,6 +50,7 @@ import {
 } from "../scoring/fluency";
 import { GradingUnavailableError, type GradingContext } from "./open-answer";
 import { logger } from "../../lib/logger";
+import { taskInstructions } from "../ai-prompts";
 
 const ASR_TASK: AITask = "transcription";
 const FEEDBACK_TASK: AITask = "feedback";
@@ -246,6 +247,14 @@ export async function assessSpeech(
 }
 
 /**
+ * The admin's wording (default in ai-prompts.ts), then the one reply shape
+ * `feedbackSchema` reads, which stays in code so an edit cannot lose it.
+ */
+export function feedbackSystemPrompt(stored: string | null): string {
+  return `${taskInstructions(FEEDBACK_TASK, stored)}\n\nReply with ONLY a JSON object: {"feedbackAr": "..."}`;
+}
+
+/**
  * One short model call turning the numbers into a sentence of Arabic advice.
  *
  * Deliberately separate, deliberately optional, and deliberately given only the
@@ -307,30 +316,7 @@ async function writeFeedback(
     const result = await chatJson(
       config,
       [
-        {
-          role: "system",
-          content: [
-            "You advise an Arabic-speaking student on their spoken English.",
-            "You are given measurements that have already been computed. Do not",
-            "invent a score, do not contradict the numbers, and do not ask for",
-            "the audio — you cannot hear it.",
-            "",
-            "Write feedbackAr: at most two short sentences IN ARABIC naming the",
-            "single most useful thing to work on next. If specific words were",
-            "missed, name two or three of them. Be encouraging and concrete.",
-            "",
-            "If a model answer is given, it is what the task asked for. Say in a",
-            "few words whether they actually covered it, and name the one thing",
-            "they left out. Judge only whether the content was addressed — never",
-            "require their wording to match the model's.",
-            "",
-            "Prefer advice that points at material the student already has:",
-            "re-reading the passage while listening to the recording, practising",
-            "the named words. Do not suggest more conversation practice.",
-            "",
-            'Reply with ONLY a JSON object: {"feedbackAr": "..."}',
-          ].join("\n"),
-        },
+        { role: "system", content: feedbackSystemPrompt(config.systemPrompt) },
         { role: "user", content: facts },
       ],
       (value) => feedbackSchema.parse(value),
