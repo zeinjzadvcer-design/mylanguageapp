@@ -19,6 +19,7 @@ import quizzesRouter from "./quizzes";
 import progressionRouter from "./progression";
 import mediaRouter from "./media";
 import adminAiRouter from "./admin-ai";
+import adminPracticeRouter from "./admin-practice";
 import conversationRouter from "./conversation";
 import practiceRouter from "./practice";
 
@@ -43,6 +44,7 @@ router.use(quizzesRouter);
 router.use(progressionRouter);
 router.use(mediaRouter);
 router.use(adminAiRouter);
+router.use(adminPracticeRouter);
 router.use(conversationRouter);
 router.use(practiceRouter);
 router.use(cmsRouter);
