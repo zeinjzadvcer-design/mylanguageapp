@@ -16,7 +16,10 @@ const Switch = React.forwardRef<
   >
     <SwitchPrimitives.Thumb
       className={cn(
-        'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 rtl:data-[state=checked]:-translate-x-4 data-[state=unchecked]:translate-x-0',
+        // A logical margin rather than translate-x with an rtl: variant: `rtl:`
+        // also matches a dir="ltr" section inside the right-to-left app, such
+        // as the admin AI page, and pushed the thumb out of the track there.
+        'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-[margin-inline-start] data-[state=checked]:ms-4 data-[state=unchecked]:ms-0',
       )}
     />
   </SwitchPrimitives.Root>
