@@ -14,7 +14,7 @@ import {
   vocabularyTable,
   studentProfilesTable,
 } from "@workspace/db";
-import { requireAuth } from "../middlewares/auth";
+import { isUnmeteredCaller, requireAuth } from "../middlewares/auth";
 import { cached, CK, TTL } from "../services/cache";
 import {
   getCompletedLessonIds,
@@ -852,7 +852,8 @@ router.post(
           ),
         );
 
-      if (used >= MAX_BLOCK_ATTEMPTS) {
+      // Staff retry a block as often as they need to check it.
+      if (used >= MAX_BLOCK_ATTEMPTS && !(await isUnmeteredCaller(req))) {
         // 409, not 403: the request is well formed and the student is allowed
         // here — the block's state is simply done with being answered.
         res.status(409).json({
