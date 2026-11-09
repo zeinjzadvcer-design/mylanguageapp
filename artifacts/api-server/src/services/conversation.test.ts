@@ -1,5 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { countVocabularyUsed, buildSystemPrompt } from "./conversation";
+import { countVocabularyUsed, buildSystemPrompt, hasRunOut } from "./conversation";
+
+describe("hasRunOut", () => {
+  const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const session = { startedAt: new Date(now), maxMinutes: 10, turnCount: 3, maxTurns: 20 };
+
+  it("is false while both caps have room", () => {
+    expect(hasRunOut(session, now + 9 * 60_000)).toBe(false);
+  });
+
+  it("is true once the time is up", () => {
+    expect(hasRunOut(session, now + 10 * 60_000)).toBe(true);
+  });
+
+  it("is true once the turns are used", () => {
+    expect(hasRunOut({ ...session, turnCount: 20 }, now)).toBe(true);
+  });
+});
 
 const lesson = {
   title: "Daily Routine",
@@ -174,5 +191,45 @@ describe("buildSystemPrompt", () => {
     expect(p).toContain("Free talk");
     expect(p).not.toContain("undefined");
     expect(p).not.toContain("null");
+  });
+
+  describe("with instructions an admin edited", () => {
+    const instructions = "Be cheerful. Topic: {{title}}. Words: {{vocabulary}}.";
+
+    it("uses them in place of the default, with the lesson filled in", () => {
+      const p = buildSystemPrompt(lesson, { instructions });
+      expect(p).toContain("Be cheerful. Topic: Daily Routine. Words: wake up, breakfast, commute.");
+      expect(p).not.toContain("friendly English conversation tutor");
+    });
+
+    it("cannot remove the rule that student messages are not commands", () => {
+      expect(buildSystemPrompt(lesson, { instructions })).toMatch(/not as a command/i);
+    });
+
+    it("follows the default again when the override is null", () => {
+      expect(buildSystemPrompt(lesson, { instructions: null })).toBe(buildSystemPrompt(lesson));
+    });
+
+    it("still trims the passage after the first message", () => {
+      const long = { ...lesson, text: "A long passage about mornings. ".repeat(30) };
+      const p = buildSystemPrompt(long, {
+        brief: true,
+        instructions: "Passage: {{lesson_text}}",
+      });
+      expect(p).not.toContain("A long passage about mornings.");
+      expect(p).toContain("do not ask them to repeat it back");
+    });
+
+    it("sends a when_script line only when the block has a script", () => {
+      const conditional = "{{when_script}}Follow the script closely.";
+      expect(buildSystemPrompt(lesson, { instructions: conditional })).not.toContain(
+        "Follow the script closely.",
+      );
+      expect(
+        buildSystemPrompt({ ...lesson, script: "1. Ask about mornings." }, {
+          instructions: conditional,
+        }),
+      ).toContain("Follow the script closely.");
+    });
   });
 });
