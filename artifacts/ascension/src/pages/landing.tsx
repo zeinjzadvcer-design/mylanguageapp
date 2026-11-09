@@ -1,16 +1,23 @@
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { BookOpen, Mic, Award, CheckCircle2, ChevronLeft, Target } from "lucide-react";
-import { useGetMe } from "@workspace/api-client-react";
+import { useGetMe, useGetSubscriptionPlans } from "@workspace/api-client-react";
 import { useEffect } from "react";
 import { BrandLogo, LanguageSwitcher, LOGO_FULL_SRC } from "@/components/brand";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/lib/i18n";
 
 export default function Landing() {
   const { data: user } = useGetMe();
+  const { data: plans, isLoading: plansLoading } = useGetSubscriptionPlans();
   const [, setLocation] = useLocation();
-  const { t } = useI18n();
+  const { t, lang, pick } = useI18n();
   const l = t.landing;
+  const sb = t.subscription;
+
+  const plansByPrice = [...(plans ?? [])].sort(
+    (a, b) => a.priceUsd - b.priceUsd || a.id - b.id,
+  );
 
   useEffect(() => {
     if (user) {
@@ -132,70 +139,91 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Pricing */}
-      <section className="py-24">
-        <div className="container mx-auto px-4">
-          <div className="text-center max-w-2xl mx-auto mb-16">
-            <h2 className="text-3xl font-bold text-foreground mb-4">{l.pricingTitle}</h2>
-            <p className="text-muted-foreground text-lg">{l.pricingBody}</p>
+      {/* Pricing. Hidden when the plans cannot be loaded: no prices at all is
+          better than prices that may not be the ones an admin set. */}
+      {(plansLoading || plansByPrice.length > 0) && (
+        <section className="py-24">
+          <div className="container mx-auto px-4">
+            <div className="text-center max-w-2xl mx-auto mb-16">
+              <h2 className="text-3xl font-bold text-foreground mb-4">{l.pricingTitle}</h2>
+              <p className="text-muted-foreground text-lg">{l.pricingBody}</p>
+            </div>
+
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8 max-w-5xl mx-auto">
+              {plansLoading &&
+                [1, 2, 3].map((i) => <Skeleton key={i} className="h-96 rounded-3xl" />)}
+
+              {plansByPrice.map((plan) => {
+                const isFree = plan.code === "free";
+                const isFeatured = plan.code === "general_basic";
+                const mutedText = isFeatured ? "text-primary-foreground/80" : "text-muted-foreground";
+                const tick = `h-5 w-5 shrink-0 ${isFeatured ? "text-mint" : "text-primary"}`;
+                const features =
+                  lang === "en" && plan.features?.length ? plan.features : plan.featuresAr;
+
+                return (
+                  <div
+                    key={plan.id}
+                    className={
+                      isFeatured
+                        ? "bg-primary text-primary-foreground p-8 rounded-3xl shadow-xl shadow-primary/25 relative flex flex-col"
+                        : "bg-card p-8 rounded-3xl border border-border flex flex-col"
+                    }
+                  >
+                    {isFeatured && (
+                      <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-accent text-accent-foreground px-4 py-1 rounded-full text-sm font-bold shadow-lg whitespace-nowrap">
+                        {l.popular}
+                      </div>
+                    )}
+                    <h3 className="text-2xl font-bold mb-2">{pick(plan.nameAr, plan.name)}</h3>
+                    <div className="mb-6">
+                      <div className="text-4xl font-bold">
+                        ${plan.priceUsd}
+                        <span className={`text-lg font-normal ${mutedText}`}>{t.common.perMonth}</span>
+                      </div>
+                      {plan.priceSyp && !isFree && (
+                        <div className={`text-sm mt-1 ${mutedText}`} dir="ltr">
+                          {Number(plan.priceSyp).toLocaleString("en")} {sb.syp}
+                        </div>
+                      )}
+                    </div>
+                    <ul className="space-y-4 mb-8 flex-1">
+                      {!isFree && (
+                        <>
+                          <li className="flex items-center gap-3">
+                            <CheckCircle2 className={tick} />
+                            <span>{sb.lessonsPerMonth(plan.lessonsPerMonth)}</span>
+                          </li>
+                          <li className="flex items-center gap-3">
+                            <CheckCircle2 className={tick} />
+                            <span>{sb.callsPerMonth(plan.callsPerMonth)}</span>
+                          </li>
+                        </>
+                      )}
+                      {features?.map((feature) => (
+                        <li key={feature} className="flex items-center gap-3">
+                          <CheckCircle2 className={tick} /> <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <Link href="/register">
+                      {isFeatured ? (
+                        <Button className="w-full rounded-xl h-12 text-lg bg-accent hover:bg-accent/90 text-accent-foreground font-bold">
+                          {l.subscribeNow}
+                        </Button>
+                      ) : (
+                        <Button variant="outline" className="w-full rounded-xl h-12 text-lg">
+                          {isFree ? l.startNow : l.choosePlan}
+                        </Button>
+                      )}
+                    </Link>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-
-          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {/* Free */}
-            <div className="bg-card p-8 rounded-3xl border border-border flex flex-col">
-              <h3 className="text-2xl font-bold mb-2">{l.freeName}</h3>
-              <div className="text-4xl font-bold mb-6">$0<span className="text-lg text-muted-foreground font-normal">{t.common.perMonth}</span></div>
-              <ul className="space-y-4 mb-8 flex-1">
-                {[l.freeF1, l.freeF2].map((f) => (
-                  <li key={f} className="flex items-center gap-3">
-                    <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" /> <span>{f}</span>
-                  </li>
-                ))}
-              </ul>
-              <Link href="/register">
-                <Button variant="outline" className="w-full rounded-xl h-12 text-lg">{l.startNow}</Button>
-              </Link>
-            </div>
-
-            {/* General */}
-            <div className="bg-primary text-primary-foreground p-8 rounded-3xl shadow-xl shadow-primary/25 relative transform md:-translate-y-4 flex flex-col">
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-accent text-accent-foreground px-4 py-1 rounded-full text-sm font-bold shadow-lg whitespace-nowrap">
-                {l.popular}
-              </div>
-              <h3 className="text-2xl font-bold mb-2">{l.generalName}</h3>
-              <div className="text-4xl font-bold mb-6">$2<span className="text-lg text-primary-foreground/80 font-normal">{t.common.perMonth}</span></div>
-              <ul className="space-y-4 mb-8 flex-1">
-                {[l.generalF1, l.generalF2, l.generalF3].map((f) => (
-                  <li key={f} className="flex items-center gap-3">
-                    <CheckCircle2 className="h-5 w-5 shrink-0 text-mint" /> <span>{f}</span>
-                  </li>
-                ))}
-              </ul>
-              <Link href="/register">
-                <Button className="w-full rounded-xl h-12 text-lg bg-accent hover:bg-accent/90 text-accent-foreground font-bold">
-                  {l.subscribeNow}
-                </Button>
-              </Link>
-            </div>
-
-            {/* Pro */}
-            <div className="bg-card p-8 rounded-3xl border border-border flex flex-col">
-              <h3 className="text-2xl font-bold mb-2">{l.proName}</h3>
-              <div className="text-4xl font-bold mb-6">$4<span className="text-lg text-muted-foreground font-normal">{t.common.perMonth}</span></div>
-              <ul className="space-y-4 mb-8 flex-1">
-                {[l.proF1, l.proF2, l.proF3].map((f) => (
-                  <li key={f} className="flex items-center gap-3">
-                    <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" /> <span>{f}</span>
-                  </li>
-                ))}
-              </ul>
-              <Link href="/register">
-                <Button variant="outline" className="w-full rounded-xl h-12 text-lg">{l.choosePlan}</Button>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-border bg-card py-12 text-center text-muted-foreground">
