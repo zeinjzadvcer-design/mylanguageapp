@@ -40,6 +40,7 @@ import { analysePeerCall, MIN_DURATION_SECONDS } from "./graders/peer-call";
 import { GradingUnavailableError } from "./graders/open-answer";
 import { storage } from "./storage";
 import { logger } from "../lib/logger";
+import { isUniqueViolation } from "../lib/db-errors";
 import { resolvePlanCode } from "./ai-quota";
 
 /**
@@ -245,25 +246,6 @@ export async function requestEvaluation(
     }
     throw err;
   }
-}
-
-/**
- * Was this a unique-constraint violation?
- *
- * Drizzle wraps the driver error, so the Postgres `code` is not on the thrown
- * object — it is further down the `cause` chain. Reading `err.code` directly
- * missed it, and the "already requested" case surfaced as a 500 carrying the
- * raw INSERT statement: no useful message for the student, and the schema
- * printed into a response. Matches the walk in routes/cms/quizzes.ts.
- */
-function isUniqueViolation(err: unknown): boolean {
-  let cursor: unknown = err;
-  for (let depth = 0; cursor && depth < 5; depth++) {
-    const candidate = cursor as { code?: string; cause?: unknown };
-    if (candidate.code === "23505") return true;
-    cursor = candidate.cause;
-  }
-  return false;
 }
 
 /**
