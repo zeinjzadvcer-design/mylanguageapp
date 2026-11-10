@@ -36,6 +36,8 @@ export default function Subscription() {
   const { toast } = useToast();
   const { t, lang, pick } = useI18n();
   const sb = t.subscription;
+  // Staff are not on a plan, so there is nothing for them to choose.
+  const isStaff = subscription?.planCode === "staff";
 
   /**
    * The student's payment submissions.
@@ -197,7 +199,7 @@ export default function Subscription() {
         </div>
         <h1 className="text-3xl font-bold text-foreground mb-4">{sb.title}</h1>
         <p className="text-muted-foreground text-lg">
-          {sb.subtitle}
+          {!isStaff && sb.subtitle}
         </p>
       </div>
 
@@ -296,7 +298,7 @@ export default function Subscription() {
       )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto items-stretch">
-        {plans?.map((plan) => {
+        {(isStaff ? [] : plans)?.map((plan) => {
           const isFree = plan.code === "free";
           const isPro = plan.code === "pro_basic" || plan.code === "pro_plus";
           const isCurrentPlan = subscription?.planCode === plan.code;

@@ -68,6 +68,9 @@ export default function Profile() {
 
   if (!profile) return null;
 
+  // Staff have no student record, so progress, plan and bio do not apply.
+  const isLearner = profile.id !== null;
+
   function onSubmit(values: FormValues) {
     updateProfile.mutate(
       { data: values },
@@ -118,10 +121,12 @@ export default function Profile() {
                 <Globe className="h-4 w-4" />
                 {(profile.country && p.countries[profile.country]) || profile.country || p.defaultCountry}
               </div>
-              <div className="flex items-center gap-1.5">
-                <BookOpen className="h-4 w-4" />
-                {p.level(profile.currentLevelCode ?? "—")}
-              </div>
+              {isLearner && (
+                <div className="flex items-center gap-1.5">
+                  <BookOpen className="h-4 w-4" />
+                  {p.level(profile.currentLevelCode ?? "—")}
+                </div>
+              )}
             </div>
           </div>
           
@@ -205,7 +210,7 @@ export default function Profile() {
                   />
                 </div>
 
-                <FormField
+                {isLearner && <FormField
                   control={form.control}
                   name="bio"
                   render={({ field }) => (
@@ -221,7 +226,7 @@ export default function Profile() {
                       <FormMessage />
                     </FormItem>
                   )}
-                />
+                />}
 
                 <Button type="submit" disabled={updateProfile.isPending} className="rounded-xl">
                   {updateProfile.isPending ? <Loader2 className="h-4 w-4 animate-spin me-2" /> : <Save className="h-4 w-4 me-2" />}
@@ -233,6 +238,7 @@ export default function Profile() {
         </Card>
       ) : (
         <div className="grid md:grid-cols-2 gap-6">
+          {isLearner && <>
           <Card>
             <CardHeader className="bg-secondary/30 pb-4">
               <CardTitle className="text-lg">{p.statsTitle}</CardTitle>
@@ -278,6 +284,7 @@ export default function Profile() {
               </Button>
             </CardContent>
           </Card>
+          </>}
 
           <Card className="md:col-span-2">
             <CardContent className="p-6 flex flex-col sm:flex-row sm:items-center gap-4">
