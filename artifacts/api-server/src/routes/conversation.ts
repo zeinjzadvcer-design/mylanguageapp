@@ -11,7 +11,7 @@ import { Router, type IRouter } from "express";
 import { resolvePlanCode } from "../services/ai-quota";
 import { z } from "zod";
 import { eq, and } from "drizzle-orm";
-import { db } from "@workspace/db";
+import { db, lessonsTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import {
   startConversation,
@@ -23,6 +23,7 @@ import {
   ConversationUnavailableError,
 } from "../services/conversation";
 import { assertUsableRecording, MediaValidationError } from "../services/media";
+import { DENIAL_MESSAGES, getEntitlement, isLessonInTrack } from "../services/entitlements";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -77,6 +78,23 @@ router.post("/conversation/start", requireAuth, async (req, res): Promise<void> 
 
   try {
     const userId = req.session.userId!;
+
+    // The tutor speaks from the lesson's script, so it follows the lesson's own
+    // plan rule: a student on one track does not get the other track's lessons
+    // through the tutor either.
+    const [lesson] = await db
+      .select({ track: lessonsTable.track })
+      .from(lessonsTable)
+      .where(eq(lessonsTable.id, parsed.data.lessonId))
+      .limit(1);
+    if (lesson) {
+      const entitlement = await getEntitlement(userId, req.session.role);
+      if (!isLessonInTrack(entitlement, lesson.track)) {
+        res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
+        return;
+      }
+    }
+
     res.status(201).json(
       await startConversation(userId, parsed.data.lessonId, parsed.data.blockId ?? null, {
         subscriptionPlan: await resolvePlanCode(userId),
