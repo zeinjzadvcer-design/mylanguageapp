@@ -8,7 +8,7 @@ import {
   paymentSubmissionsTable,
   mediaAssetsTable,
 } from "@workspace/db";
-import { isUnmeteredCaller, requireAuth } from "../middlewares/auth";
+import { isUnmeteredCaller, requireAuth, requireStudent } from "../middlewares/auth";
 import { cached, CK, TTL } from "../services/cache";
 import { getWalletDetails, getCryptoDetails } from "../services/payment-settings";
 import { checkWalletAddress } from "../services/crypto-config";
@@ -239,7 +239,7 @@ const createSubscriptionSchema = z.object({
  *     or a subscription approved three days later loses three days.
  *   * It does not interpolate request values into a note string.
  */
-router.post("/subscription", requireAuth, async (req, res): Promise<void> => {
+router.post("/subscription", requireStudent, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
 
   const parsed = createSubscriptionSchema.safeParse(req.body);
@@ -438,7 +438,7 @@ const submissionSchema = z.object({
  */
 router.post(
   "/subscription/payment-submissions",
-  requireAuth,
+  requireStudent,
   async (req, res): Promise<void> => {
     const userId = req.session.userId!;
 
@@ -558,7 +558,7 @@ const cryptoSubmissionSchema = z.object({
  */
 router.post(
   "/subscription/crypto-submissions",
-  requireAuth,
+  requireStudent,
   async (req, res): Promise<void> => {
     const userId = req.session.userId!;
 
@@ -771,7 +771,7 @@ const walletSubmissionSchema = z.object({
  */
 router.post(
   "/subscription/wallet-submissions",
-  requireAuth,
+  requireStudent,
   async (req, res): Promise<void> => {
     const userId = req.session.userId!;
 
