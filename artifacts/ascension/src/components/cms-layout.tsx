@@ -1,5 +1,7 @@
 import { Link, useLocation } from "wouter";
-import { useGetMe } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useGetMe, useLogout, type Permission } from "@workspace/api-client-react";
+import { useCan } from "@/lib/permissions";
 import {
   LayoutDashboard, BookOpen, Globe, BookMarked, GraduationCap,
   BookText, Image, Star, ClipboardList, Users, LogOut, ChevronRight, FileEdit,
@@ -12,37 +14,44 @@ interface NavItem {
   href: string;
   label: string;
   icon: ReactNode;
-  adminOnly?: boolean;
-  hideForReviewer?: boolean;
+  /** Who sees it, when that is narrower than everyone in the CMS. */
+  permission?: Permission;
 }
 
 const navItems: NavItem[] = [
   { href: "/cms", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
   { href: "/cms/lessons", label: "Lessons", icon: <BookOpen className="h-4 w-4" /> },
-  { href: "/cms/languages", label: "Languages", icon: <Globe className="h-4 w-4" />, adminOnly: true },
-  { href: "/cms/curricula", label: "Curricula", icon: <BookMarked className="h-4 w-4" />, adminOnly: true },
-  { href: "/cms/levels", label: "Levels", icon: <GraduationCap className="h-4 w-4" />, adminOnly: true },
+  { href: "/cms/languages", label: "Languages", icon: <Globe className="h-4 w-4" />, permission: "catalog.manage" },
+  { href: "/cms/curricula", label: "Curricula", icon: <BookMarked className="h-4 w-4" />, permission: "catalog.manage" },
+  { href: "/cms/levels", label: "Levels", icon: <GraduationCap className="h-4 w-4" />, permission: "catalog.manage" },
   { href: "/cms/quizzes", label: "Quizzes", icon: <ListChecks className="h-4 w-4" /> },
   { href: "/cms/placement", label: "Placement Test", icon: <ClipboardList className="h-4 w-4" /> },
   { href: "/cms/vocabulary", label: "Vocabulary", icon: <BookText className="h-4 w-4" /> },
   { href: "/cms/media", label: "Media", icon: <Image className="h-4 w-4" /> },
-  { href: "/cms/grading", label: "Marking", icon: <PenLine className="h-4 w-4" /> },
-  { href: "/cms/practice-reports", label: "Practice Reports", icon: <ShieldAlert className="h-4 w-4" /> },
+  { href: "/cms/grading", label: "Marking", icon: <PenLine className="h-4 w-4" />, permission: "grading.manage" },
+  { href: "/cms/practice-reports", label: "Practice Reports", icon: <ShieldAlert className="h-4 w-4" />, permission: "practice_reports.manage" },
   { href: "/cms/reviews", label: "Reviews", icon: <Star className="h-4 w-4" /> },
   { href: "/cms/audit", label: "Audit Log", icon: <ClipboardList className="h-4 w-4" /> },
 ];
 
 export function CMSLayout({ children }: { children: ReactNode }) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const { data: user } = useGetMe();
+  const can = useCan();
+  const logout = useLogout();
+  const queryClient = useQueryClient();
 
-  const isAdmin = user?.role === "admin";
-  const isReviewer = user?.role === "content_reviewer";
+  // Leave first, then clear, as in AppLayout: the guards read the cached user.
+  const handleLogout = () => {
+    logout.mutate(undefined, {
+      onSuccess: () => {
+        setLocation("/login");
+        queryClient.clear();
+      },
+    });
+  };
 
-  const visibleItems = navItems.filter(item => {
-    if (item.adminOnly && !isAdmin) return false;
-    return true;
-  });
+  const visibleItems = navItems.filter(item => !item.permission || can(item.permission));
 
   return (
     // The CMS is English-only staff tooling: keep it LTR whatever language
@@ -79,16 +88,32 @@ export function CMSLayout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="p-2 border-t border-gray-200 space-y-0.5">
-          <Link href="/dashboard" className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-gray-600 hover:bg-gray-100">
-            <Users className="h-4 w-4" />
-            Student App
-          </Link>
-          {isAdmin && (
+          {user?.usesStudentApp && (
+            <Link href="/dashboard" className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-gray-600 hover:bg-gray-100">
+              <Users className="h-4 w-4" />
+              Student App
+            </Link>
+          )}
+          {can("students.manage") ? (
             <Link href="/admin" className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-gray-600 hover:bg-gray-100">
               <LayoutDashboard className="h-4 w-4" />
               Admin Panel
             </Link>
+          ) : can("payments.review") && (
+            <Link href="/admin/payments" className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-gray-600 hover:bg-gray-100">
+              <LayoutDashboard className="h-4 w-4" />
+              Payments
+            </Link>
           )}
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={logout.isPending}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-gray-600 hover:bg-gray-100"
+          >
+            <LogOut className="h-4 w-4" />
+            Log out
+          </button>
         </div>
       </aside>
 

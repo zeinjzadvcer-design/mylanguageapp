@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { cmsApi } from "@/lib/cms-api";
+import { useCan } from "@/lib/permissions";
 import { CMSLayout, StatusBadge } from "@/components/cms-layout";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function CMSDashboard() {
+  const can = useCan();
   const { data: stats, isLoading } = useQuery({
     queryKey: ["cms-stats"],
     queryFn: () => cmsApi.stats(),
@@ -52,11 +54,11 @@ export default function CMSDashboard() {
               <h2 className="text-sm font-semibold text-gray-700 mb-3">Catalog</h2>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[
-                  { label: "Languages", value: stats.languages, href: "/cms/languages" },
-                  { label: "Curricula", value: stats.curricula, href: "/cms/curricula" },
-                  { label: "Levels", value: stats.levels, href: "/cms/levels" },
-                  { label: "Vocabulary", value: stats.vocabulary, href: "/cms/vocabulary" },
-                ].map(c => (
+                  { label: "Languages", value: stats.languages, href: "/cms/languages", catalog: true },
+                  { label: "Curricula", value: stats.curricula, href: "/cms/curricula", catalog: true },
+                  { label: "Levels", value: stats.levels, href: "/cms/levels", catalog: true },
+                  { label: "Vocabulary", value: stats.vocabulary, href: "/cms/vocabulary", catalog: false },
+                ].filter(c => !c.catalog || can("catalog.manage")).map(c => (
                   <Link key={c.label} href={c.href} className="block rounded-lg border border-gray-200 bg-white p-4 hover:border-indigo-300 transition-colors">
                     <div className="text-2xl font-bold text-gray-900">{c.value}</div>
                     <div className="text-xs text-gray-500 mt-0.5">{c.label}</div>
