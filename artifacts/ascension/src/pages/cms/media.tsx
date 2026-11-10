@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cmsApi } from "@/lib/cms-api";
 import { CMSLayout } from "@/components/cms-layout";
+import { useCan } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +27,7 @@ function MimeIcon({ mimeType }: { mimeType?: string | null }) {
 
 export default function MediaPage() {
   const { toast } = useToast();
+  const canEdit = useCan()("content.edit");
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
@@ -94,7 +96,7 @@ export default function MediaPage() {
             <h1 className="text-2xl font-bold text-gray-900">Media Assets</h1>
             <p className="text-sm text-gray-500 mt-0.5">Audio, image, and video references</p>
           </div>
-          <div className="flex gap-2">
+          {canEdit && <div className="flex gap-2">
             <input
               ref={fileInput}
               type="file"
@@ -116,7 +118,7 @@ export default function MediaPage() {
             <Button size="sm" variant="outline" onClick={() => setShowForm(f => !f)}>
               <Plus className="h-3.5 w-3.5 mr-1" /> Register Key
             </Button>
-          </div>
+          </div>}
         </div>
 
         <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-700">
@@ -216,8 +218,8 @@ export default function MediaPage() {
                           <Play className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      <button onClick={() => { if (confirm("Delete this reference?")) deleteMut.mutate(m.id); }}
-                        className="p-1 rounded hover:bg-red-50 text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                      {canEdit && <button onClick={() => { if (confirm("Delete this reference?")) deleteMut.mutate(m.id); }}
+                        className="p-1 rounded hover:bg-red-50 text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>}
                     </td>
                   </tr>
                 ))}

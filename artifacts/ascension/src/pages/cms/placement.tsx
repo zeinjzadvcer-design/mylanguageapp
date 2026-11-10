@@ -14,6 +14,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cmsApi, type CMSPlacementQuestion, type CMSPlacementOption } from "@/lib/cms-api";
 import { CMSLayout } from "@/components/cms-layout";
+import { useCan } from "@/lib/permissions";
 import { MediaPicker } from "@/components/media-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +44,7 @@ function QuestionEditor({
   onDelete,
   onMove,
   saving,
+  readOnly,
 }: {
   question: CMSPlacementQuestion;
   index: number;
@@ -51,6 +53,7 @@ function QuestionEditor({
   onDelete: () => void;
   onMove: (delta: number) => void;
   saving: boolean;
+  readOnly: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<CMSPlacementQuestion>(question);
@@ -88,6 +91,7 @@ function QuestionEditor({
         {!draft.isActive && (
           <span className="rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700">inactive</span>
         )}
+        {!readOnly && <>
         <Button size="sm" variant="ghost" disabled={index === 0} onClick={() => onMove(-1)}>
           <ArrowUp className="h-3.5 w-3.5" />
         </Button>
@@ -97,10 +101,11 @@ function QuestionEditor({
         <Button size="sm" variant="ghost" className="text-red-500" onClick={onDelete}>
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
+        </>}
       </div>
 
       {open && (
-        <div className="space-y-3 border-t border-gray-100 p-3">
+        <fieldset disabled={readOnly} className="min-w-0 space-y-3 border-t border-gray-100 p-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label className="text-xs text-gray-500">Question (English)</Label>
@@ -194,10 +199,12 @@ function QuestionEditor({
             <span className="text-xs text-gray-600">Active — included in the test students take</span>
           </label>
 
-          <Button size="sm" disabled={saving} onClick={() => onSave(draft)}>
-            {saving ? "Saving…" : "Save question"}
-          </Button>
-        </div>
+          {!readOnly && (
+            <Button size="sm" disabled={saving} onClick={() => onSave(draft)}>
+              {saving ? "Saving…" : "Save question"}
+            </Button>
+          )}
+        </fieldset>
       )}
     </div>
   );
@@ -205,6 +212,7 @@ function QuestionEditor({
 
 export default function PlacementPage() {
   const { toast } = useToast();
+  const canEdit = useCan()("content.edit");
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -274,9 +282,11 @@ export default function PlacementPage() {
               of {questions.length}.
             </p>
           </div>
-          <Button size="sm" onClick={() => createMut.mutate()} disabled={createMut.isPending}>
-            <Plus className="mr-1 h-3.5 w-3.5" /> Add question
-          </Button>
+          {canEdit && (
+            <Button size="sm" onClick={() => createMut.mutate()} disabled={createMut.isPending}>
+              <Plus className="mr-1 h-3.5 w-3.5" /> Add question
+            </Button>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-2 rounded-lg border border-gray-200 bg-white p-3">
@@ -314,6 +324,7 @@ export default function PlacementPage() {
                 onSave={(patch) => updateMut.mutate({ id: q.id, patch })}
                 onDelete={() => { if (confirm("Delete this question?")) deleteMut.mutate(q.id); }}
                 onMove={(d) => move(i, d)}
+                readOnly={!canEdit}
               />
             ))}
           </div>
