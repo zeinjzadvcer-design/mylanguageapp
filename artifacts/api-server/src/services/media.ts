@@ -344,8 +344,6 @@ export async function completeUpload(
 
 // ─── Access control ───────────────────────────────────────────────────────────
 
-const STAFF_ROLES = new Set(["admin", "content_manager", "content_reviewer"]);
-
 /**
  * May this user play this asset?
  *
@@ -358,7 +356,7 @@ export function canReadAsset(
   asset: { ownerUserId: number | null; purpose?: string | null },
   viewer: { userId: number; role: string | undefined },
 ): boolean {
-  return canReadMediaAsset(asset, viewer, STAFF_ROLES);
+  return canReadMediaAsset(asset, viewer);
 }
 
 /**

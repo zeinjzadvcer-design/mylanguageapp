@@ -193,6 +193,23 @@ export function curriculumKey(contentType: string, originalName?: string | null)
   return `curriculum/${slug}-${randomUUID()}.${ext}`;
 }
 
+/** Where the keys built above put private objects: recordings and payment images. */
+const PRIVATE_KEY_PREFIXES = ["recordings/", "payments/"];
+
+/**
+ * Whether a key typed into the CMS may be registered as curriculum media.
+ *
+ * One plain relative path, nothing a storage gateway could normalise into a
+ * different object, and never under a private prefix.
+ */
+export function isRegistrableCurriculumKey(key: string): boolean {
+  if (key.length === 0 || key.length > 512) return false;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._\-/]*$/.test(key)) return false;
+  if (key.split("/").some((part) => part === "" || part === "." || part === "..")) return false;
+  const lower = key.toLowerCase();
+  return !PRIVATE_KEY_PREFIXES.some((prefix) => lower.startsWith(prefix));
+}
+
 // ─── S3-compatible implementation ─────────────────────────────────────────────
 
 class S3StorageProvider implements StorageProvider {
