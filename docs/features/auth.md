@@ -5,7 +5,7 @@ Lets a person create an account, log in, log out, and check who is currently log
 
 ## Where the code lives
 - `artifacts/api-server/src/routes/auth.ts` — the 4 endpoints: `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`
-- `artifacts/api-server/src/middlewares/auth.ts` — `requireAuth` and role guards (`requireAdmin`, `requireStudent`, etc.) used by every other protected route
+- `artifacts/api-server/src/middlewares/auth.ts` — `requireAuth` and `requirePermission`, used by every other protected route (see [staff-accounts.md](staff-accounts.md))
 - `lib/db/src/schema/users.ts` — `users` table and `student_profiles` table (one profile per user, created at registration)
 - Sessions are stored in Postgres (`session` table) via `connect-pg-simple`, not in a token — the browser just holds a cookie
 - `artifacts/api-server/src/services/bootstrap-admin.ts` — creates the first administrator at server start (see below); tests in `bootstrap-admin.test.ts`
@@ -15,7 +15,7 @@ Lets a person create an account, log in, log out, and check who is currently log
 2. Login: looks up the user by email, compares the password against the stored hash, and starts a session if it matches.
 3. Both register and login store `userId`, `role`, `name`, `email` in the session so later requests don't need to hit the database just to know who's asking.
 4. Logout destroys the session server-side.
-5. **The first administrator.** Registration hard-codes `role: "student"` and there is no promote endpoint, so an empty database has no way in. On start the API creates one administrator from `ADMIN_EMAIL` / `ADMIN_PASSWORD`, which come from the root `.env` (copied from `.env.example`, defaults `admin@example.com` / `admin@1234`). A deployment changes the values in its own `.env`; there is no `NODE_ENV` branch, so the behaviour is identical everywhere.
+5. **The first administrator.** Registration hard-codes `role: "student"` and the staff screen cannot grant `admin`, so an empty database has no way in. On start the API creates one administrator from `ADMIN_EMAIL` / `ADMIN_PASSWORD`, which come from the root `.env` (copied from `.env.example`, defaults `admin@example.com` / `admin@1234`). A deployment changes the values in its own `.env`; there is no `NODE_ENV` branch, so the behaviour is identical everywhere.
 
    It runs once: **if any administrator already exists, nothing happens** — keyed on the count of administrators, not on the email, so deleting the default after promoting your own account is permanent rather than undone by the next restart. It also refuses to touch an existing non-administrator account that happens to hold `ADMIN_EMAIL`, which would otherwise be a silent privilege escalation.
 
@@ -31,7 +31,7 @@ Lets a person create an account, log in, log out, and check who is currently log
 - Login and register are both rate-limited (10 attempts / 15 min per IP) — see `app.ts` — so basic brute-forcing is covered.
 - Sessions live in Postgres, so restarting the API server doesn't log everyone out, and it works across multiple server instances (important once you're past one box).
 - Cookies are `httpOnly`, and `secure` + proper `sameSite` in production.
-- `requireAuth`/`requireAdmin`/etc. are used consistently everywhere else in the codebase — this part is trustworthy.
+- `requireAuth`/`requirePermission` are used consistently everywhere else in the codebase — this part is trustworthy.
 
 **Issues found:**
 1. ~~Register/login don't use the validation rules that already exist.~~ **Fixed.** `POST /auth/register` now runs `validate(res, registerSchema, req.body)`, which checks the email is really an email and applies `passwordSchema` (8+ characters, a letter, a number, not on the weak list). `POST /auth/login` still parses its own body, but it only reads two fields and compares them against a hash, so nothing is skipped there that matters.

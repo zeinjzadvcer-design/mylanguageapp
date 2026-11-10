@@ -40,7 +40,7 @@ This is a monorepo — one repository, several packages that depend on each othe
 
 **Content structure:** a student's curriculum is `languages` + `curricula` (which language, learnt in which language) → `levels` (e.g. A1.1 through C2.2 today, but not hard-coded as CEFR) → `lessons` → `content_blocks` (reading, vocabulary, questions, speaking prompts) → `exercises` (the gradable parts). Quizzes reuse the same `content_blocks` idea but are tracked separately since they can be retaken. Full details: [docs/multi-curriculum-arch.md](docs/multi-curriculum-arch.md).
 
-**User roles:** `student` (the default), plus `content_manager`, `content_reviewer`, and `admin` for the CMS side where lessons, quizzes, and vocabulary get authored, reviewed, and published.
+**User roles:** `student` (the default), `admin`, and two staff roles: `content_manager` for authoring lessons, quizzes and vocabulary, and `payments_manager` for payments. See [docs/features/staff-accounts.md](docs/features/staff-accounts.md).
 
 **Running it locally:** `docker compose up` starts Postgres, runs migrations, and starts both the API (port 8080) and the web app (port 5173, which proxies `/api` calls to the API). Full steps: [docs/RUNNING.md](docs/RUNNING.md).
 
