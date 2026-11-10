@@ -5,6 +5,7 @@ import { useGetMe, useLogout } from "@workspace/api-client-react";
 import { Button } from "./ui/button";
 import { BrandLogo, LanguageSwitcher } from "./brand";
 import { useI18n } from "@/lib/i18n";
+import { staffPanel, usesStudentApp } from "@/lib/permissions";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { data: user, isLoading } = useGetMe();
@@ -39,17 +40,20 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const navItems = [
-    { href: "/dashboard", label: t.nav.home, icon: Home },
-    { href: "/learn", label: t.nav.curriculum, icon: BookOpen },
-    { href: "/quizzes", label: t.nav.quizzes, icon: GraduationCap },
-    { href: "/vocabulary", label: t.nav.vocabulary, icon: BookMarked },
-    { href: "/practice", label: t.nav.practice, icon: Mic },
-    { href: "/profile", label: t.nav.profile, icon: UserIcon },
-  ];
+  const navItems = usesStudentApp(user)
+    ? [
+        { href: "/dashboard", label: t.nav.home, icon: Home },
+        { href: "/learn", label: t.nav.curriculum, icon: BookOpen },
+        { href: "/quizzes", label: t.nav.quizzes, icon: GraduationCap },
+        { href: "/vocabulary", label: t.nav.vocabulary, icon: BookMarked },
+        { href: "/practice", label: t.nav.practice, icon: Mic },
+        { href: "/profile", label: t.nav.profile, icon: UserIcon },
+      ]
+    : [];
 
-  if (user.role === "admin") {
-    navItems.push({ href: "/admin", label: t.nav.admin, icon: Settings });
+  const panel = staffPanel(user);
+  if (panel) {
+    navItems.push({ href: panel.href, label: t.nav[panel.nav], icon: Settings });
   }
 
   return (
@@ -83,10 +87,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="p-4 border-t border-border space-y-2">
-          <Link href="/subscription" className="flex items-center gap-3 px-4 py-3 rounded-xl text-mint-foreground bg-mint-soft hover:bg-mint/30 transition-colors">
-             <Crown className="h-5 w-5" />
-             <span className="font-semibold">{t.nav.subscription}</span>
-          </Link>
+          {usesStudentApp(user) && (
+            <Link href="/subscription" className="flex items-center gap-3 px-4 py-3 rounded-xl text-mint-foreground bg-mint-soft hover:bg-mint/30 transition-colors">
+               <Crown className="h-5 w-5" />
+               <span className="font-semibold">{t.nav.subscription}</span>
+            </Link>
+          )}
 
           <LanguageSwitcher variant="row" />
 

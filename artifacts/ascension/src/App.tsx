@@ -29,6 +29,7 @@ import AdminStudents from '@/pages/admin/students';
 import AdminLessons from '@/pages/admin/lessons';
 import AdminAiSettings from '@/pages/admin/ai-settings';
 import AdminPayments from '@/pages/admin/payments';
+import AdminStaff from '@/pages/admin/staff';
 
 // CMS pages
 import CMSDashboard from '@/pages/cms/index';
@@ -113,30 +114,31 @@ function Router() {
         <ProtectedRoute path="/profile" component={Profile} />
 
         {/* Admin routes */}
-        <ProtectedRoute path="/admin" component={AdminDashboard} requireAdmin />
-        <ProtectedRoute path="/admin/students" component={AdminStudents} requireAdmin />
-        <ProtectedRoute path="/admin/lessons" component={AdminLessons} requireAdmin />
-        <ProtectedRoute path="/admin/ai" component={AdminAiSettings} requireAdmin />
-        <ProtectedRoute path="/admin/payments" component={AdminPayments} requireAdmin />
+        <ProtectedRoute path="/admin" component={AdminDashboard} permission="students.manage" />
+        <ProtectedRoute path="/admin/students" component={AdminStudents} permission="students.manage" />
+        <ProtectedRoute path="/admin/lessons" component={AdminLessons} permission="content.publish" />
+        <ProtectedRoute path="/admin/ai" component={AdminAiSettings} permission="settings.manage" />
+        <ProtectedRoute path="/admin/payments" component={AdminPayments} permission="payments.review" />
+        <ProtectedRoute path="/admin/staff" component={AdminStaff} permission="staff.manage" />
 
-        {/* CMS routes — accessible to admin | content_manager | content_reviewer */}
-        <ProtectedRoute path="/cms" component={CMSDashboard} requireCMS />
-        <ProtectedRoute path="/cms/lessons" component={CMSLessonsList} requireCMS />
-        <ProtectedRoute path="/cms/lessons/new" component={LessonEditorRoute} requireCMS />
-        <ProtectedRoute path="/cms/lessons/:id/edit" component={LessonEditorRoute} requireCMS />
-        <ProtectedRoute path="/cms/lessons/:id/preview" component={LessonPreviewRoute} requireCMS />
-        <ProtectedRoute path="/cms/languages" component={LanguagesPage} requireCMS />
-        <ProtectedRoute path="/cms/curricula" component={CurriculaPage} requireCMS />
-        <ProtectedRoute path="/cms/levels" component={LevelsPage} requireCMS />
-        <ProtectedRoute path="/cms/quizzes" component={CMSQuizzesList} requireCMS />
-        <ProtectedRoute path="/cms/quizzes/:id" component={CMSQuizEditor} requireCMS />
-        <ProtectedRoute path="/cms/placement" component={CMSPlacement} requireCMS />
-        <ProtectedRoute path="/cms/vocabulary" component={VocabularyPage} requireCMS />
-        <ProtectedRoute path="/cms/media" component={MediaPage} requireCMS />
-        <ProtectedRoute path="/cms/grading" component={CMSGradingQueue} requireCMS />
-        <ProtectedRoute path="/cms/practice-reports" component={CMSPracticeReports} requireCMS />
-        <ProtectedRoute path="/cms/reviews" component={ReviewsPage} requireCMS />
-        <ProtectedRoute path="/cms/audit" component={AuditLogPage} requireCMS />
+        {/* CMS routes */}
+        <ProtectedRoute path="/cms" component={CMSDashboard} permission="content.view" cms />
+        <ProtectedRoute path="/cms/lessons" component={CMSLessonsList} permission="content.view" cms />
+        <ProtectedRoute path="/cms/lessons/new" component={LessonEditorRoute} permission="content.edit" cms />
+        <ProtectedRoute path="/cms/lessons/:id/edit" component={LessonEditorRoute} permission="content.view" cms />
+        <ProtectedRoute path="/cms/lessons/:id/preview" component={LessonPreviewRoute} permission="content.view" cms />
+        <ProtectedRoute path="/cms/languages" component={LanguagesPage} permission="catalog.manage" cms />
+        <ProtectedRoute path="/cms/curricula" component={CurriculaPage} permission="catalog.manage" cms />
+        <ProtectedRoute path="/cms/levels" component={LevelsPage} permission="catalog.manage" cms />
+        <ProtectedRoute path="/cms/quizzes" component={CMSQuizzesList} permission="content.view" cms />
+        <ProtectedRoute path="/cms/quizzes/:id" component={CMSQuizEditor} permission="content.view" cms />
+        <ProtectedRoute path="/cms/placement" component={CMSPlacement} permission="content.view" cms />
+        <ProtectedRoute path="/cms/vocabulary" component={VocabularyPage} permission="content.view" cms />
+        <ProtectedRoute path="/cms/media" component={MediaPage} permission="content.view" cms />
+        <ProtectedRoute path="/cms/grading" component={CMSGradingQueue} permission="grading.manage" cms />
+        <ProtectedRoute path="/cms/practice-reports" component={CMSPracticeReports} permission="practice_reports.manage" cms />
+        <ProtectedRoute path="/cms/reviews" component={ReviewsPage} permission="content.view" cms />
+        <ProtectedRoute path="/cms/audit" component={AuditLogPage} permission="content.view" cms />
 
         <Route component={NotFound} />
       </Switch>
