@@ -93,16 +93,6 @@ export interface LoginInput {
   password: string;
 }
 
-export type UserRole = typeof UserRole[keyof typeof UserRole];
-
-
-export const UserRole = {
-  student: 'student',
-  admin: 'admin',
-  content_manager: 'content_manager',
-  content_reviewer: 'content_reviewer',
-} as const;
-
 export type UserPreferredLanguage = typeof UserPreferredLanguage[keyof typeof UserPreferredLanguage];
 
 
@@ -115,13 +105,84 @@ export interface User {
   id: number;
   name: string;
   email: string;
-  role: UserRole;
+  /** Which role this account holds. Test permissions, not this. */
+  role: string;
   preferredLanguage?: UserPreferredLanguage;
   country?: string;
   /** Null for accounts created before the question was asked. */
   referralSource?: string | null;
   referralDetail?: string | null;
   createdAt: string;
+}
+
+export type Permission = typeof Permission[keyof typeof Permission];
+
+
+export const Permission = {
+  contentview: 'content.view',
+  contentedit: 'content.edit',
+  contentreview: 'content.review',
+  contentpublish: 'content.publish',
+  gradingmanage: 'grading.manage',
+  catalogmanage: 'catalog.manage',
+  practice_reportsmanage: 'practice_reports.manage',
+  paymentsreview: 'payments.review',
+  paymentsapprove_own: 'payments.approve_own',
+  paymentssettings: 'payments.settings',
+  paymentswallet: 'payments.wallet',
+  paymentscrypto: 'payments.crypto',
+  paymentssms_token: 'payments.sms_token',
+  studentsmanage: 'students.manage',
+  settingsmanage: 'settings.manage',
+  staffmanage: 'staff.manage',
+} as const;
+
+/**
+ * The signed-in user, with what they are allowed to do.
+ */
+export type AuthUser = User & {
+  permissions: Permission[];
+  /** False for staff with no use for the learning pages. */
+  usesStudentApp: boolean;
+};
+
+export interface StaffMember {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  roleLabel: string;
+  roleLabelAr: string;
+  /** False for administrators, who cannot be changed from the panel. */
+  editable: boolean;
+  createdAt: string;
+}
+
+export interface StaffRoleOption {
+  role: string;
+  label: string;
+  labelAr: string;
+  description: string;
+  descriptionAr: string;
+}
+
+export interface StaffList {
+  staff: StaffMember[];
+  roles: StaffRoleOption[];
+}
+
+export interface CreateStaffBody {
+  name: string;
+  email: string;
+  role: string;
+  /** Required for a new account; ignored when promoting one. */
+  password?: string;
+  /** Confirms that an email registered as a student should become staff. */
+  promoteExisting?: boolean;
+}
+
+export interface UpdateStaffBody {
+  role: string;
 }
 
 export type ReferralReportItemsItem = {
@@ -135,7 +196,7 @@ export interface ReferralReport {
 }
 
 export interface AuthResult {
-  user: User;
+  user: AuthUser;
 }
 
 export type StudentProfilePreferredLanguage = typeof StudentProfilePreferredLanguage[keyof typeof StudentProfilePreferredLanguage];
@@ -146,8 +207,11 @@ export const StudentProfilePreferredLanguage = {
   en: 'en',
 } as const;
 
+/**
+ * Learning fields are empty for an account with no student record; id is then null.
+ */
 export interface StudentProfile {
-  id: number;
+  id: number | null;
   userId: number;
   name: string;
   email: string;
@@ -2457,6 +2521,10 @@ levelId?: number;
 export type GetPaymentDetails200 = {
   wallet?: WalletDetails;
   crypto?: CryptoPaymentDetails;
+};
+
+export type SetStaffPasswordBody = {
+  password: string;
 };
 
 export type GetAdminStudentsParams = {
