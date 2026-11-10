@@ -149,7 +149,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"
+                $ref: "#/components/schemas/AuthUser"
         "401":
           description: Not authenticated
           content:
@@ -917,6 +917,181 @@ paths:
                 $ref: "#/components/schemas/ReferralReport"
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/staff:
+    get:
+      operationId: listStaffAccounts
+      tags: [admin]
+      summary: List staff accounts and the roles that can be given
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffList"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createStaffAccount
+      tags: [admin]
+      summary: Create a staff account, or promote a student who already has one
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStaffBody"
+      responses:
+        "200":
+          description: An existing student account was promoted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMember"
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMember"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The email is taken; code says by what
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/staff/{id}:
+    patch:
+      operationId: updateStaffRole
+      tags: [admin]
+      summary: Change what a staff member can do
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStaffBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMember"
+        "403":
+          description: Forbidden, or an account that cannot be changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such staff account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/staff/{id}/password:
+    post:
+      operationId: setStaffPassword
+      tags: [admin]
+      summary: Set a new password for a staff member
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: The password was refused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Forbidden, or an account that cannot be changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such staff account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/staff/{id}/revoke:
+    post:
+      operationId: revokeStaffAccess
+      tags: [admin]
+      summary: Remove staff access, leaving the account as a student
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "403":
+          description: Forbidden, or an account that cannot be changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such staff account
           content:
             application/json:
               schema:
@@ -2625,7 +2800,7 @@ components:
           type: string
         role:
           type: string
-          enum: [student, admin, content_manager, content_reviewer]
+          description: Which role this account holds. Test permissions, not this.
         preferredLanguage:
           type: string
           enum: [ar, en]
@@ -2641,6 +2816,116 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    Permission:
+      type: string
+      enum:
+        - content.view
+        - content.edit
+        - content.review
+        - content.publish
+        - grading.manage
+        - catalog.manage
+        - practice_reports.manage
+        - payments.review
+        - payments.approve_own
+        - payments.settings
+        - payments.wallet
+        - payments.crypto
+        - payments.sms_token
+        - students.manage
+        - settings.manage
+        - staff.manage
+
+    AuthUser:
+      description: The signed-in user, with what they are allowed to do.
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          required: [permissions, usesStudentApp]
+          properties:
+            permissions:
+              type: array
+              items:
+                $ref: "#/components/schemas/Permission"
+            usesStudentApp:
+              type: boolean
+              description: False for staff with no use for the learning pages.
+
+    StaffMember:
+      type: object
+      required: [id, name, email, role, roleLabel, roleLabelAr, editable, createdAt]
+      properties:
+        id:
+          type: number
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+        roleLabel:
+          type: string
+        roleLabelAr:
+          type: string
+        editable:
+          type: boolean
+          description: False for administrators, who cannot be changed from the panel.
+        createdAt:
+          type: string
+          format: date-time
+
+    StaffRoleOption:
+      type: object
+      required: [role, label, labelAr, description, descriptionAr]
+      properties:
+        role:
+          type: string
+        label:
+          type: string
+        labelAr:
+          type: string
+        description:
+          type: string
+        descriptionAr:
+          type: string
+
+    StaffList:
+      type: object
+      required: [staff, roles]
+      properties:
+        staff:
+          type: array
+          items:
+            $ref: "#/components/schemas/StaffMember"
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/StaffRoleOption"
+
+    CreateStaffBody:
+      type: object
+      required: [name, email, role]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+        password:
+          type: string
+          description: Required for a new account; ignored when promoting one.
+        promoteExisting:
+          type: boolean
+          description: Confirms that an email registered as a student should become staff.
+
+    UpdateStaffBody:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
 
     ReferralReport:
       type: object
@@ -2664,16 +2949,18 @@ components:
       required: [user]
       properties:
         user:
-          $ref: "#/components/schemas/User"
+          $ref: "#/components/schemas/AuthUser"
 
     # ─── Profile ───────────────────────────────────────────────────────────────
 
     StudentProfile:
+      description: Learning fields are empty for an account with no student record; id is then null.
       type: object
       required: [id, userId, name, email, streakDays, totalLessonsCompleted, createdAt]
       properties:
         id:
           type: number
+          nullable: true
         userId:
           type: number
         name:
