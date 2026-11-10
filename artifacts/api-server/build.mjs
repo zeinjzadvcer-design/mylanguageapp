@@ -38,6 +38,7 @@ async function buildAll() {
       "sqlite3",
       "canvas",
       "bcrypt",
+      "@node-rs/bcrypt",
       "argon2",
       "fsevents",
       "re2",

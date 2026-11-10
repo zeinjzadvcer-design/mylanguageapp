@@ -13,8 +13,8 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.900.0",
     "@aws-sdk/s3-request-presigner": "^3.900.0",
+    "@node-rs/bcrypt": "1.10.9",
     "@workspace/db": "workspace:*",
-    "bcryptjs": "^3.0.3",
     "bullmq": "^6.5.3",
     "compression": "^1.8.1",
     "connect-pg-simple": "^10.0.0",
@@ -41,6 +41,7 @@
     "@types/express-session": "^1.19.0",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "^4.1.10",
+    "bcryptjs": "^3.0.3",
     "esbuild": "0.27.3",
     "esbuild-plugin-pino": "^2.3.3",
     "pino-pretty": "^13.1.3",

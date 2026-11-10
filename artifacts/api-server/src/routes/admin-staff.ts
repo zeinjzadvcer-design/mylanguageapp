@@ -10,7 +10,7 @@
  */
 
 import { Router, type IRouter, type Request } from "express";
-import bcrypt from "bcryptjs";
+import { hashPassword } from "../lib/password";
 import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -129,7 +129,7 @@ router.post("/admin/staff", guard, async (req, res): Promise<void> => {
       .values({
         name: body.name,
         email: body.email,
-        passwordHash: await bcrypt.hash(body.password, 10),
+        passwordHash: await hashPassword(body.password),
         role: body.role,
         preferredLanguage: "en",
       })
@@ -217,7 +217,7 @@ router.post("/admin/staff/:id/password", guard, async (req, res): Promise<void> 
 
   await db
     .update(usersTable)
-    .set({ passwordHash: await bcrypt.hash(body.password, 10) })
+    .set({ passwordHash: await hashPassword(body.password) })
     .where(eq(usersTable.id, target.id));
   // A reset link already emailed would otherwise still replace this password.
   await db

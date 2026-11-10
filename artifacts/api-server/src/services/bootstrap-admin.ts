@@ -19,7 +19,7 @@
  * restart.
  */
 
-import bcrypt from "bcryptjs";
+import { hashPassword } from "../lib/password";
 import { eq, sql } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import { passwordSchema } from "../lib/validate";
@@ -179,7 +179,7 @@ export async function ensureBootstrapAdmin(): Promise<BootstrapDecision | null> 
       return decision;
     }
 
-    const passwordHash = await bcrypt.hash(decision.password, 10);
+    const passwordHash = await hashPassword(decision.password);
 
     await db.insert(usersTable).values({
       name: "Administrator",
