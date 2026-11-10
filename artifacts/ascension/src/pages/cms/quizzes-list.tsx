@@ -11,6 +11,7 @@ import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cmsApi, type CMSQuiz } from "@/lib/cms-api";
 import { CMSLayout } from "@/components/cms-layout";
+import { useCan } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,6 +31,7 @@ export default function QuizzesList() {
   const qc = useQueryClient();
   const [, setLocation] = useLocation();
   const [status, setStatus] = useState<string>("");
+  const canEdit = useCan()("content.edit");
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState("");
   const [titleAr, setTitleAr] = useState("");
@@ -66,9 +68,11 @@ export default function QuizzesList() {
               Practice quizzes, and the evaluations that gate a student's level
             </p>
           </div>
-          <Button size="sm" onClick={() => setShowForm((f) => !f)}>
-            <Plus className="h-3.5 w-3.5 mr-1" /> New Quiz
-          </Button>
+          {canEdit && (
+            <Button size="sm" onClick={() => setShowForm((f) => !f)}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> New Quiz
+            </Button>
+          )}
         </div>
 
         <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-700 flex gap-2">

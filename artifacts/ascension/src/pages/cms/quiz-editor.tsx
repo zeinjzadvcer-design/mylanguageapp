@@ -20,6 +20,8 @@ import {
   type QuizBlockConfig,
 } from "@/lib/cms-api";
 import { CMSLayout } from "@/components/cms-layout";
+import { useCan } from "@/lib/permissions";
+import type { Permission } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -75,6 +77,7 @@ export default function QuizEditor({ params }: { params: { id: string } }) {
     enabled: !isNaN(quizId),
   });
 
+  const can = useCan();
   const { data: levelsData } = useQuery({
     queryKey: ["cms-levels"],
     queryFn: () => cmsApi.levels.list(),
@@ -138,6 +141,7 @@ export default function QuizEditor({ params }: { params: { id: string } }) {
 
   const blocks = [...(quiz.blocks ?? [])].sort((a, b) => a.order - b.order);
   const locked = quiz.status === "published" || quiz.status === "archived";
+  const readOnly = locked || !can("content.edit");
   const isEvaluation = quiz.kind === "level_evaluation";
 
   const move = (index: number, delta: number) => {
@@ -188,7 +192,7 @@ export default function QuizEditor({ params }: { params: { id: string } }) {
         <Settings
           quiz={quiz}
           levels={levelsData ?? []}
-          disabled={locked || updateMut.isPending}
+          disabled={readOnly || updateMut.isPending}
           onSave={(patch) => updateMut.mutate(patch)}
         />
 
@@ -210,14 +214,14 @@ export default function QuizEditor({ params }: { params: { id: string } }) {
               block={block}
               index={i}
               total={blocks.length}
-              disabled={locked}
+              disabled={readOnly}
               onMove={(d) => move(i, d)}
               onSave={(patch) => updateBlockMut.mutate({ id: block.id, patch })}
               onDelete={() => deleteBlockMut.mutate(block.id)}
             />
           ))}
 
-          {!locked && <AddBlock onAdd={(t) => addBlockMut.mutate(t)} />}
+          {!readOnly && <AddBlock onAdd={(t) => addBlockMut.mutate(t)} />}
         </div>
       </div>
     </CMSLayout>
@@ -255,6 +259,16 @@ function GatingWarning({ blocks }: { blocks: CMSQuizBlock[] }) {
 
 // ─── Workflow ─────────────────────────────────────────────────────────────────
 
+/** Who may press each workflow button; the API enforces the same. */
+const ACTION_PERMISSION: Record<string, Permission> = {
+  submit: "content.edit",
+  approve: "content.review",
+  reject: "content.review",
+  publish: "content.publish",
+  unpublish: "content.publish",
+  restore: "content.publish",
+};
+
 function WorkflowButtons({
   status,
   blockCount,
@@ -266,6 +280,7 @@ function WorkflowButtons({
   pending: boolean;
   onAction: (action: string) => void;
 }) {
+  const can = useCan();
   const actions: Array<{ action: string; label: string; variant?: "outline" }> = [];
 
   if (status === "draft") {
@@ -287,7 +302,7 @@ function WorkflowButtons({
       <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600">
         {status.replace("_", " ")}
       </span>
-      {actions.map((a) => (
+      {actions.filter((a) => can(ACTION_PERMISSION[a.action])).map((a) => (
         <Button
           key={a.action}
           size="sm"
