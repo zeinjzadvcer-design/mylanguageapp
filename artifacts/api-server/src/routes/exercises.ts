@@ -11,6 +11,7 @@ import {
   studentProfilesTable,
 } from "@workspace/db";
 import { requireAuth, currentRole } from "../middlewares/auth";
+import { isUnmeteredRole } from "../services/entitlement-policy";
 import { getStudentCurriculumContext, publishedLessonFilter } from "../services/learning";
 import { DENIAL_MESSAGES, getEntitlement, isLessonInTrack } from "../services/entitlements";
 
@@ -86,7 +87,7 @@ router.post("/exercises/:exerciseId/submit", requireAuth, async (req, res): Prom
     return;
   }
 
-  if (role === "student") {
+  if (!isUnmeteredRole(role)) {
     const ctx = await getStudentCurriculumContext(userId);
     if (ctx) {
       const [level] = await db
