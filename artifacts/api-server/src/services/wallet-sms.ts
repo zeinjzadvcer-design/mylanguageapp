@@ -410,7 +410,8 @@ export async function sweepWalletSubmissions(): Promise<number> {
 }
 
 /**
- * The companion app's bearer token, or null when none is configured.
+ * The companion app's token as stored (its digest), or null when none is
+ * configured.
  *
  * Null means the ingest endpoint refuses everything: an open ingest would let
  * anyone POST a fabricated confirmation and mint themselves a subscription.

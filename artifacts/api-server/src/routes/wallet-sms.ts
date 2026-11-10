@@ -12,26 +12,12 @@
  */
 
 import { Router, type IRouter } from "express";
-import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { ingestSms, getIngestToken } from "../services/wallet-sms";
+import { ingestTokenMatches } from "../services/wallet-sms-policy";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
-
-/**
- * Compare without leaking length or position through timing.
- *
- * `timingSafeEqual` throws on a length mismatch, which would itself be a
- * signal, so both sides are hashed to a fixed 32 bytes first. Hashing the
- * UTF-8 bytes, not padding characters: a non-ASCII header encodes to more
- * bytes than characters, and padded buffers of unequal length made
- * `timingSafeEqual` throw, turning a bad token into a 500.
- */
-function tokensMatch(presented: string, expected: string): boolean {
-  const digest = (s: string) => createHash("sha256").update(s, "utf8").digest();
-  return timingSafeEqual(digest(presented), digest(expected));
-}
 
 const ingestSchema = z.object({
   /** The message body exactly as the handset received it. */
@@ -66,7 +52,7 @@ router.post("/wallet-sms", async (req, res): Promise<void> => {
   const header = req.get("authorization") ?? "";
   const presented = header.startsWith("Bearer ") ? header.slice(7) : "";
 
-  if (!presented || !tokensMatch(presented, expected)) {
+  if (!presented || !ingestTokenMatches(presented, expected)) {
     logger.warn({ ip: req.ip }, "Rejected wallet SMS ingest with a bad token");
     res.status(401).json({ error: "Unauthorized" });
     return;

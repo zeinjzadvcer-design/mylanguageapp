@@ -36,6 +36,7 @@ import { checkWalletAddress } from "../services/crypto-config";
 import { refreshSypRate, sptodayConfigured } from "../services/syp-rate";
 import { OLD_PER_NEW } from "../services/syp-rate-policy";
 import { SETTINGS_ROW_ID } from "../services/payment-settings";
+import { ingestTokenDigest } from "../services/wallet-sms-policy";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -606,7 +607,8 @@ router.post(
 
     await db
       .update(paymentSettingsTable)
-      .set({ smsIngestToken: token, updatedBy: req.session.userId! })
+      // Only the digest is kept: the token itself is returned once, below.
+      .set({ smsIngestToken: ingestTokenDigest(token), updatedBy: req.session.userId! })
       .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID));
 
     logger.info(
