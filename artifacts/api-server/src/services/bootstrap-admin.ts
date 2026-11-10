@@ -2,7 +2,7 @@
  * The first administrator.
  *
  * An empty database has no way in. Registration hard-codes `role: "student"`,
- * there is no promote endpoint, and the seed script creates no users — so
+ * the staff screen cannot grant `admin`, and the seed script creates no users — so
  * without this the only way to get an administrator is to open psql and edit a
  * row by hand.
  *
