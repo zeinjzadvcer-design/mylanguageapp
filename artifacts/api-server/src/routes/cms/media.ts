@@ -8,23 +8,32 @@
 
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
-import { requireContentManager, requireCMSAccess } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
+import { isRegistrableCurriculumKey } from "../../services/storage";
 
 const router: IRouter = Router();
 
-router.get("/cms/media", requireCMSAccess, async (req, res): Promise<void> => {
+/**
+ * Curriculum material only. Student recordings, payment receipts and the
+ * payment QR codes live in the same table, but they are not the CMS's to list,
+ * register or delete: listing them showed content staff every receipt's key and
+ * owner, and deleting one could remove the QR students pay with.
+ */
+const CURRICULUM = `owner_user_id IS NULL AND purpose = 'curriculum'`;
+
+router.get("/cms/media", requirePermission("content.view"), async (req, res): Promise<void> => {
   const page = Math.max(1, parseInt((req.query.page as string) ?? "1", 10));
   const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) ?? "30", 10)));
   const offset = (page - 1) * limit;
   const mimeType = req.query.mimeType as string | undefined;
 
   const params: unknown[] = [limit, offset];
-  const where = mimeType ? `WHERE mime_type ILIKE $3` : "";
+  const where = mimeType ? `WHERE ${CURRICULUM} AND mime_type ILIKE $3` : `WHERE ${CURRICULUM}`;
   if (mimeType) params.push(`${mimeType}%`);
 
   const [countRes, rows] = await Promise.all([
     pool.query<{ count: string }>(
-      `SELECT COUNT(*) FROM media_assets ${mimeType ? "WHERE mime_type ILIKE $1" : ""}`,
+      `SELECT COUNT(*) FROM media_assets WHERE ${CURRICULUM}${mimeType ? " AND mime_type ILIKE $1" : ""}`,
       mimeType ? [`${mimeType}%`] : []
     ),
     pool.query(
@@ -63,7 +72,7 @@ router.get("/cms/media", requireCMSAccess, async (req, res): Promise<void> => {
   });
 });
 
-router.post("/cms/media", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/media", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const { key, originalName, mimeType, sizeBytes, durationSec,
     language, speaker, accent, transcript } = req.body;
 
@@ -74,6 +83,21 @@ router.post("/cms/media", requireContentManager, async (req, res): Promise<void>
   // Validate MIME type: only audio, image, video allowed
   if (!/^(audio|image|video)\//.test(mimeType)) {
     res.status(400).json({ error: "Only audio, image, and video MIME types are allowed" }); return;
+  }
+
+  // A registered row has no owner, so anyone signed in can play it. Pointing
+  // one at a student's recording or receipt would publish it.
+  if (typeof key !== "string" || !isRegistrableCurriculumKey(key)) {
+    res.status(400).json({
+      error: "That key cannot be registered. Use a plain path outside the recordings/ and payments/ folders.",
+      code: "INVALID_KEY",
+    });
+    return;
+  }
+  const taken = await pool.query(`SELECT 1 FROM media_assets WHERE key = $1 LIMIT 1`, [key]);
+  if (taken.rowCount) {
+    res.status(409).json({ error: "That key is already registered.", code: "KEY_TAKEN" });
+    return;
   }
 
   const result = await pool.query<{ id: number }>(
@@ -87,10 +111,11 @@ router.post("/cms/media", requireContentManager, async (req, res): Promise<void>
   res.status(201).json({ id: result.rows[0].id, key, mimeType });
 });
 
-router.delete("/cms/media/:id", requireContentManager, async (req, res): Promise<void> => {
+router.delete("/cms/media/:id", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
-  await pool.query(`DELETE FROM media_assets WHERE id = $1`, [id]);
+  const result = await pool.query(`DELETE FROM media_assets WHERE id = $1 AND ${CURRICULUM}`, [id]);
+  if (!result.rowCount) { res.status(404).json({ error: "Media not found" }); return; }
   res.json({ deleted: true });
 });
 
