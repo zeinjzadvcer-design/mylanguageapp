@@ -13,6 +13,7 @@ import { Loader2 } from "lucide-react";
 import { PasswordInput } from "@/components/password-input";
 import { BrandLogo, LanguageSwitcher } from "@/components/brand";
 import { useI18n } from "@/lib/i18n";
+import { landingPath } from "@/lib/permissions";
 import type { Messages } from "@/locales/en";
 
 const makeSchema = (t: Messages) =>
@@ -54,7 +55,7 @@ export default function Login() {
             title: a.loginSuccess,
             description: a.welcomeBack(data.user.name),
           });
-          setLocation("/dashboard");
+          setLocation(landingPath(data.user));
         },
         onError: () => {
           toast({

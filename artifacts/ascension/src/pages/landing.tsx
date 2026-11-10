@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { BrandLogo, LanguageSwitcher, LOGO_FULL_SRC } from "@/components/brand";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/lib/i18n";
+import { landingPath } from "@/lib/permissions";
 
 export default function Landing() {
   const { data: user } = useGetMe();
@@ -21,7 +22,7 @@ export default function Landing() {
 
   useEffect(() => {
     if (user) {
-      setLocation("/dashboard");
+      setLocation(landingPath(user));
     }
   }, [user, setLocation]);
 
