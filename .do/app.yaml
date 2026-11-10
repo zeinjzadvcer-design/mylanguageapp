@@ -145,12 +145,16 @@ services:
       - key: JOB_QUEUE
         value: bullmq
 
-      # Deliberately small. A job mostly WAITS — on a speech recogniser, on a
-      # model — but holds a database connection while it waits, and
-      # DB_POOL_MAX is 10 per process. Too many starves the HTTP requests
-      # sharing that pool, which is the opposite of the point.
+      # Lesson and quiz jobs at once. A job mostly WAITS — on a speech
+      # recogniser, on a model — and takes a database connection only per
+      # query, so the limits are concurrent paid AI calls and memory.
       - key: JOB_CONCURRENCY
         value: "4"
+
+      # Peer-call analyses at once, on their own queue, so long calls never
+      # hold up lesson recordings.
+      - key: JOB_CALL_CONCURRENCY
+        value: "2"
 
       # Low on purpose: the grading sweeper is already a recovery path with its
       # own attempt limit, and retrying hard here as well multiplies paid AI
