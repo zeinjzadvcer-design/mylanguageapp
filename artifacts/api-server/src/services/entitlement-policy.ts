@@ -10,6 +10,8 @@
  * not pull in the pool either.
  */
 
+import { hasPermission, roleDefinition } from "./access-policy";
+
 /** What a student's plan allows. Resolved from the database in entitlements.ts. */
 export interface Entitlement {
   /** Plan code backing this entitlement — `"free"` when nothing is active. */
@@ -38,16 +40,9 @@ export interface Entitlement {
   unlimited: boolean;
 }
 
-/**
- * Roles that are not metered.
- *
- * Content reviewers are included: they are asked to check lessons they did not
- * write, which means opening them.
- */
-const UNMETERED_ROLES = new Set(["admin", "content_manager", "content_reviewer"]);
-
+/** Whether a role skips metering. Set per role in access-policy.ts. */
 export function isUnmeteredRole(role: string | undefined): boolean {
-  return UNMETERED_ROLES.has(role ?? "");
+  return roleDefinition(role)?.unmetered ?? false;
 }
 
 /**
@@ -256,19 +251,21 @@ export function addBillingCycle(from: Date, cycle: string): Date {
 export function canReadMediaAsset(
   asset: { ownerUserId: number | null; purpose?: string | null },
   viewer: { userId: number; role: string | undefined },
-  staffRoles: ReadonlySet<string>,
 ): boolean {
-  if (asset.ownerUserId === null) return true;
+  // Unowned is public only for what is meant for everyone. Any other unowned
+  // row points somewhere private by mistake, and must not be served.
+  if (asset.ownerUserId === null) {
+    const purpose = asset.purpose ?? "curriculum";
+    return purpose === "curriculum" || purpose === "payment_qr";
+  }
   if (asset.ownerUserId === viewer.userId) return true;
 
-  // A payment receipt is a financial record, not coursework. The staff set is
-  // the people who review LESSON content — a content_manager and a
-  // content_reviewer are here to check exercises, and neither has any reason
-  // to see a student's bank transfer. Only an admin, the only role that can
-  // act on a payment at all, may read one.
-  if (asset.purpose === "payment_receipt") return viewer.role === "admin";
+  // A payment receipt is a financial record, not coursework: readable by those
+  // who act on payments, and by nobody who is here to check exercises.
+  if (asset.purpose === "payment_receipt") return hasPermission(viewer.role, "payments.review");
 
-  return staffRoles.has(viewer.role ?? "");
+  // Someone else's recording is coursework, heard only in order to mark it.
+  return hasPermission(viewer.role, "grading.manage");
 }
 
 /** Lesson states the curriculum can report. */

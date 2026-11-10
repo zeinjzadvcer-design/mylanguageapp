@@ -188,43 +188,44 @@ describe("DENIAL_MESSAGES", () => {
 });
 
 describe("canReadMediaAsset — payment receipts are financial records", () => {
-  const STAFF = new Set(["admin", "content_manager", "content_reviewer"]);
   const receipt = { ownerUserId: 7, purpose: "payment_receipt" };
   const recording = { ownerUserId: 7, purpose: "lesson_activity" };
 
+  it("lets payments staff read a receipt, and no student recording", () => {
+    expect(canReadMediaAsset(receipt, { userId: 99, role: "payments_manager" })).toBe(true);
+    expect(canReadMediaAsset(recording, { userId: 99, role: "payments_manager" })).toBe(false);
+  });
+
   it("lets the student read their own receipt", () => {
     expect(
-      canReadMediaAsset(receipt, { userId: 7, role: "student" }, STAFF),
+      canReadMediaAsset(receipt, { userId: 7, role: "student" }),
     ).toBe(true);
   });
 
   it("refuses another student's receipt", () => {
     expect(
-      canReadMediaAsset(receipt, { userId: 8, role: "student" }, STAFF),
+      canReadMediaAsset(receipt, { userId: 8, role: "student" }),
     ).toBe(false);
   });
 
   it("lets an admin read a receipt — they review the payment", () => {
     expect(
-      canReadMediaAsset(receipt, { userId: 99, role: "admin" }, STAFF),
+      canReadMediaAsset(receipt, { userId: 99, role: "admin" }),
     ).toBe(true);
   });
 
-  it("refuses a content_manager, who may still read a recording", () => {
-    // The distinction that matters: these roles review lesson content, so they
-    // keep access to coursework and lose it for bank transfers.
+  it("refuses a content_manager both, since they do not mark work", () => {
     expect(
-      canReadMediaAsset(receipt, { userId: 99, role: "content_manager" }, STAFF),
+      canReadMediaAsset(receipt, { userId: 99, role: "content_manager" }),
     ).toBe(false);
     expect(
-      canReadMediaAsset(recording, { userId: 99, role: "content_manager" }, STAFF),
-    ).toBe(true);
+      canReadMediaAsset(recording, { userId: 99, role: "content_manager" }),
+    ).toBe(false);
   });
 
-  it("refuses a content_reviewer a receipt", () => {
-    expect(
-      canReadMediaAsset(receipt, { userId: 99, role: "content_reviewer" }, STAFF),
-    ).toBe(false);
+  it("lets an admin hear a recording, in order to mark it", () => {
+    expect(canReadMediaAsset(recording, { userId: 99, role: "admin" })).toBe(true);
+    expect(canReadMediaAsset(recording, { userId: 99, role: "payments_manager" })).toBe(false);
   });
 
   it("lets anyone signed in see an unowned asset, such as the ShamCash QR", () => {
@@ -232,25 +233,24 @@ describe("canReadMediaAsset — payment receipts are financial records", () => {
     expect(
       canReadMediaAsset(
         { ownerUserId: null, purpose: "payment_qr" },
-        { userId: 8, role: "student" },
-        STAFF,
-      ),
+        { userId: 8, role: "student" }),
     ).toBe(true);
   });
 
   it("refuses a viewer with no role at all", () => {
     expect(
-      canReadMediaAsset(receipt, { userId: 8, role: undefined }, STAFF),
+      canReadMediaAsset(receipt, { userId: 8, role: undefined }),
     ).toBe(false);
   });
 });
 
 
 describe("staff are not metered", () => {
-  it("names admin, content_manager and content_reviewer as unmetered", () => {
+  it("names admin and content_manager as unmetered", () => {
     expect(isUnmeteredRole("admin")).toBe(true);
     expect(isUnmeteredRole("content_manager")).toBe(true);
-    expect(isUnmeteredRole("content_reviewer")).toBe(true);
+    // Retired: an account still holding it gets no exemption.
+    expect(isUnmeteredRole("content_reviewer")).toBe(false);
   });
 
   it("meters a student and an unknown role", () => {
