@@ -46,6 +46,7 @@ import type { AIFeature } from "./ai";
 import { getPlanAllowance } from "./ai-config";
 import { logger } from "../lib/logger";
 import { subscriptionInForce } from "./entitlements";
+import { isUnmeteredRole } from "./entitlement-policy";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ export interface UsageRecord extends QuotaContext {
 /**
  * The plan whose AI limits apply to this user.
  *
- * An administrator is held to the `admin` policy whatever they subscribe to.
+ * Staff who check content are held to the `admin` policy whatever they subscribe to.
  * That row has always existed — unlimited, so staff can check the AI features
  * of the lessons they build — but nothing ever selected it: the plan came only
  * from the subscription, so an admin walking a lesson was treated as `free`
@@ -106,7 +107,7 @@ export async function resolvePlanCode(userId: number): Promise<string> {
     .from(usersTable)
     .where(eq(usersTable.id, userId))
     .limit(1);
-  if (user?.role === "admin") return "admin";
+  if (isUnmeteredRole(user?.role)) return "admin";
 
   const [sub] = await db
     .select({ planCode: studentSubscriptionsTable.planCode })
