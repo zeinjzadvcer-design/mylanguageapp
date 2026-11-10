@@ -58,12 +58,8 @@ async function buildProfileResponse(userId: number) {
 router.get("/profile", requireAuth, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
-  const [profile] = await db
-    .select()
-    .from(studentProfilesTable)
-    .where(eq(studentProfilesTable.userId, userId))
-    .limit(1);
-  if (!user || !profile) { res.status(404).json({ error: "Profile not found" }); return; }
+  // Staff have no student profile, and still have an account to look at.
+  if (!user) { res.status(404).json({ error: "Profile not found" }); return; }
   res.json(await buildProfileResponse(userId));
 });
 
