@@ -4,6 +4,7 @@ import {
   curriculumKey,
   ALLOWED_AUDIO_TYPES,
   ALLOWED_CMS_TYPES,
+  isRegistrableCurriculumKey,
 } from "./storage";
 import { canReadAsset } from "./media";
 
@@ -94,7 +95,7 @@ describe("allowed content types", () => {
 describe("canReadAsset", () => {
   const student = { userId: 10, role: "student" };
   const otherStudent = { userId: 11, role: "student" };
-  const reviewer = { userId: 99, role: "content_reviewer" };
+  const contentManager = { userId: 99, role: "content_manager" };
   const admin = { userId: 98, role: "admin" };
 
   it("lets any signed-in user play curriculum material", () => {
@@ -110,8 +111,8 @@ describe("canReadAsset", () => {
     expect(canReadAsset({ ownerUserId: 10 }, otherStudent)).toBe(false);
   });
 
-  it("lets staff play a student's recording, because they have to grade it", () => {
-    expect(canReadAsset({ ownerUserId: 10 }, reviewer)).toBe(true);
+  it("lets only those who mark work play a student's recording", () => {
+    expect(canReadAsset({ ownerUserId: 10 }, contentManager)).toBe(false);
     expect(canReadAsset({ ownerUserId: 10 }, admin)).toBe(true);
   });
 
@@ -121,5 +122,43 @@ describe("canReadAsset", () => {
 
   it("refuses an unrecognised role rather than defaulting to allow", () => {
     expect(canReadAsset({ ownerUserId: 10 }, { userId: 11, role: "superuser" })).toBe(false);
+  });
+});
+
+describe("isRegistrableCurriculumKey", () => {
+  it.each(["audio/lesson-1.mp3", "curriculum/listening-intro.mp3", "images/a_b.png"])(
+    "accepts %s",
+    (key) => {
+      expect(isRegistrableCurriculumKey(key)).toBe(true);
+    },
+  );
+
+  it.each([
+    "payments/receipt/7/1700000000000-ab12cd34.jpg",
+    "payments/qr/1/1700000000000-ab12cd34.png",
+    "recordings/7/2026-11/0b6c.webm",
+    "Payments/receipt/7/x.jpg",
+    "/payments/receipt/7/x.jpg",
+    "curriculum/../payments/receipt/7/x.jpg",
+    "audio//x.mp3",
+    "./audio/x.mp3",
+    "audio/x.mp3?x=1",
+    "",
+  ])("refuses %s", (key) => {
+    expect(isRegistrableCurriculumKey(key)).toBe(false);
+  });
+});
+
+describe("unowned media", () => {
+  const anyone = { userId: 11, role: "student" };
+
+  it("is public only for curriculum material and payment QR codes", () => {
+    expect(canReadAsset({ ownerUserId: null, purpose: "curriculum" }, anyone)).toBe(true);
+    expect(canReadAsset({ ownerUserId: null, purpose: "payment_qr" }, anyone)).toBe(true);
+  });
+
+  it("is never public for a receipt or a recording that lost its owner", () => {
+    expect(canReadAsset({ ownerUserId: null, purpose: "payment_receipt" }, anyone)).toBe(false);
+    expect(canReadAsset({ ownerUserId: null, purpose: "lesson_activity" }, anyone)).toBe(false);
   });
 });
