@@ -10,7 +10,8 @@ import { eq, and, asc, inArray } from "drizzle-orm";
 import {
   db, lessonsTable, contentBlocksTable, exercisesTable, exerciseOptionsTable,
 } from "@workspace/db";
-import { requireContentManager, requireCMSAccess } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
+import { hasPermission } from "../../services/access-policy";
 import { audit } from "../../services/cms-audit";
 import { invalidate, CK } from "../../services/cache";
 
@@ -19,7 +20,7 @@ const router: IRouter = Router();
 // ─── Content block CRUD ────────────────────────────────────────────────────
 
 /** List blocks for a lesson (admin/content view — includes inactive) */
-router.get("/cms/lessons/:lessonId/blocks", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/lessons/:lessonId/blocks", requirePermission("content.view"), async (req, res): Promise<void> => {
   const lessonId = parseInt(req.params.lessonId as string, 10);
   if (isNaN(lessonId)) { res.status(400).json({ error: "Invalid lesson ID" }); return; }
 
@@ -56,14 +57,14 @@ router.get("/cms/lessons/:lessonId/blocks", requireCMSAccess, async (req, res): 
 });
 
 /** Create a new content block */
-router.post("/cms/lessons/:lessonId/blocks", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/lessons/:lessonId/blocks", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const lessonId = parseInt(req.params.lessonId as string, 10);
   if (isNaN(lessonId)) { res.status(400).json({ error: "Invalid lesson ID" }); return; }
 
   const [lesson] = await db.select().from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
   if (!lesson || lesson.softDeletedAt) { res.status(404).json({ error: "Lesson not found" }); return; }
   // content_manager cannot mutate published/archived lessons; only admins can do so after unpublishing
-  if (req.session.role !== "admin" && ["published", "archived"].includes(lesson.status)) {
+  if (!hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(lesson.status)) {
     res.status(403).json({ error: `Cannot edit a ${lesson.status} lesson. Unpublish it first or contact an admin.` }); return;
   }
 
@@ -105,14 +106,14 @@ router.post("/cms/lessons/:lessonId/blocks", requireContentManager, async (req, 
 });
 
 /** Update a content block */
-router.patch("/cms/lessons/:lessonId/blocks/:blockId", requireContentManager, async (req, res): Promise<void> => {
+router.patch("/cms/lessons/:lessonId/blocks/:blockId", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const lessonId = parseInt(req.params.lessonId as string, 10);
   const blockId = parseInt(req.params.blockId as string, 10);
   if (isNaN(lessonId) || isNaN(blockId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const [parentLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
   if (!parentLesson) { res.status(404).json({ error: "Lesson not found" }); return; }
-  if (req.session.role !== "admin" && ["published", "archived"].includes(parentLesson.status)) {
+  if (!hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(parentLesson.status)) {
     res.status(403).json({ error: `Cannot edit blocks of a ${parentLesson.status} lesson.` }); return;
   }
 
@@ -140,13 +141,13 @@ router.patch("/cms/lessons/:lessonId/blocks/:blockId", requireContentManager, as
 });
 
 /** Delete a content block (and its exercise + options via CASCADE) */
-router.delete("/cms/lessons/:lessonId/blocks/:blockId", requireContentManager, async (req, res): Promise<void> => {
+router.delete("/cms/lessons/:lessonId/blocks/:blockId", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const lessonId = parseInt(req.params.lessonId as string, 10);
   const blockId = parseInt(req.params.blockId as string, 10);
   if (isNaN(lessonId) || isNaN(blockId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const [pLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (pLesson && req.session.role !== "admin" && ["published", "archived"].includes(pLesson.status)) {
+  if (pLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(pLesson.status)) {
     res.status(403).json({ error: `Cannot delete blocks from a ${pLesson.status} lesson.` }); return;
   }
 
@@ -158,12 +159,12 @@ router.delete("/cms/lessons/:lessonId/blocks/:blockId", requireContentManager, a
 });
 
 /** Reorder blocks: body = { blockIds: number[] } — ordered array of block IDs */
-router.post("/cms/lessons/:lessonId/blocks/reorder", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/lessons/:lessonId/blocks/reorder", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const lessonId = parseInt(req.params.lessonId as string, 10);
   if (isNaN(lessonId)) { res.status(400).json({ error: "Invalid lesson ID" }); return; }
 
   const [rLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (rLesson && req.session.role !== "admin" && ["published", "archived"].includes(rLesson.status)) {
+  if (rLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(rLesson.status)) {
     res.status(403).json({ error: `Cannot reorder blocks of a ${rLesson.status} lesson.` }); return;
   }
 
@@ -185,13 +186,13 @@ router.post("/cms/lessons/:lessonId/blocks/reorder", requireContentManager, asyn
 // ─── Exercise CRUD ─────────────────────────────────────────────────────────
 
 /** Create exercise for a block */
-router.post("/cms/lessons/:lessonId/blocks/:blockId/exercise", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/lessons/:lessonId/blocks/:blockId/exercise", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const lessonId = parseInt(req.params.lessonId as string, 10);
   const blockId = parseInt(req.params.blockId as string, 10);
   if (isNaN(lessonId) || isNaN(blockId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const [exLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (exLesson && req.session.role !== "admin" && ["published", "archived"].includes(exLesson.status)) {
+  if (exLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(exLesson.status)) {
     res.status(403).json({ error: `Cannot add exercises to a ${exLesson.status} lesson.` }); return;
   }
 
@@ -244,13 +245,13 @@ router.post("/cms/lessons/:lessonId/blocks/:blockId/exercise", requireContentMan
 });
 
 /** Update exercise */
-router.patch("/cms/lessons/:lessonId/exercises/:exerciseId", requireContentManager, async (req, res): Promise<void> => {
+router.patch("/cms/lessons/:lessonId/exercises/:exerciseId", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const lessonId = parseInt(req.params.lessonId as string, 10);
   const exerciseId = parseInt(req.params.exerciseId as string, 10);
   if (isNaN(lessonId) || isNaN(exerciseId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const [upLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (upLesson && req.session.role !== "admin" && ["published", "archived"].includes(upLesson.status)) {
+  if (upLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(upLesson.status)) {
     res.status(403).json({ error: `Cannot update exercises of a ${upLesson.status} lesson.` }); return;
   }
 
@@ -283,13 +284,13 @@ router.patch("/cms/lessons/:lessonId/exercises/:exerciseId", requireContentManag
 });
 
 /** Delete exercise */
-router.delete("/cms/lessons/:lessonId/exercises/:exerciseId", requireContentManager, async (req, res): Promise<void> => {
+router.delete("/cms/lessons/:lessonId/exercises/:exerciseId", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const lessonId = parseInt(req.params.lessonId as string, 10);
   const exerciseId = parseInt(req.params.exerciseId as string, 10);
   if (isNaN(lessonId) || isNaN(exerciseId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
   const [delLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (delLesson && req.session.role !== "admin" && ["published", "archived"].includes(delLesson.status)) {
+  if (delLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(delLesson.status)) {
     res.status(403).json({ error: `Cannot delete exercises from a ${delLesson.status} lesson.` }); return;
   }
 
