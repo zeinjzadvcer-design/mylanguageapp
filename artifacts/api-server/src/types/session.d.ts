@@ -1,9 +1,10 @@
 import "express-session";
+import type { UserRole } from "@workspace/db";
 
 declare module "express-session" {
   interface SessionData {
     userId: number;
-    role: "student" | "admin" | "content_manager" | "content_reviewer";
+    role: UserRole;
     name: string;
     email: string;
   }

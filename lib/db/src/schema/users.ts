@@ -4,21 +4,27 @@ import { z } from "zod/v4";
 import { curriculaTable } from "./languages";
 import { levelsTable } from "./levels";
 
+/**
+ * Every role an account can hold. What each one may do is defined in the API's
+ * `services/access-policy.ts`, which will not compile until a role added here
+ * has its definition there.
+ *
+ * The column is plain text, so adding a role needs no migration.
+ */
+export const USER_ROLES = [
+  "student",
+  "admin",
+  "content_manager",
+  "payments_manager",
+] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
 export const usersTable = pgTable("users", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  /**
-   * Roles:
-   *   student          — no CMS access
-   *   admin            — full access
-   *   content_manager  — create/edit/submit content; cannot publish or manage users
-   *   content_reviewer — review and approve/reject; cannot publish
-   */
-  role: text("role", {
-    enum: ["student", "admin", "content_manager", "content_reviewer"],
-  }).notNull().default("student"),
+  role: text("role", { enum: USER_ROLES }).notNull().default("student"),
   preferredLanguage: text("preferred_language", { enum: ["ar", "en"] }).notNull().default("ar"),
   country: text("country").notNull().default("SY"),
   /** How the student heard about the app. Asked at signup; drives the admin referral report. */
