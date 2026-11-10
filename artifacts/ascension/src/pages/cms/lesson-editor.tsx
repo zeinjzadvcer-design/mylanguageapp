@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { MediaPicker } from "@/components/media-picker";
 import { useToast } from "@/hooks/use-toast";
-import { useGetMe } from "@workspace/api-client-react";
+import { useCan } from "@/lib/permissions";
 import {
   ArrowUp, ArrowDown, Trash2, Plus, Eye, Send,
   CheckCircle, XCircle, Globe, Archive, RotateCcw, ChevronDown, ChevronRight,
@@ -78,11 +78,10 @@ export default function LessonEditor({ lessonId }: Props) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: user } = useGetMe();
-  const role = user?.role as string | undefined;
-  const isAdmin = role === "admin";
-  const isReviewer = role === "content_reviewer" || role === "admin";
-  const isContentManager = role === "admin" || role === "content_manager";
+  const can = useCan();
+  const canPublish = can("content.publish");
+  const canReview = can("content.review");
+  const canEdit = can("content.edit");
   const isNew = !lessonId;
 
   // Lesson metadata form state
@@ -313,17 +312,17 @@ export default function LessonEditor({ lessonId }: Props) {
                 <Eye className="h-3.5 w-3.5 mr-1.5" /> Preview
               </Button>
             )}
-            {isContentManager && (
+            {canEdit && (
               <Button size="sm" onClick={saveMeta} disabled={saving}>
                 {saving ? "Saving…" : "Save Draft"}
               </Button>
             )}
-            {isContentManager && !isNew && currentStatus === "draft" && (
+            {canEdit && !isNew && currentStatus === "draft" && (
               <Button size="sm" variant="outline" onClick={() => transition("submit", "Submitted for review")}>
                 <Send className="h-3.5 w-3.5 mr-1.5" /> Submit for Review
               </Button>
             )}
-            {isReviewer && !isNew && currentStatus === "in_review" && (
+            {canReview && !isNew && currentStatus === "in_review" && (
               <>
                 <Button size="sm" className="bg-green-600 hover:bg-green-700"
                   onClick={() => transition("approve", "Lesson approved")}>
@@ -335,13 +334,13 @@ export default function LessonEditor({ lessonId }: Props) {
                 </Button>
               </>
             )}
-            {isAdmin && !isNew && ["draft", "approved"].includes(currentStatus) && (
+            {canPublish && !isNew && ["draft", "approved"].includes(currentStatus) && (
               <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700"
                 onClick={() => transition("publish", "Published!")}>
                 <Globe className="h-3.5 w-3.5 mr-1.5" /> Publish
               </Button>
             )}
-            {isAdmin && !isNew && currentStatus === "published" && (
+            {canPublish && !isNew && currentStatus === "published" && (
               <Button size="sm" variant="outline" onClick={() => transition("unpublish", "Unpublished")}>
                 Unpublish
               </Button>
@@ -446,7 +445,7 @@ export default function LessonEditor({ lessonId }: Props) {
           <div className="md:col-span-2 space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-700">Content Blocks ({blockGroupList.length})</h2>
-              {isContentManager && !isNew && (
+              {canEdit && !isNew && (
                 <BlockTypeMenu onSelect={addBlock} />
               )}
             </div>
@@ -459,7 +458,7 @@ export default function LessonEditor({ lessonId }: Props) {
 
             {blockGroupList.map((group, gi) => {
               const typeLabel = BLOCK_TYPES.find(t => t.value === group[0].type)?.label ?? group[0].type;
-              const addItemButton = isContentManager && GROUPABLE_TYPES.includes(group[0].type) && (
+              const addItemButton = canEdit && GROUPABLE_TYPES.includes(group[0].type) && (
                 <div className="flex items-center gap-3">
                   <Button size="sm" variant="outline" onClick={() => addItem(group)}>
                     <Plus className="mr-1 h-3.5 w-3.5" /> Add item
@@ -486,7 +485,7 @@ export default function LessonEditor({ lessonId }: Props) {
                     onDelete={() => removeBlock(block.id)}
                     onUpdate={(u: Partial<CMSBlock>) => updateBlock(block.id, u)}
                     lessonId={lessonId!}
-                    isEditable={isContentManager}
+                    isEditable={canEdit}
                     qc={qc}
                     footer={addItemButton}
                   />
@@ -501,7 +500,7 @@ export default function LessonEditor({ lessonId }: Props) {
                       {typeLabel}
                       <span className="ml-2 text-xs text-indigo-600">{group.length} items</span>
                     </span>
-                    {isContentManager && (
+                    {canEdit && (
                       <div className="flex items-center gap-0.5">
                         <button onClick={() => moveGroup(gi, -1)} disabled={gi === 0} className="p-1 rounded hover:bg-indigo-100 disabled:opacity-30" title="Move block up">
                           <ArrowUp className="h-3 w-3" />
@@ -528,7 +527,7 @@ export default function LessonEditor({ lessonId }: Props) {
                         onDelete={() => { if (confirm(`Delete item ${ii + 1}?`)) removeBlock(block.id); }}
                         onUpdate={(u: Partial<CMSBlock>) => updateBlock(block.id, u)}
                         lessonId={lessonId!}
-                        isEditable={isContentManager}
+                        isEditable={canEdit}
                         qc={qc}
                       />
                     ))}

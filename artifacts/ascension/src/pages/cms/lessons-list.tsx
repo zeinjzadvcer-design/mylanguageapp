@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { useGetMe } from "@workspace/api-client-react";
+import { useCan } from "@/lib/permissions";
 import { Plus, Search, Copy, Archive, Eye, Pencil, RotateCcw } from "lucide-react";
 
 const STATUSES: LessonStatus[] = ["draft", "in_review", "approved", "published", "archived"];
@@ -16,9 +16,9 @@ export default function CMSLessonsList() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: user } = useGetMe();
-  const isAdmin = user?.role === "admin";
-  const isContentManager = user?.role === "admin" || (user?.role as string) === "content_manager";
+  const can = useCan();
+  const canPublish = can("content.publish");
+  const canEdit = can("content.edit");
 
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -63,7 +63,7 @@ export default function CMSLessonsList() {
             <h1 className="text-2xl font-bold text-gray-900">Lessons</h1>
             <p className="text-sm text-gray-500 mt-0.5">{data?.total ?? "—"} total</p>
           </div>
-          {isContentManager && (
+          {canEdit && (
             <Button onClick={() => setLocation("/cms/lessons/new")} size="sm">
               <Plus className="h-4 w-4 mr-1.5" /> New Lesson
             </Button>
@@ -128,12 +128,12 @@ export default function CMSLessonsList() {
                         <Link href={`/cms/lessons/${l.id}/preview`} title="Preview" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
                           <Eye className="h-3.5 w-3.5" />
                         </Link>
-                        {isContentManager && (
+                        {canEdit && (
                           <Link href={`/cms/lessons/${l.id}/edit`} title="Edit" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
                             <Pencil className="h-3.5 w-3.5" />
                           </Link>
                         )}
-                        {isContentManager && (
+                        {canEdit && (
                           <button
                             title="Duplicate"
                             onClick={() => duplicateMut.mutate(l.id)}
@@ -142,7 +142,7 @@ export default function CMSLessonsList() {
                             <Copy className="h-3.5 w-3.5" />
                           </button>
                         )}
-                        {isAdmin && l.status !== "archived" && (
+                        {canPublish && l.status !== "archived" && (
                           <button
                             title="Archive"
                             onClick={() => archiveMut.mutate(l.id)}
@@ -151,7 +151,7 @@ export default function CMSLessonsList() {
                             <Archive className="h-3.5 w-3.5" />
                           </button>
                         )}
-                        {isAdmin && l.status === "archived" && (
+                        {canPublish && l.status === "archived" && (
                           <button
                             title="Restore"
                             onClick={() => restoreMut.mutate(l.id)}
