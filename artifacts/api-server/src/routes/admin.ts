@@ -11,39 +11,54 @@ import { setStudentLevel, getProgressionHistory } from "../services/progression"
 const router: IRouter = Router();
 
 router.get("/admin/stats", requirePermission("students.manage"), async (req, res): Promise<void> => {
-  const allUsers = await db.select().from(usersTable);
-  const students = allUsers.filter((u) => u.role === "student");
-
-  const activeSubscriptions = await db.select().from(studentSubscriptionsTable)
-    .where(eq(studentSubscriptionsTable.status, "active"));
-
-  // Counted by track, not by plan code. These matched the literal codes
-  // "general_english" / "professional_english" and silently fell to zero when
-  // the plans became general_basic/general_plus and pro_basic/pro_plus. A
-  // plan's track is what "general" and "professional" actually mean, and it
-  // survives the next plan being added or renamed.
-  const planTracks = new Map(
-    (
-      await db
-        .select({ code: subscriptionPlansTable.code, track: subscriptionPlansTable.lessonTrack })
-        .from(subscriptionPlansTable)
-    ).map((p) => [p.code as string, p.track]),
-  );
-  const generalCount = activeSubscriptions.filter((s) => planTracks.get(s.planCode) === "general").length;
-  const proCount = activeSubscriptions.filter((s) => planTracks.get(s.planCode) === "professional").length;
-
+  // Counted in the database. This loaded every user and every progress row
+  // into memory to count them, which grows with every student and every lesson
+  // they take.
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
-  const newStudents = students.filter((u) => u.createdAt >= weekAgo).length;
 
-  const allProgress = await db.select().from(lessonProgressTable);
-  const passedCount = allProgress.filter((p) => p.passed).length;
-  const scores = allProgress.filter((p) => p.bestScore !== null).map((p) => p.bestScore!);
-  const avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+  const [[studentCounts], [subscriptionCounts], [progressCounts]] = await Promise.all([
+    db
+      .select({
+        total: sql<number>`count(*)::int`,
+        newThisWeek: sql<number>`count(*) filter (where ${usersTable.createdAt} >= ${weekAgo})::int`,
+      })
+      .from(usersTable)
+      .where(eq(usersTable.role, "student")),
+    // Counted by track, not by plan code. These matched the literal codes
+    // "general_english" / "professional_english" and silently fell to zero when
+    // the plans became general_basic/general_plus and pro_basic/pro_plus. A
+    // plan's track is what "general" and "professional" actually mean, and it
+    // survives the next plan being added or renamed.
+    db
+      .select({
+        total: sql<number>`count(*)::int`,
+        general: sql<number>`count(*) filter (where ${subscriptionPlansTable.lessonTrack} = 'general')::int`,
+        professional: sql<number>`count(*) filter (where ${subscriptionPlansTable.lessonTrack} = 'professional')::int`,
+      })
+      .from(studentSubscriptionsTable)
+      .leftJoin(
+        subscriptionPlansTable,
+        sql`${subscriptionPlansTable.code} = ${studentSubscriptionsTable.planCode}`,
+      )
+      .where(eq(studentSubscriptionsTable.status, "active")),
+    db
+      .select({
+        passed: sql<number>`count(*) filter (where ${lessonProgressTable.passed})::int`,
+        avgScore: sql<number | null>`avg(${lessonProgressTable.bestScore})::float`,
+      })
+      .from(lessonProgressTable),
+  ]);
+
+  const generalCount = subscriptionCounts?.general ?? 0;
+  const proCount = subscriptionCounts?.professional ?? 0;
+  const newStudents = studentCounts?.newThisWeek ?? 0;
+  const passedCount = progressCounts?.passed ?? 0;
+  const avgScore = progressCounts?.avgScore ?? 0;
 
   res.json({
-    totalStudents: students.length,
-    activeSubscriptions: activeSubscriptions.length,
+    totalStudents: studentCounts?.total ?? 0,
+    activeSubscriptions: subscriptionCounts?.total ?? 0,
     lessonsCompleted: passedCount,
     avgScore: Math.round(avgScore * 10) / 10,
     generalPlanCount: generalCount,
