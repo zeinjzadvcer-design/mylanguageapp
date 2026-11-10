@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cmsApi } from "@/lib/cms-api";
 import { CMSLayout } from "@/components/cms-layout";
+import { useCan } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,6 +21,7 @@ export default function VocabularyPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const canEdit = useCan()("content.edit");
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<any>({ levelId: "" });
   const [editForm, setEditForm] = useState<any>({});
@@ -60,7 +62,7 @@ export default function VocabularyPage() {
             <h1 className="text-2xl font-bold text-gray-900">Vocabulary</h1>
             <p className="text-sm text-gray-500 mt-0.5">{data?.total ?? "—"} items</p>
           </div>
-          <Button size="sm" onClick={() => setShowForm(f => !f)}><Plus className="h-3.5 w-3.5 mr-1" /> Add Item</Button>
+          {canEdit && <Button size="sm" onClick={() => setShowForm(f => !f)}><Plus className="h-3.5 w-3.5 mr-1" /> Add Item</Button>}
         </div>
 
         {/* Create form */}
@@ -209,10 +211,10 @@ export default function VocabularyPage() {
                           </div>
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          <button onClick={() => { setEditId(v.id); setEditForm({ word: v.word, translation: v.translation, partOfSpeech: v.part_of_speech, pronunciation: v.pronunciation, exampleSentence: v.example_sentence, exampleSentenceAr: v.example_sentence_ar, definition: v.definition, tags: v.tags ?? [] }); }}
-                            className="p-1 rounded hover:bg-gray-100 text-gray-500 mr-0.5"><Pencil className="h-3.5 w-3.5" /></button>
-                          <button onClick={() => { if (confirm(`Delete "${v.word}"?`)) deleteMut.mutate(v.id); }}
-                            className="p-1 rounded hover:bg-red-50 text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                          {canEdit && <button onClick={() => { setEditId(v.id); setEditForm({ word: v.word, translation: v.translation, partOfSpeech: v.part_of_speech, pronunciation: v.pronunciation, exampleSentence: v.example_sentence, exampleSentenceAr: v.example_sentence_ar, definition: v.definition, tags: v.tags ?? [] }); }}
+                            className="p-1 rounded hover:bg-gray-100 text-gray-500 mr-0.5"><Pencil className="h-3.5 w-3.5" /></button>}
+                          {canEdit && <button onClick={() => { if (confirm(`Delete "${v.word}"?`)) deleteMut.mutate(v.id); }}
+                            className="p-1 rounded hover:bg-red-50 text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>}
                         </td>
                       </>
                     )}

@@ -4,14 +4,14 @@ import { cmsApi } from "@/lib/cms-api";
 import { CMSLayout, StatusBadge } from "@/components/cms-layout";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { useGetMe } from "@workspace/api-client-react";
+import { useCan } from "@/lib/permissions";
 import { CheckCircle, XCircle, Eye, Clock } from "lucide-react";
 
 export default function ReviewsPage() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: user } = useGetMe();
-  const isReviewer = user?.role === "admin" || (user?.role as string) === "content_reviewer";
+  const can = useCan();
+  const canReview = can("content.review");
 
   const { data: queue, isLoading } = useQuery({
     queryKey: ["cms-review-queue"],
@@ -83,7 +83,7 @@ export default function ReviewsPage() {
                     <Eye className="h-3.5 w-3.5" /> Preview
                   </Link>
 
-                  {isReviewer && (
+                  {canReview && (
                     <>
                       <Button size="sm" className="bg-green-600 hover:bg-green-700 text-xs h-7"
                         onClick={() => approveMut.mutate(lesson.id)}>
