@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, asc, and, isNull } from "drizzle-orm";
+import { eq, asc, and, inArray, isNull } from "drizzle-orm";
 import {
   db,
   levelsTable,
@@ -90,6 +90,9 @@ router.get("/levels", async (req, res): Promise<void> => {
           .select()
           .from(lessonsTable)
           .where(and(
+            // This curriculum's levels only. It read every published lesson
+            // in every curriculum and then used the ones for these levels.
+            inArray(lessonsTable.levelId, levelIds),
             eq(lessonsTable.status, "published"),
             isNull(lessonsTable.softDeletedAt),
             await trackFilterFor(userId, req.session?.role),
