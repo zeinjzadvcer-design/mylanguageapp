@@ -5,13 +5,13 @@
 import { Router, type IRouter } from "express";
 import { eq, and, isNull, ilike, or } from "drizzle-orm";
 import { db, pool, vocabularyTable } from "@workspace/db";
-import { requireContentManager, requireCMSAccess } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
 import { audit } from "../../services/cms-audit";
 import { invalidate, invalidatePrefix, CK } from "../../services/cache";
 
 const router: IRouter = Router();
 
-router.get("/cms/vocabulary", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/vocabulary", requirePermission("content.view"), async (req, res): Promise<void> => {
   const page = Math.max(1, parseInt((req.query.page as string) ?? "1", 10));
   const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) ?? "30", 10)));
   const offset = (page - 1) * limit;
@@ -42,7 +42,7 @@ router.get("/cms/vocabulary", requireCMSAccess, async (req, res): Promise<void> 
   });
 });
 
-router.post("/cms/vocabulary", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/vocabulary", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const { levelId, lessonId, word, translation, definition, partOfSpeech,
     exampleSentence, exampleSentenceAr, pronunciation, audioNote,
     difficulty, tags } = req.body;
@@ -66,7 +66,7 @@ router.post("/cms/vocabulary", requireContentManager, async (req, res): Promise<
   res.status(201).json(item);
 });
 
-router.patch("/cms/vocabulary/:id", requireContentManager, async (req, res): Promise<void> => {
+router.patch("/cms/vocabulary/:id", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
@@ -86,7 +86,7 @@ router.patch("/cms/vocabulary/:id", requireContentManager, async (req, res): Pro
   res.json(item);
 });
 
-router.delete("/cms/vocabulary/:id", requireContentManager, async (req, res): Promise<void> => {
+router.delete("/cms/vocabulary/:id", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
 

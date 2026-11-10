@@ -18,13 +18,13 @@ import {
   placementQuestionsTable,
   placementOptionsTable,
 } from "@workspace/db";
-import { requireContentManager, requireCMSAccess } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
 import { audit } from "../../services/cms-audit";
 
 const router: IRouter = Router();
 
 /** Every question with its options, in the order students see them. */
-router.get("/cms/placement/questions", requireCMSAccess, async (_req, res): Promise<void> => {
+router.get("/cms/placement/questions", requirePermission("content.view"), async (_req, res): Promise<void> => {
   const [questions, options] = await Promise.all([
     db.select().from(placementQuestionsTable).orderBy(asc(placementQuestionsTable.order), asc(placementQuestionsTable.id)),
     db.select().from(placementOptionsTable).orderBy(asc(placementOptionsTable.optionId)),
@@ -60,7 +60,7 @@ async function replaceOptions(
   }
 }
 
-router.post("/cms/placement/questions", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/placement/questions", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const { options } = req.body;
 
   // A new question is created blank and filled in afterwards, the same way a
@@ -92,7 +92,7 @@ router.post("/cms/placement/questions", requireContentManager, async (req, res):
   res.status(201).json(question);
 });
 
-router.patch("/cms/placement/questions/:id", requireContentManager, async (req, res): Promise<void> => {
+router.patch("/cms/placement/questions/:id", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid question ID" }); return; }
 
@@ -166,7 +166,7 @@ router.patch("/cms/placement/questions/:id", requireContentManager, async (req, 
  * so removing a question cannot orphan a student's result. Deactivating is
  * still the gentler option and is what `isActive` is for.
  */
-router.delete("/cms/placement/questions/:id", requireContentManager, async (req, res): Promise<void> => {
+router.delete("/cms/placement/questions/:id", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid question ID" }); return; }
 
@@ -176,7 +176,7 @@ router.delete("/cms/placement/questions/:id", requireContentManager, async (req,
 });
 
 /** Reorder the whole test in one call. */
-router.post("/cms/placement/questions/reorder", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/placement/questions/reorder", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const { questionIds } = req.body;
   if (!Array.isArray(questionIds)) {
     res.status(400).json({ error: "questionIds array is required" });
