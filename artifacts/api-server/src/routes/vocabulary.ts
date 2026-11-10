@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db, vocabularyTable } from "@workspace/db";
 import { cached, CK, TTL } from "../services/cache";
+import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
@@ -9,7 +10,9 @@ const router: IRouter = Router();
  * GET /vocabulary?lessonId=&levelId=
  * Cache: 15 min per lesson/level. Vocabulary is stable between admin updates.
  */
-router.get("/vocabulary", async (req, res): Promise<void> => {
+// Signed in: the only caller is the student's own vocabulary page, and the
+// unfiltered list is the whole table, which nobody outside the app needs.
+router.get("/vocabulary", requireAuth, async (req, res): Promise<void> => {
   const lessonId = req.query.lessonId ? parseInt(req.query.lessonId as string, 10) : undefined;
   const levelId  = req.query.levelId  ? parseInt(req.query.levelId  as string, 10) : undefined;
 
@@ -43,9 +46,12 @@ router.get("/vocabulary", async (req, res): Promise<void> => {
     return;
   }
 
-  // No filter — unbounded; not cached (rarely used, admin-only context)
-  const items = await db.select().from(vocabularyTable);
-  res.json(items.map(mapItem));
+  // No filter: the vocabulary page asks for everything. Cached like the other
+  // two, rather than reading the whole table on every visit.
+  const items = await cached(CK.vocabAll(), TTL.VOCABULARY, () =>
+    db.select().from(vocabularyTable).then((r) => r.map(mapItem)),
+  );
+  res.json(items);
 });
 
 export default router;

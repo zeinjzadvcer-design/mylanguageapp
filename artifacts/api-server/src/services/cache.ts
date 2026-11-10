@@ -74,6 +74,7 @@ export const CK = {
   lessonContent:      (lid: number) => `v3:lesson:${lid}:content`,
   vocabByLesson:      (lid: number) => `v1:vocab:lesson:${lid}`,
   vocabByLevel:       (lid: number) => `v1:vocab:level:${lid}`,
+  vocabAll:           () => "v1:vocab:all",
 } as const;
 
 // ─── In-process fallback cache ────────────────────────────────────────────────
