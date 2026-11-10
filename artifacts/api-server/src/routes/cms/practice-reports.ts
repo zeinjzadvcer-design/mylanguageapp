@@ -29,7 +29,7 @@ import {
   practiceSessionsTable,
   practiceBlocksTable,
 } from "@workspace/db";
-import { requireCMSAccess, requireReviewer } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
 import { audit } from "../../services/cms-audit";
 
 const router: IRouter = Router();
@@ -43,7 +43,7 @@ const router: IRouter = Router();
  * waiting three days, and because a report answered late is a student who
  * stopped using the feature.
  */
-router.get("/cms/practice/reports", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/practice/reports", requirePermission("practice_reports.manage"), async (req, res): Promise<void> => {
   const requested = (req.query.status as string) ?? "open";
   const status: "open" | "reviewed" | "actioned" | "all" =
     requested === "reviewed" || requested === "actioned" || requested === "all"
@@ -147,7 +147,7 @@ const reviewSchema = z.object({
 
 router.post(
   "/cms/practice/reports/:id/review",
-  requireReviewer,
+  requirePermission("practice_reports.manage"),
   async (req, res): Promise<void> => {
     const id = parseInt(req.params.id as string, 10);
     if (Number.isNaN(id)) {
@@ -200,7 +200,7 @@ router.post(
 /** Everything known about one student's practice history, for a hard decision. */
 router.get(
   "/cms/practice/students/:id",
-  requireCMSAccess,
+  requirePermission("practice_reports.manage"),
   async (req, res): Promise<void> => {
     const id = parseInt(req.params.id as string, 10);
     if (Number.isNaN(id)) {

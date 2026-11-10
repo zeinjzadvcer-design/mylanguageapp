@@ -26,7 +26,7 @@ import {
   usersTable,
   mediaAssetsTable,
 } from "@workspace/db";
-import { requireCMSAccess, requireReviewer } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
 import { finaliseQuizAttempt } from "../../services/grading-runner";
 import {
   sweepStalePending,
@@ -47,7 +47,7 @@ const router: IRouter = Router();
  * Oldest first because a student who submitted three days ago has been waiting
  * three days. Sorting by anything else buries them.
  */
-router.get("/cms/grading/queue", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/grading/queue", requirePermission("grading.manage"), async (req, res): Promise<void> => {
   const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) ?? "50", 10)));
   // By default show only what the sweeper has given up on — the rest may still
   // resolve by itself, and a queue full of work that will clear on its own is a
@@ -135,7 +135,7 @@ router.get("/cms/grading/queue", requireCMSAccess, async (req, res): Promise<voi
 });
 
 /** A playback URL for a recording in the queue. Staff may hear any student's. */
-router.get("/cms/grading/media/:mediaId", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/grading/media/:mediaId", requirePermission("grading.manage"), async (req, res): Promise<void> => {
   const mediaId = parseInt(req.params.mediaId as string, 10);
   if (isNaN(mediaId)) {
     res.status(400).json({ error: "Invalid media ID" });
@@ -172,7 +172,7 @@ const markSchema = z.object({
  */
 router.post(
   "/cms/grading/quiz-responses/:id",
-  requireReviewer,
+  requirePermission("grading.manage"),
   async (req, res): Promise<void> => {
     const id = parseInt(req.params.id as string, 10);
     if (isNaN(id)) {
@@ -246,7 +246,7 @@ router.post(
 /** Mark one lesson activity by hand. */
 router.post(
   "/cms/grading/activities/:id",
-  requireReviewer,
+  requirePermission("grading.manage"),
   async (req, res): Promise<void> => {
     const id = parseInt(req.params.id as string, 10);
     if (isNaN(id)) {
@@ -309,7 +309,7 @@ router.post(
  * administrator has just fixed the AI configuration and does not want to wait
  * to find out whether it worked.
  */
-router.post("/cms/grading/sweep", requireReviewer, async (req, res): Promise<void> => {
+router.post("/cms/grading/sweep", requirePermission("grading.manage"), async (req, res): Promise<void> => {
   const result = await sweepStalePending();
   logger.info({ by: req.session.userId, ...result }, "Grading sweep run on demand");
   res.json({ ...result, counts: await countPendingWork() });
@@ -322,7 +322,7 @@ router.post("/cms/grading/sweep", requireReviewer, async (req, res): Promise<voi
  * a provider swapped, a quota raised — and the work deserves another go rather
  * than a human's time.
  */
-router.post("/cms/grading/retry/:kind/:id", requireReviewer, async (req, res): Promise<void> => {
+router.post("/cms/grading/retry/:kind/:id", requirePermission("grading.manage"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   const kind = req.params.kind as string;
   if (isNaN(id) || !["quiz_response", "lesson_activity"].includes(kind)) {
@@ -346,7 +346,7 @@ router.post("/cms/grading/retry/:kind/:id", requireReviewer, async (req, res): P
 });
 
 /** Recently marked work, so a reviewer can see and correct what they did. */
-router.get("/cms/grading/recent", requireCMSAccess, async (_req, res): Promise<void> => {
+router.get("/cms/grading/recent", requirePermission("grading.manage"), async (_req, res): Promise<void> => {
   const rows = await db
     .select({
       id: quizResponsesTable.id,
