@@ -4,13 +4,13 @@ import {
   db, usersTable, studentSubscriptionsTable, lessonProgressTable, subscriptionPlansTable,
   lessonsTable, levelsTable, studentProfilesTable, placementResultsTable,
 } from "@workspace/db";
-import { requireAdmin } from "../middlewares/auth";
+import { requirePermission } from "../middlewares/auth";
 import { invalidate, invalidatePrefix, CK } from "../services/cache";
 import { setStudentLevel, getProgressionHistory } from "../services/progression";
 
 const router: IRouter = Router();
 
-router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {
+router.get("/admin/stats", requirePermission("students.manage"), async (req, res): Promise<void> => {
   const allUsers = await db.select().from(usersTable);
   const students = allUsers.filter((u) => u.role === "student");
 
@@ -52,7 +52,7 @@ router.get("/admin/stats", requireAdmin, async (req, res): Promise<void> => {
   });
 });
 
-router.get("/admin/students", requireAdmin, async (req, res): Promise<void> => {
+router.get("/admin/students", requirePermission("students.manage"), async (req, res): Promise<void> => {
   const page = Math.max(1, parseInt((req.query.page as string) ?? "1", 10));
   const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) ?? "20", 10)));
   const offset = (page - 1) * limit;
@@ -89,7 +89,7 @@ router.get("/admin/students", requireAdmin, async (req, res): Promise<void> => {
 });
 
 /** Signup counts per referral channel, for the admin dashboard. */
-router.get("/admin/referrals", requireAdmin, async (_req, res): Promise<void> => {
+router.get("/admin/referrals", requirePermission("students.manage"), async (_req, res): Promise<void> => {
   const rows = await db
     .select({
       source: usersTable.referralSource,
@@ -115,7 +115,7 @@ router.get("/admin/referrals", requireAdmin, async (_req, res): Promise<void> =>
  * mistake six months later, and this is the one endpoint that can move a
  * student without them having earned it.
  */
-router.post("/admin/students/:userId/level", requireAdmin, async (req, res): Promise<void> => {
+router.post("/admin/students/:userId/level", requirePermission("students.manage"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
   const studentId = parseInt(raw as string, 10);
   const { levelId, note } = req.body ?? {};
@@ -183,7 +183,7 @@ router.post("/admin/students/:userId/level", requireAdmin, async (req, res): Pro
  * The computed level is shown alongside the assigned one so an AI adjustment is
  * visible rather than silently baked in.
  */
-router.get("/admin/students/:userId/placement", requireAdmin, async (req, res): Promise<void> => {
+router.get("/admin/students/:userId/placement", requirePermission("students.manage"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
   const studentId = parseInt(raw as string, 10);
   if (isNaN(studentId)) {
@@ -249,7 +249,7 @@ router.get("/admin/students/:userId/placement", requireAdmin, async (req, res): 
 });
 
 /** Every level change this student has been through, newest first. */
-router.get("/admin/students/:userId/progression", requireAdmin, async (req, res): Promise<void> => {
+router.get("/admin/students/:userId/progression", requirePermission("students.manage"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
   const studentId = parseInt(raw as string, 10);
   if (isNaN(studentId)) {
@@ -258,7 +258,7 @@ router.get("/admin/students/:userId/progression", requireAdmin, async (req, res)
   res.json({ history: await getProgressionHistory(studentId) });
 });
 
-router.get("/admin/lessons", requireAdmin, async (req, res): Promise<void> => {
+router.get("/admin/lessons", requirePermission("content.publish"), async (req, res): Promise<void> => {
   const lessons = await db.select().from(lessonsTable);
   res.json(lessons.map((l) => ({
     id: l.id,
@@ -276,7 +276,7 @@ router.get("/admin/lessons", requireAdmin, async (req, res): Promise<void> => {
   })));
 });
 
-router.post("/admin/lessons", requireAdmin, async (req, res): Promise<void> => {
+router.post("/admin/lessons", requirePermission("content.publish"), async (req, res): Promise<void> => {
   const { levelId, title, titleAr, lessonType, estimatedMinutes, order, description, descriptionAr, isPublished, xpReward, passingScore } = req.body;
 
   if (!levelId || !title || !titleAr || !lessonType || !order) {
@@ -324,7 +324,7 @@ router.post("/admin/lessons", requireAdmin, async (req, res): Promise<void> => {
   });
 });
 
-router.patch("/admin/lessons/:lessonId", requireAdmin, async (req, res): Promise<void> => {
+router.patch("/admin/lessons/:lessonId", requirePermission("content.publish"), async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.lessonId) ? req.params.lessonId[0] : req.params.lessonId;
   const lessonId = parseInt(raw, 10);
   if (isNaN(lessonId)) { res.status(400).json({ error: "Invalid lesson ID" }); return; }
