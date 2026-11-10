@@ -514,6 +514,14 @@ router.post("/cms/lessons/:id/duplicate", requirePermission("content.edit"), asy
       audioNote: v.audioNote, difficulty: v.difficulty, tags: v.tags,
     });
   }
+  // The copies belong to the source's level too, so its cached list and the
+  // full list would otherwise miss them until they expire.
+  if (srcVocab.length > 0) {
+    await invalidate(CK.vocabAll());
+    for (const levelId of new Set(srcVocab.map((v) => v.levelId))) {
+      await invalidate(CK.vocabByLevel(levelId));
+    }
+  }
 
   await audit(req.session.userId!, "duplicate", "lesson", newLesson.id, null, "draft", { sourceId: srcId, title: newLesson.title });
   res.status(201).json({ id: newLesson.id, status: "draft", title: newLesson.title });

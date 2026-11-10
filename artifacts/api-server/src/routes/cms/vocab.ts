@@ -63,6 +63,7 @@ router.post("/cms/vocabulary", requirePermission("content.edit"), async (req, re
   await audit(req.session.userId!, "create", "vocabulary", item.id, null, null, { word });
   if (lessonId) await invalidate(CK.vocabByLesson(lessonId));
   await invalidate(CK.vocabByLevel(levelId));
+  await invalidate(CK.vocabAll());
   res.status(201).json(item);
 });
 
@@ -83,6 +84,7 @@ router.patch("/cms/vocabulary/:id", requirePermission("content.edit"), async (re
   await audit(req.session.userId!, "update", "vocabulary", id, null, null);
   if (existing.lessonId) await invalidate(CK.vocabByLesson(existing.lessonId));
   await invalidate(CK.vocabByLevel(existing.levelId));
+  await invalidate(CK.vocabAll());
   res.json(item);
 });
 
@@ -97,6 +99,7 @@ router.delete("/cms/vocabulary/:id", requirePermission("content.edit"), async (r
   await audit(req.session.userId!, "delete", "vocabulary", id, null, null, { word: item.word });
   if (item.lessonId) await invalidate(CK.vocabByLesson(item.lessonId));
   await invalidate(CK.vocabByLevel(item.levelId));
+  await invalidate(CK.vocabAll());
   res.json({ deleted: true });
 });
 
