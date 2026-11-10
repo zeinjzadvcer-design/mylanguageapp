@@ -19,11 +19,13 @@
  * A durable queue in Redis fixes the first and unblocks the second, which is
  * what makes "a deploy causes no gap in service" possible at all.
  *
- * ONE QUEUE, NOT FIVE
- * ───────────────────
- * All five job names share a queue and are dispatched by name. Five queues
- * would mean five workers, five sets of connections and five things to watch,
- * for work that is a handful of jobs per student per lesson.
+ * TWO QUEUES, NOT FIVE
+ * ────────────────────
+ * Jobs are dispatched by name, and all but one share a queue. Analysing a
+ * peer call is the exception: it transcribes up to fifteen minutes of audio and
+ * can hold a worker slot for minutes. Sharing one pool, a few evaluated calls
+ * left every student's recording in a lesson waiting behind them. Calls get a
+ * queue and a worker of their own, so lesson grading always has its slots.
  *
  * THE WORKER RUNS IN THIS PROCESS, FOR NOW
  * ────────────────────────────────────────
@@ -37,20 +39,32 @@
 import { Queue, Worker, type JobsOptions } from "bullmq";
 import Redis from "ioredis";
 import { logger } from "../lib/logger";
+import { envInt } from "../lib/env";
 import type { JobName, JobPayload, JobQueue } from "./jobs";
 
-/** One queue for every job name; the name is carried on the job itself. */
+/** Every job except call analysis; the name is carried on the job itself. */
 const QUEUE_NAME = "ascension-jobs";
 
+/** Peer-call analysis only. See "Two queues" above. */
+const CALLS_QUEUE_NAME = "ascension-calls";
+
 /**
- * How many jobs this process runs at once.
+ * How many lesson and quiz jobs this process runs at once.
  *
- * Deliberately small. A job is mostly *waiting* — on a speech recogniser, on a
- * model — but it holds a PostgreSQL connection while it waits, and
- * `DB_POOL_MAX` is 10 per process. Letting twenty jobs run at once would starve
- * the HTTP requests sharing that pool, which is the opposite of the point.
+ * A job is mostly *waiting* — on a speech recogniser, on a model. It takes a
+ * database connection only for each query and gives it back, so the limit
+ * here is not the pool: it is how many paid AI calls run at once, and the
+ * memory of the recordings being handled.
  */
-const CONCURRENCY = parseInt(process.env.JOB_CONCURRENCY ?? "4", 10);
+const CONCURRENCY = envInt("JOB_CONCURRENCY", 4);
+
+/** How many call analyses run at once, alongside the jobs above. */
+const CALL_CONCURRENCY = envInt("JOB_CALL_CONCURRENCY", 2);
+
+/** The queue a job runs on. */
+function queueFor(name: JobName): string {
+  return name === "analyse_peer_call" ? CALLS_QUEUE_NAME : QUEUE_NAME;
+}
 
 /**
  * Retries, and why not more of them.
@@ -62,7 +76,7 @@ const CONCURRENCY = parseInt(process.env.JOB_CONCURRENCY ?? "4", 10);
  * blip; anything worse is the sweeper's problem, and it escalates to the human
  * marking queue rather than spending money in a loop.
  */
-const ATTEMPTS = parseInt(process.env.JOB_ATTEMPTS ?? "2", 10);
+const ATTEMPTS = envInt("JOB_ATTEMPTS", 2);
 
 /**
  * BullMQ requires `maxRetriesPerRequest: null` — it blocks on Redis for long
@@ -91,29 +105,35 @@ export function createBullMQQueue(
   resolveHandler: (name: JobName) => ((payload: unknown) => Promise<void>) | undefined,
 ): BullMQQueueHandles {
   const producerConnection = createConnection(redisUrl);
-
-  const queue = new Queue(QUEUE_NAME, {
-    connection: producerConnection,
-    defaultJobOptions: {
-      attempts: ATTEMPTS,
-      backoff: { type: "exponential", delay: 2000 },
-      // Keep the queue from growing without bound. Enough history to see what
-      // happened recently; not an archive.
-      removeOnComplete: { count: 100 },
-      removeOnFail: { count: 500 },
-    },
-  });
-
-  queue.on("error", (err) => {
-    logger.error({ err }, "Job queue error");
-  });
-
   const workerEnabled = (process.env.JOB_WORKER ?? "on") !== "off";
-  let worker: Worker | null = null;
 
-  if (workerEnabled) {
-    worker = new Worker(
-      QUEUE_NAME,
+  const queues = new Map<string, Queue>();
+  const workers: Worker[] = [];
+
+  for (const [name, concurrency] of [
+    [QUEUE_NAME, CONCURRENCY],
+    [CALLS_QUEUE_NAME, CALL_CONCURRENCY],
+  ] as const) {
+    const queue = new Queue(name, {
+      connection: producerConnection,
+      defaultJobOptions: {
+        attempts: ATTEMPTS,
+        backoff: { type: "exponential", delay: 2000 },
+        // Keep the queue from growing without bound. Enough history to see what
+        // happened recently; not an archive.
+        removeOnComplete: { count: 100 },
+        removeOnFail: { count: 500 },
+      },
+    });
+    queue.on("error", (err) => {
+      logger.error({ err, queue: name }, "Job queue error");
+    });
+    queues.set(name, queue);
+
+    if (!workerEnabled) continue;
+
+    const worker = new Worker(
+      name,
       async (job) => {
         const handler = resolveHandler(job.name as JobName);
         if (!handler) {
@@ -124,29 +144,34 @@ export function createBullMQQueue(
         }
         await handler(job.data);
       },
-      { connection: createConnection(redisUrl), concurrency: CONCURRENCY },
+      { connection: createConnection(redisUrl), concurrency },
     );
 
     worker.on("completed", (job) => {
-      logger.info({ job: job.name, id: job.id }, "Job completed");
+      logger.info({ job: job.name, id: job.id, queue: name }, "Job completed");
     });
-
     worker.on("failed", (job, err) => {
       // `attemptsMade` against `attempts` is the useful part: a first failure
       // that will be retried reads very differently from a final one.
       logger.error(
-        { err, job: job?.name, id: job?.id, attempt: job?.attemptsMade, of: ATTEMPTS },
+        { err, job: job?.name, id: job?.id, queue: name, attempt: job?.attemptsMade, of: ATTEMPTS },
         "Job failed",
       );
     });
-
     worker.on("error", (err) => {
-      logger.error({ err }, "Job worker error");
+      logger.error({ err, queue: name }, "Job worker error");
     });
+    workers.push(worker);
   }
 
   logger.info(
-    { queue: QUEUE_NAME, worker: workerEnabled, concurrency: CONCURRENCY, attempts: ATTEMPTS },
+    {
+      queues: [...queues.keys()],
+      worker: workerEnabled,
+      concurrency: CONCURRENCY,
+      callConcurrency: CALL_CONCURRENCY,
+      attempts: ATTEMPTS,
+    },
     "BullMQ job backend started",
   );
 
@@ -163,19 +188,22 @@ export function createBullMQQueue(
       // handler must not wait on Redis to answer a student. A failure to
       // enqueue is logged and left to the grading sweeper, which is the same
       // recovery path a lost in-process job had.
-      void queue.add(name, payload, jobOptions).catch((err: unknown) => {
-        logger.error({ err, job: name, payload }, "Could not enqueue job");
-      });
+      void queues
+        .get(queueFor(name))!
+        .add(name, payload, jobOptions)
+        .catch((err: unknown) => {
+          logger.error({ err, job: name, payload }, "Could not enqueue job");
+        });
     },
   };
 
   return {
     queue: api,
     async close() {
-      // Worker first: it stops taking new jobs and waits for the ones it holds,
-      // so a deploy does not kill work mid-flight. Then the producer.
-      await worker?.close();
-      await queue.close();
+      // Workers first: they stop taking new jobs and wait for the ones they
+      // hold, so a deploy does not kill work mid-flight. Then the producers.
+      await Promise.all(workers.map((w) => w.close()));
+      await Promise.all([...queues.values()].map((q) => q.close()));
       await producerConnection.quit().catch(() => {});
     },
   };
