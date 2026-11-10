@@ -5,7 +5,7 @@
 import { Router, type IRouter } from "express";
 import { eq, asc } from "drizzle-orm";
 import { db, languagesTable, curriculaTable, levelsTable } from "@workspace/db";
-import { requireAdmin, requireContentManager, requireCMSAccess } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
 import { audit } from "../../services/cms-audit";
 import { invalidate, invalidatePrefix, CK } from "../../services/cache";
 
@@ -13,12 +13,12 @@ const router: IRouter = Router();
 
 // ─── Languages ─────────────────────────────────────────────────────────────
 
-router.get("/cms/languages", requireCMSAccess, async (_req, res): Promise<void> => {
+router.get("/cms/languages", requirePermission("content.view"), async (_req, res): Promise<void> => {
   const rows = await db.select().from(languagesTable).orderBy(asc(languagesTable.name));
   res.json(rows);
 });
 
-router.post("/cms/languages", requireAdmin, async (req, res): Promise<void> => {
+router.post("/cms/languages", requirePermission("catalog.manage"), async (req, res): Promise<void> => {
   const { code, name, nameNative, rtl, isActive } = req.body;
   if (!code || !name || !nameNative) {
     res.status(400).json({ error: "code, name, and nameNative are required" }); return;
@@ -31,7 +31,7 @@ router.post("/cms/languages", requireAdmin, async (req, res): Promise<void> => {
   res.status(201).json(lang);
 });
 
-router.patch("/cms/languages/:id", requireAdmin, async (req, res): Promise<void> => {
+router.patch("/cms/languages/:id", requirePermission("catalog.manage"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
   const allowed = ["name", "nameNative", "rtl", "isActive"];
@@ -46,12 +46,12 @@ router.patch("/cms/languages/:id", requireAdmin, async (req, res): Promise<void>
 
 // ─── Curricula ─────────────────────────────────────────────────────────────
 
-router.get("/cms/curricula", requireCMSAccess, async (_req, res): Promise<void> => {
+router.get("/cms/curricula", requirePermission("content.view"), async (_req, res): Promise<void> => {
   const rows = await db.select().from(curriculaTable).orderBy(asc(curriculaTable.id));
   res.json(rows);
 });
 
-router.post("/cms/curricula", requireAdmin, async (req, res): Promise<void> => {
+router.post("/cms/curricula", requirePermission("catalog.manage"), async (req, res): Promise<void> => {
   const { targetLanguageCode, learnerLanguageCode, name, nameInLearnerLanguage,
     levelFramework, description, descriptionInLearnerLanguage, isActive } = req.body;
   if (!targetLanguageCode || !learnerLanguageCode || !name || !nameInLearnerLanguage) {
@@ -68,7 +68,7 @@ router.post("/cms/curricula", requireAdmin, async (req, res): Promise<void> => {
   res.status(201).json(c);
 });
 
-router.patch("/cms/curricula/:id", requireAdmin, async (req, res): Promise<void> => {
+router.patch("/cms/curricula/:id", requirePermission("catalog.manage"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
   const allowed = ["name", "nameInLearnerLanguage", "levelFramework", "description",
@@ -84,7 +84,7 @@ router.patch("/cms/curricula/:id", requireAdmin, async (req, res): Promise<void>
 
 // ─── Levels ────────────────────────────────────────────────────────────────
 
-router.get("/cms/levels", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/levels", requirePermission("content.view"), async (req, res): Promise<void> => {
   const curriculumId = req.query.curriculumId ? parseInt(req.query.curriculumId as string, 10) : undefined;
   const rows = curriculumId && !isNaN(curriculumId)
     ? await db.select().from(levelsTable).where(eq(levelsTable.curriculumId, curriculumId)).orderBy(asc(levelsTable.order))
@@ -92,7 +92,7 @@ router.get("/cms/levels", requireCMSAccess, async (req, res): Promise<void> => {
   res.json(rows);
 });
 
-router.post("/cms/levels", requireAdmin, async (req, res): Promise<void> => {
+router.post("/cms/levels", requirePermission("catalog.manage"), async (req, res): Promise<void> => {
   const { curriculumId, code, name, nameAr, description, descriptionAr, order } = req.body;
   if (!curriculumId || !code || !name || !nameAr || order === undefined) {
     res.status(400).json({ error: "curriculumId, code, name, nameAr, order are required" }); return;
@@ -106,7 +106,7 @@ router.post("/cms/levels", requireAdmin, async (req, res): Promise<void> => {
   res.status(201).json(level);
 });
 
-router.patch("/cms/levels/:id", requireAdmin, async (req, res): Promise<void> => {
+router.patch("/cms/levels/:id", requirePermission("catalog.manage"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
   const allowed = [
@@ -132,7 +132,7 @@ router.patch("/cms/levels/:id", requireAdmin, async (req, res): Promise<void> =>
 });
 
 /** Reorder levels: body = { levelIds: number[] } */
-router.post("/cms/levels/reorder", requireAdmin, async (req, res): Promise<void> => {
+router.post("/cms/levels/reorder", requirePermission("catalog.manage"), async (req, res): Promise<void> => {
   const { levelIds } = req.body;
   if (!Array.isArray(levelIds)) { res.status(400).json({ error: "levelIds must be an array" }); return; }
   for (let i = 0; i < levelIds.length; i++) {

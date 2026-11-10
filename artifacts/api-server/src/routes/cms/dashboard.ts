@@ -8,11 +8,11 @@ import {
   db, pool,
   lessonsTable, levelsTable, curriculaTable, languagesTable, vocabularyTable,
 } from "@workspace/db";
-import { requireCMSAccess } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
 
 const router: IRouter = Router();
 
-router.get("/cms/stats", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/stats", requirePermission("content.view"), async (req, res): Promise<void> => {
   const [
     langCount, curriculaCount, levelCount,
     lessonStatusRows, recentLessons, vocabCount,
