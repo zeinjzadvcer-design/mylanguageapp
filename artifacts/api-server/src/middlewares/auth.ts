@@ -1,6 +1,7 @@
 import { type Request, type Response, type NextFunction } from "express";
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
+import { hasPermission, type Permission } from "../services/access-policy";
 import { isUnmeteredRole } from "../services/entitlement-policy";
 
 type Role = NonNullable<Request["session"]["role"]>;
@@ -46,8 +47,8 @@ export async function isUnmeteredCaller(req: Request): Promise<boolean> {
   return isUnmeteredRole((await currentRole(req)) ?? undefined);
 }
 
-/** Answer 401/403 unless the caller's current role is one of `allowed`. */
-function requireRole(allowed: readonly Role[], deniedMessage: string) {
+/** Answer 401/403 unless the caller's current role satisfies `allowed`. */
+function requireCaller(allowed: (role: Role) => boolean, deniedMessage: string) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (!req.session?.userId) {
       res.status(401).json({ error: "Authentication required" });
@@ -58,7 +59,7 @@ function requireRole(allowed: readonly Role[], deniedMessage: string) {
       res.status(401).json({ error: "Authentication required" });
       return;
     }
-    if (!allowed.includes(role)) {
+    if (!allowed(role)) {
       res.status(403).json({ error: deniedMessage });
       return;
     }
@@ -75,41 +76,24 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   next();
 }
 
-/** Admin only. */
-export const requireAdmin = requireRole(["admin"], "Admin access required");
-
 /**
- * Admin + content_manager.
- * Used for content creation and editing endpoints.
+ * Answer 401/403 unless the caller's current role grants one of `permissions`.
+ *
+ * What each role holds is defined in services/access-policy.ts. Routes ask for
+ * a permission rather than naming roles, so adding a role touches no route.
  */
-export const requireContentManager = requireRole(
-  ["admin", "content_manager"],
-  "Content manager access required",
-);
-
-/**
- * Admin + content_manager + content_reviewer.
- * Used for read-access to CMS content (listings, preview, audit log).
- */
-export const requireCMSAccess = requireRole(
-  ["admin", "content_manager", "content_reviewer"],
-  "CMS access required",
-);
-
-/**
- * Admin + content_reviewer.
- * Used for review decisions (approve/reject).
- */
-export const requireReviewer = requireRole(
-  ["admin", "content_reviewer"],
-  "Reviewer access required",
-);
+export function requirePermission(...permissions: Permission[]) {
+  return requireCaller(
+    (role) => permissions.some((permission) => hasPermission(role, permission)),
+    "You do not have permission to do this",
+  );
+}
 
 /**
  * Student only.
  *
- * Currently used by no route, and kept rather than deleted so the reasoning is
- * on record: it used to guard the learning endpoints, which meant an admin or
+ * Guards buying a plan, which staff have no use for. It used to guard the
+ * learning endpoints as well, which meant an admin or
  * content manager could not walk the student flow to check their own content —
  * the level page listed nothing and answering a question returned 403. Those
  * routes now use `requireAuth` and resolve the caller's own curriculum context,
@@ -120,4 +104,4 @@ export const requireReviewer = requireRole(
  * that must never apply to staff at all, rather than something staff have no
  * data for.
  */
-export const requireStudent = requireRole(["student"], "Student access required");
+export const requireStudent = requireCaller((role) => role === "student", "Student access required");
