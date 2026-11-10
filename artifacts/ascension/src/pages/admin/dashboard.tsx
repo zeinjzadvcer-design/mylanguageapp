@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Users, CreditCard, BookOpen, TrendingUp, ChevronLeft, ShieldAlert } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 
 /**
  * How many practice-call reports are waiting. Only the count is needed here;
@@ -21,9 +22,11 @@ async function fetchOpenReportCount(): Promise<number | null> {
 
 export default function AdminDashboard() {
   const { data: stats, isLoading, error } = useGetAdminStats();
+  const can = useCan();
   const { data: openReports } = useQuery({
     queryKey: ["admin-open-practice-reports"],
     queryFn: fetchOpenReportCount,
+    enabled: can("practice_reports.manage"),
   });
   const { t } = useI18n();
   const ad = t.admin;
@@ -110,12 +113,13 @@ export default function AdminDashboard() {
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
-        {[
-          { href: "/admin/students", title: ad.studentsTitle, body: ad.studentsBody },
-          { href: "/admin/lessons", title: ad.lessonsTitle, body: ad.lessonsBody },
-          { href: "/admin/payments", title: ad.paymentsTitle, body: ad.paymentsBody },
-          { href: "/admin/ai", title: ad.aiTitle, body: ad.aiBody },
-        ].map(({ href, title, body }) => (
+        {([
+          { href: "/admin/students", title: ad.studentsTitle, body: ad.studentsBody, permission: "students.manage" },
+          { href: "/admin/lessons", title: ad.lessonsTitle, body: ad.lessonsBody, permission: "content.publish" },
+          { href: "/admin/payments", title: ad.paymentsTitle, body: ad.paymentsBody, permission: "payments.review" },
+          { href: "/admin/ai", title: ad.aiTitle, body: ad.aiBody, permission: "settings.manage" },
+          { href: "/admin/staff", title: ad.staffTitle, body: ad.staffBody, permission: "staff.manage" },
+        ] as const).filter(({ permission }) => can(permission)).map(({ href, title, body }) => (
           <Card key={href} className="hover:border-primary/50 transition-colors">
             <Link href={href} className="block h-full">
               <CardHeader>
@@ -134,27 +138,29 @@ export default function AdminDashboard() {
         {/* Reports students file from a peer practice call. The queue lives in
             the CMS (Practice Reports); without this card an admin had no way
             to find it from here, or to know anything was waiting. */}
-        <Card className={`hover:border-primary/50 transition-colors ${openReports ? "border-rose-200" : ""}`}>
-          <Link href="/cms/practice-reports" className="block h-full">
-            <CardHeader>
-              <CardTitle className="flex justify-between items-center text-xl">
-                <span className="flex items-center gap-2">
-                  <ShieldAlert className="h-5 w-5 text-rose-500" />
-                  {ad.reportsTitle}
-                  {!!openReports && (
-                    <span className="rounded-full bg-rose-100 text-rose-700 text-sm px-2.5 py-0.5 tabular-nums">
-                      {openReports}
-                    </span>
-                  )}
-                </span>
-                <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:-scale-x-100" />
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground">{ad.reportsBody}</p>
-            </CardContent>
-          </Link>
-        </Card>
+        {can("practice_reports.manage") && (
+          <Card className={`hover:border-primary/50 transition-colors ${openReports ? "border-rose-200" : ""}`}>
+            <Link href="/cms/practice-reports" className="block h-full">
+              <CardHeader>
+                <CardTitle className="flex justify-between items-center text-xl">
+                  <span className="flex items-center gap-2">
+                    <ShieldAlert className="h-5 w-5 text-rose-500" />
+                    {ad.reportsTitle}
+                    {!!openReports && (
+                      <span className="rounded-full bg-rose-100 text-rose-700 text-sm px-2.5 py-0.5 tabular-nums">
+                        {openReports}
+                      </span>
+                    )}
+                  </span>
+                  <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:-scale-x-100" />
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground">{ad.reportsBody}</p>
+              </CardContent>
+            </Link>
+          </Card>
+        )}
       </div>
     </div>
   );

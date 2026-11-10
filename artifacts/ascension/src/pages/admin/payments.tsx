@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useI18n } from "@/lib/i18n";
+import { useCan } from "@/lib/permissions";
 import { formatAmount } from "@/lib/utils";
 import { uploadPaymentImage, MediaUploadError } from "@/lib/media-api";
 import {
@@ -64,6 +65,7 @@ type ApiErr = { status?: number; data?: { errorAr?: string; error?: string } };
 export default function AdminPayments() {
   const { toast } = useToast();
   const { t, lang, pick } = useI18n();
+  const can = useCan();
   const pa = t.payment.admin;
   const [status, setStatus] = useState<StatusFilter>("pending");
 
@@ -134,23 +136,29 @@ export default function AdminPayments() {
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-8">
       <div className="flex items-center gap-3">
-        <Link href="/admin">
-          <Button variant="ghost" size="icon" aria-label={t.common.back}>
-            {/* Points backwards in either reading direction. */}
-            <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
-          </Button>
-        </Link>
+        {can("students.manage") && (
+          <Link href="/admin">
+            <Button variant="ghost" size="icon" aria-label={t.common.back}>
+              {/* Points backwards in either reading direction. */}
+              <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
+            </Button>
+          </Link>
+        )}
         <div>
           <h1 className="text-2xl font-bold">{pa.title}</h1>
           <p className="text-muted-foreground text-sm">{pa.subtitle}</p>
         </div>
       </div>
 
-      <PricingSettings />
+      {can("payments.settings") && (
+        <>
+          <PricingSettings />
 
-      <WalletSettings />
+          <WalletSettings />
 
-      <CryptoSettings />
+          <CryptoSettings />
+        </>
+      )}
 
       <Card>
         <CardHeader>
@@ -688,6 +696,9 @@ function PricingSettings() {
 function WalletSettings() {
   const { toast } = useToast();
   const { t } = useI18n();
+  const can = useCan();
+  const canEdit = can("payments.wallet");
+  const canIssueToken = can("payments.sms_token");
   const pa = t.payment.admin;
   const { settings, save, saving } = useSaveSettings();
   const { upload, uploading } = useQrUpload();
@@ -731,56 +742,62 @@ function WalletSettings() {
           </div>
         )}
 
-        <div className="space-y-2">
-          <Label className="font-bold">{pa.receiveQr}</Label>
-          <div className="flex items-center gap-3">
-            <QrPicker
-              hasQr={hasQr}
-              uploading={uploading}
-              onFile={async (file) => {
-                const mediaId = await upload(file);
-                if (mediaId !== null) save({ walletQrMediaId: mediaId });
-              }}
+        {!canEdit && <p className="text-sm text-muted-foreground">{pa.adminOnly}</p>}
+
+        <fieldset disabled={!canEdit} className="min-w-0 space-y-5">
+          <div className="space-y-2">
+            <Label className="font-bold">{pa.receiveQr}</Label>
+            <div className="flex items-center gap-3">
+              {canEdit && (
+                <QrPicker
+                  hasQr={hasQr}
+                  uploading={uploading}
+                  onFile={async (file) => {
+                    const mediaId = await upload(file);
+                    if (mediaId !== null) save({ walletQrMediaId: mediaId });
+                  }}
+                />
+              )}
+              {hasQr && (
+                <span className="text-sm text-mint-foreground flex items-center gap-1">
+                  <CheckCircle2 className="h-4 w-4" /> {pa.uploaded}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>{pa.accountName}</Label>
+              <Input value={accountName} onChange={(e) => setAccountName(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>{pa.accountNumber}</Label>
+              <Input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} dir="ltr" />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>{pa.merchantPhone}</Label>
+            <Input
+              value={merchantPhone}
+              onChange={(e) => setMerchantPhone(e.target.value)}
+              dir="ltr"
+              placeholder="09xxxxxxxx"
             />
-            {hasQr && (
-              <span className="text-sm text-mint-foreground flex items-center gap-1">
-                <CheckCircle2 className="h-4 w-4" /> {pa.uploaded}
-              </span>
-            )}
+            <p className="text-xs text-muted-foreground">{pa.merchantPhoneHelp}</p>
           </div>
-        </div>
 
-        <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>{pa.accountName}</Label>
-            <Input value={accountName} onChange={(e) => setAccountName(e.target.value)} />
+            <Label>{pa.instructions}</Label>
+            <Textarea
+              rows={3}
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder={pa.instructionsPlaceholder}
+            />
           </div>
-          <div className="space-y-2">
-            <Label>{pa.accountNumber}</Label>
-            <Input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} dir="ltr" />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label>{pa.merchantPhone}</Label>
-          <Input
-            value={merchantPhone}
-            onChange={(e) => setMerchantPhone(e.target.value)}
-            dir="ltr"
-            placeholder="09xxxxxxxx"
-          />
-          <p className="text-xs text-muted-foreground">{pa.merchantPhoneHelp}</p>
-        </div>
-
-        <div className="space-y-2">
-          <Label>{pa.instructions}</Label>
-          <Textarea
-            rows={3}
-            value={instructions}
-            onChange={(e) => setInstructions(e.target.value)}
-            placeholder={pa.instructionsPlaceholder}
-          />
-        </div>
+        </fieldset>
 
         <div className="space-y-2 pt-4 border-t">
           <Label className="font-bold">{pa.companionTitle}</Label>
@@ -801,45 +818,49 @@ function WalletSettings() {
             </p>
           )}
 
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={rotateToken.isPending}
-            onClick={() =>
-              rotateToken.mutate(undefined, {
-                onSuccess: (res) => {
-                  setFreshToken(res?.token ?? null);
-                  void settings.refetch();
-                },
-                onError: () =>
-                  toast({ variant: "destructive", title: t.subscription.error, description: pa.tokenFailed }),
-              })
-            }
-          >
-            {rotateToken.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : settings.data?.hasIngestToken ? (
-              pa.tokenRotate
-            ) : (
-              pa.tokenCreate
-            )}
-          </Button>
+          {canIssueToken && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={rotateToken.isPending}
+              onClick={() =>
+                rotateToken.mutate(undefined, {
+                  onSuccess: (res) => {
+                    setFreshToken(res?.token ?? null);
+                    void settings.refetch();
+                  },
+                  onError: () =>
+                    toast({ variant: "destructive", title: t.subscription.error, description: pa.tokenFailed }),
+                })
+              }
+            >
+              {rotateToken.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : settings.data?.hasIngestToken ? (
+                pa.tokenRotate
+              ) : (
+                pa.tokenCreate
+              )}
+            </Button>
+          )}
         </div>
 
-        <Button
-          onClick={() =>
-            save({
-              walletAccountName: accountName.trim() || null,
-              walletAccountNumber: accountNumber.trim() || null,
-              walletInstructionsAr: instructions.trim() || null,
-              walletMerchantPhone: merchantPhone.trim() || null,
-            })
-          }
-          disabled={saving}
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : t.common.save}
-        </Button>
+        {canEdit && (
+          <Button
+            onClick={() =>
+              save({
+                walletAccountName: accountName.trim() || null,
+                walletAccountNumber: accountNumber.trim() || null,
+                walletInstructionsAr: instructions.trim() || null,
+                walletMerchantPhone: merchantPhone.trim() || null,
+              })
+            }
+            disabled={saving}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : t.common.save}
+          </Button>
+        )}
       </CardContent>
     </Card>
   );
@@ -859,6 +880,8 @@ function WalletSettings() {
  */
 function CryptoSettings() {
   const { t, lang } = useI18n();
+  const can = useCan();
+  const canEdit = can("payments.crypto");
   const pa = t.payment.admin;
   const { settings, save, saving } = useSaveSettings();
   const { upload, uploading } = useQrUpload();
@@ -889,6 +912,8 @@ function CryptoSettings() {
       <CardContent className="space-y-5">
         <p className="text-xs text-muted-foreground leading-relaxed">{pa.cryptoHelp}</p>
 
+        {!canEdit && <p className="text-sm text-muted-foreground">{pa.adminOnly}</p>}
+
         <div className="space-y-2">
           <Label className="font-bold">{pa.cryptoAddress}</Label>
           <div className="flex flex-wrap gap-2">
@@ -897,15 +922,18 @@ function CryptoSettings() {
               dir="ltr"
               placeholder="0x…"
               value={address}
+              readOnly={!canEdit}
               onChange={(e) => setAddress(e.target.value)}
             />
-            <Button
-              disabled={!addressDirty || saving || address.trim() === ""}
-              onClick={() => save({ cryptoWalletAddress: address.trim() })}
-            >
-              {t.common.save}
-            </Button>
-            {savedAddress && (
+            {canEdit && (
+              <Button
+                disabled={!addressDirty || saving || address.trim() === ""}
+                onClick={() => save({ cryptoWalletAddress: address.trim() })}
+              >
+                {t.common.save}
+              </Button>
+            )}
+            {canEdit && savedAddress && (
               <Button
                 variant="outline"
                 disabled={saving}
@@ -922,29 +950,31 @@ function CryptoSettings() {
         <div className="space-y-2">
           <Label className="font-bold">{pa.cryptoQr}</Label>
           <div className="flex flex-wrap items-center gap-3">
-            <QrPicker
-              hasQr={hasQr}
-              uploading={uploading}
-              onFile={async (file) => {
-                const mediaId = await upload(file);
-                if (mediaId !== null) save({ cryptoQrMediaId: mediaId });
-              }}
-            />
+            {canEdit && (
+              <QrPicker
+                hasQr={hasQr}
+                uploading={uploading}
+                onFile={async (file) => {
+                  const mediaId = await upload(file);
+                  if (mediaId !== null) save({ cryptoQrMediaId: mediaId });
+                }}
+              />
+            )}
             {hasQr && (
-              <>
-                <span className="text-sm text-mint-foreground flex items-center gap-1">
-                  <CheckCircle2 className="h-4 w-4" /> {pa.uploaded}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={saving}
-                  onClick={() => save({ cryptoQrMediaId: null })}
-                >
-                  <Trash2 className="h-4 w-4 me-2" />
-                  {pa.remove}
-                </Button>
-              </>
+              <span className="text-sm text-mint-foreground flex items-center gap-1">
+                <CheckCircle2 className="h-4 w-4" /> {pa.uploaded}
+              </span>
+            )}
+            {canEdit && hasQr && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={saving}
+                onClick={() => save({ cryptoQrMediaId: null })}
+              >
+                <Trash2 className="h-4 w-4 me-2" />
+                {pa.remove}
+              </Button>
             )}
           </div>
         </div>
