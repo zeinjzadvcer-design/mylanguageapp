@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import type { Request, Response } from "express";
-import { eq, and, isNull, lt, gt } from "drizzle-orm";
-import bcrypt from "bcryptjs";
+import { eq, and, isNull, lt, gt, sql } from "drizzle-orm";
+import { hashPassword, verifyPassword } from "../lib/password";
 import { randomBytes, createHash } from "node:crypto";
 import {
   db, usersTable, studentProfilesTable, passwordResetTokensTable,
@@ -13,6 +13,7 @@ import { validate, registerSchema, passwordSchema } from "../lib/validate";
 import { mailer } from "../services/mailer";
 import { destroyUserSessions } from "../services/session-store";
 import { rememberDevice } from "../lib/known-device";
+import { envInt } from "../lib/env";
 import { logger } from "../lib/logger";
 import { z } from "zod";
 
@@ -73,7 +74,7 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     return;
   }
 
-  const passwordHash = await bcrypt.hash(password, 10);
+  const passwordHash = await hashPassword(password);
   const [user] = await db.insert(usersTable).values({
     name,
     email: email.toLowerCase(),
@@ -118,7 +119,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
-  const valid = await bcrypt.compare(password, user.passwordHash);
+  const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) {
     res.status(401).json({ error: "Invalid email or password" });
     return;
@@ -159,7 +160,17 @@ const RESET_TTL_MS = 60 * 60 * 1000;
  * from as many addresses as they like. Within the cooldown the request is
  * answered exactly like any other, and the link already sent stays good.
  */
-const RESET_COOLDOWN_MS = parseInt(process.env.RESET_COOLDOWN_MS ?? "120000", 10);
+const RESET_COOLDOWN_MS = envInt("RESET_COOLDOWN_MS", 120_000);
+
+/**
+ * Reset emails one address may be sent in a day.
+ *
+ * The cooldown alone still allows one every two minutes — 720 a day to one
+ * inbox, and Resend's free tier is 100 a day for everyone. Past this the
+ * request is answered the same way and nothing is sent; the last link sent is
+ * still good.
+ */
+const RESET_DAILY_MAX = envInt("RESET_DAILY_MAX", 5);
 
 /** The token travels in the URL; only this hash is ever stored. */
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -198,6 +209,19 @@ router.post("/auth/forgot-password", async (req, res): Promise<void> => {
     ))
     .limit(1);
   if (recent) { res.json(ok); return; }
+
+  const [{ sentToday }] = await db
+    .select({ sentToday: sql<number>`count(*)::int` })
+    .from(passwordResetTokensTable)
+    .where(and(
+      eq(passwordResetTokensTable.userId, user.id),
+      gt(passwordResetTokensTable.createdAt, new Date(Date.now() - 24 * 3_600_000)),
+    ));
+  if (sentToday >= RESET_DAILY_MAX) {
+    logger.warn({ userId: user.id }, "Password reset not sent: daily limit for this address reached");
+    res.json(ok);
+    return;
+  }
 
   // Expire outstanding tokens: requesting a new link should retire the old one.
   await db
@@ -273,7 +297,7 @@ router.post("/auth/reset-password", async (req, res): Promise<void> => {
 
   if (!row || row.usedAt || row.expiresAt.getTime() < Date.now()) { invalid(); return; }
 
-  const passwordHash = await bcrypt.hash(body.password, 10);
+  const passwordHash = await hashPassword(body.password);
 
   await db.update(usersTable)
     .set({ passwordHash })

@@ -17,6 +17,7 @@ import router from "./routes";
 import docsRouter from "./routes/docs";
 import { logger } from "./lib/logger";
 import { clientAddressIsKnown, clientIp } from "./lib/client-ip";
+import { envInt } from "./lib/env";
 import { isKnownDevice } from "./lib/known-device";
 import { pool } from "@workspace/db";
 import { redis } from "./services/redis";
@@ -381,7 +382,7 @@ const authLimiter = rateLimit({
 // bucket of its own, so someone hammering the login cannot lock its owner out.
 const loginAccountLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "900000", 10),
-  limit: parseInt(process.env.RATE_LIMIT_LOGIN_ACCOUNT ?? "10", 10),
+  limit: envInt("RATE_LIMIT_LOGIN_ACCOUNT", 10),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   store: makeRedisStore("rl:login-acct:"),
@@ -401,7 +402,7 @@ const loginAccountLimiter = rateLimit({
 // what stops one inbox being flooded from many addresses.
 const forgotPasswordLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "900000", 10),
-  limit: parseInt(process.env.RATE_LIMIT_FORGOT ?? "5", 10),
+  limit: envInt("RATE_LIMIT_FORGOT", 5),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   store: makeRedisStore("rl:forgot:"),
@@ -416,7 +417,7 @@ const forgotPasswordLimiter = rateLimit({
 // unable to pay. Generous, because a classroom shares one address.
 const registerLimiter = rateLimit({
   windowMs: 3_600_000,
-  limit: parseInt(process.env.RATE_LIMIT_REGISTER ?? "20", 10),
+  limit: envInt("RATE_LIMIT_REGISTER", 20),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   store: makeRedisStore("rl:register:"),
