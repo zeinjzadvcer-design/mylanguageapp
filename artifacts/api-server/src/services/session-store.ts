@@ -135,16 +135,14 @@ class RedisSessionStore extends session.Store {
 
   set(sid: string, sess: SessionData, callback?: (err?: unknown) => void): void {
     const ttl = this.ttl(sess);
-    const tx = this.client.multi().set(PREFIX + sid, JSON.stringify(sess), "EX", ttl);
+    const batch = this.client.pipeline().set(PREFIX + sid, JSON.stringify(sess), "EX", ttl);
     // Index the session under its user, so a password reset can find and end
     // every one of them. Redis cannot otherwise answer "which sessions belong
     // to user 42" without scanning every key.
     if (sess.userId) {
-      tx.sadd(USER_PREFIX + sess.userId, sid).expire(USER_PREFIX + sess.userId, ttl);
+      batch.sadd(USER_PREFIX + sess.userId, sid).expire(USER_PREFIX + sess.userId, ttl);
     }
-    tx.exec()
-      .then(() => callback?.())
-      .catch((err) => callback?.(err));
+    settle(batch.exec(), callback);
   }
 
   /**
@@ -157,24 +155,44 @@ class RedisSessionStore extends session.Store {
    */
   touch(sid: string, sess: SessionData, callback?: (err?: unknown) => void): void {
     const ttl = this.ttl(sess);
-    // The user's index must live as long as their longest-lived session, or a
-    // session kept alive by `rolling` would outlast the entry that lets a
-    // password reset find it. Every session has the same maxAge, so the one
-    // touched last is the one that lives longest. Same round trip: pipelined.
-    const done = sess.userId
-      ? this.client
-          .multi()
-          .expire(PREFIX + sid, ttl)
-          .expire(USER_PREFIX + sess.userId, ttl)
-          .exec()
-      : this.client.expire(PREFIX + sid, ttl);
-    done.then(() => callback?.()).catch((err) => callback?.(err));
+    if (!sess.userId) {
+      this.client
+        .expire(PREFIX + sid, ttl)
+        .then(() => callback?.())
+        .catch((err) => callback?.(err));
+      return;
+    }
+    // Added to the user's index here too, not only in `set`: a session opened
+    // before the index existed is never `set` again (resave is off), so
+    // without this a password reset could not find it. SADD of a member that
+    // is already there is a no-op. The index lives as long as the user's
+    // longest-lived session, and the one touched last is that one.
+    //
+    // A pipeline, not MULTI: one round trip, and nothing here needs the
+    // commands applied as a unit. This runs on every signed-in request.
+    settle(
+      this.client
+        .pipeline()
+        .expire(PREFIX + sid, ttl)
+        .sadd(USER_PREFIX + sess.userId, sid)
+        .expire(USER_PREFIX + sess.userId, ttl)
+        .exec(),
+      callback,
+    );
   }
 
   destroy(sid: string, callback?: (err?: unknown) => void): void {
+    // Read first, to take the id out of its user's index as well. Logout and
+    // the new session at every sign-in both come through here, so without it
+    // the index of a student who signs in often would only ever grow.
     this.client
-      .del(PREFIX + sid)
-      .then(() => callback?.())
+      .get(PREFIX + sid)
+      .then((raw) => {
+        const userId = raw ? safeUserId(raw) : null;
+        const batch = this.client.pipeline().del(PREFIX + sid);
+        if (userId) batch.srem(USER_PREFIX + userId, sid);
+        settle(batch.exec(), callback);
+      })
       .catch((err) => callback?.(err));
   }
 
@@ -184,6 +202,36 @@ class RedisSessionStore extends session.Store {
     const sids = await this.client.smembers(key);
     // Ids whose session already expired are deleted harmlessly.
     await this.client.del(key, ...sids.map((sid) => PREFIX + sid));
+  }
+}
+
+/**
+ * Hand a batch's outcome to an express-session callback.
+ *
+ * A pipeline or MULTI resolves even when a command inside it failed; the
+ * failure is in the result list instead. Reading only whether the promise
+ * resolved reported a session that was never stored as saved, and the student
+ * was logged out on their next request with nothing logged.
+ */
+function settle(
+  done: Promise<[Error | null, unknown][] | null>,
+  callback?: (err?: unknown) => void,
+): void {
+  done
+    .then((results) => {
+      const failed = results?.find(([err]) => err)?.[0];
+      callback?.(failed ?? undefined);
+    })
+    .catch((err) => callback?.(err));
+}
+
+/** The user a stored session belongs to, or null when it cannot be read. */
+function safeUserId(raw: string): number | null {
+  try {
+    const userId = (JSON.parse(raw) as SessionData).userId;
+    return typeof userId === "number" ? userId : null;
+  } catch {
+    return null;
   }
 }
 
