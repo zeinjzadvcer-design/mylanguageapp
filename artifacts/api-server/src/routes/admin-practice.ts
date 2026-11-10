@@ -7,7 +7,7 @@
 
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { requireAdmin } from "../middlewares/auth";
+import { requirePermission } from "../middlewares/auth";
 import {
   countLiveCalls,
   getMaxConcurrentCalls,
@@ -17,7 +17,7 @@ import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
-router.get("/admin/practice/settings", requireAdmin, async (_req, res): Promise<void> => {
+router.get("/admin/practice/settings", requirePermission("settings.manage"), async (_req, res): Promise<void> => {
   const [maxConcurrentCalls, liveCalls] = await Promise.all([
     getMaxConcurrentCalls(),
     countLiveCalls(),
@@ -30,7 +30,7 @@ const settingsSchema = z.object({
   maxConcurrentCalls: z.number().int().min(1).max(100_000).nullable(),
 });
 
-router.patch("/admin/practice/settings", requireAdmin, async (req, res): Promise<void> => {
+router.patch("/admin/practice/settings", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const parsed = settingsSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.errors });

@@ -22,7 +22,7 @@ import {
   AI_TASKS,
   type AITask,
 } from "@workspace/db";
-import { requireAdmin } from "../middlewares/auth";
+import { requirePermission } from "../middlewares/auth";
 import {
   getAdminConfig,
   getUsageSummary,
@@ -96,11 +96,11 @@ async function loadProviderWithKey(id: number): Promise<LoadedProvider> {
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
-router.get("/admin/ai/config", requireAdmin, async (_req, res): Promise<void> => {
+router.get("/admin/ai/config", requirePermission("settings.manage"), async (_req, res): Promise<void> => {
   res.json(await getAdminConfig());
 });
 
-router.get("/admin/ai/usage", requireAdmin, async (req, res): Promise<void> => {
+router.get("/admin/ai/usage", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const days = Math.min(365, Math.max(1, parseInt((req.query.days as string) ?? "30", 10)));
   // Three views of the same window: what each task costs, what the whole
   // product costs, and which students cost the most. The last is what says
@@ -120,7 +120,7 @@ const settingsSchema = z.object({
   monthlyBudgetUsd: z.number().min(0).nullable().optional(),
 });
 
-router.patch("/admin/ai/settings", requireAdmin, async (req, res): Promise<void> => {
+router.patch("/admin/ai/settings", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const parsed = settingsSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.errors });
@@ -191,7 +191,7 @@ async function activate(
     .where(eq(aiProvidersTable.id, id));
 }
 
-router.post("/admin/ai/providers", requireAdmin, async (req, res): Promise<void> => {
+router.post("/admin/ai/providers", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const parsed = providerCreateSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.errors });
@@ -247,7 +247,7 @@ router.post("/admin/ai/providers", requireAdmin, async (req, res): Promise<void>
   }
 });
 
-router.patch("/admin/ai/providers/:id", requireAdmin, async (req, res): Promise<void> => {
+router.patch("/admin/ai/providers/:id", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid provider ID" });
@@ -344,7 +344,7 @@ router.patch("/admin/ai/providers/:id", requireAdmin, async (req, res): Promise<
   }
 });
 
-router.delete("/admin/ai/providers/:id", requireAdmin, async (req, res): Promise<void> => {
+router.delete("/admin/ai/providers/:id", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid provider ID" });
@@ -383,7 +383,7 @@ router.delete("/admin/ai/providers/:id", requireAdmin, async (req, res): Promise
 });
 
 /** What this endpoint offers — so the panel shows a list, not a text box. */
-router.get("/admin/ai/providers/:id/models", requireAdmin, async (req, res): Promise<void> => {
+router.get("/admin/ai/providers/:id/models", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid provider ID" });
@@ -403,7 +403,7 @@ router.get("/admin/ai/providers/:id/models", requireAdmin, async (req, res): Pro
 });
 
 /** One tiny real call, so a wrong key is found here and not mid-lesson. */
-router.post("/admin/ai/providers/:id/test", requireAdmin, async (req, res): Promise<void> => {
+router.post("/admin/ai/providers/:id/test", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   const modelId = req.body?.modelId;
 
@@ -440,7 +440,7 @@ const taskSchema = z.object({
   systemPrompt: z.string().max(MAX_TASK_PROMPT_CHARS).nullable().optional(),
 });
 
-router.patch("/admin/ai/tasks/:task", requireAdmin, async (req, res): Promise<void> => {
+router.patch("/admin/ai/tasks/:task", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const task = req.params.task as string;
   if (!isTask(task)) {
     res.status(400).json({ error: `Unknown task. Expected one of: ${AI_TASKS.join(", ")}` });
@@ -522,7 +522,7 @@ const policySchema = z.object({
   dailyLimit: z.number().int().min(-1),
 });
 
-router.put("/admin/ai/policies", requireAdmin, async (req, res): Promise<void> => {
+router.put("/admin/ai/policies", requirePermission("settings.manage"), async (req, res): Promise<void> => {
   const parsed = policySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Validation failed", details: parsed.error.errors });
