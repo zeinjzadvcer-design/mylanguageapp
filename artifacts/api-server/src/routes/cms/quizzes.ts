@@ -12,7 +12,8 @@
 import { Router, type IRouter } from "express";
 import { eq, and, asc, desc, isNull, sql } from "drizzle-orm";
 import { db, quizzesTable, contentBlocksTable } from "@workspace/db";
-import { requireContentManager, requireCMSAccess, requireAdmin } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
+import { hasPermission } from "../../services/access-policy";
 import { audit } from "../../services/cms-audit";
 
 const router: IRouter = Router();
@@ -96,7 +97,7 @@ async function loadEditableQuiz(
     .limit(1);
 
   if (!quiz) return { error: "Quiz not found", status: 404 };
-  if (role !== "admin" && LOCKED_STATUSES.includes(quiz.status)) {
+  if (!hasPermission(role, "content.publish") && LOCKED_STATUSES.includes(quiz.status)) {
     return {
       error: `Cannot edit a ${quiz.status} quiz. Unpublish it first or contact an admin.`,
       status: 403,
@@ -108,7 +109,7 @@ async function loadEditableQuiz(
 // ─── Quiz CRUD ───────────────────────────────────────────────────────────────
 
 /** List quizzes, newest first. Supports ?status= and ?search=. */
-router.get("/cms/quizzes", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/quizzes", requirePermission("content.view"), async (req, res): Promise<void> => {
   const page = Math.max(1, parseInt((req.query.page as string) ?? "1", 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) ?? "20", 10) || 20));
   const status = req.query.status as string | undefined;
@@ -145,7 +146,7 @@ router.get("/cms/quizzes", requireCMSAccess, async (req, res): Promise<void> => 
 });
 
 /** Full quiz with its ordered timeline. */
-router.get("/cms/quizzes/:id", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/quizzes/:id", requirePermission("content.view"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid quiz ID" }); return; }
 
@@ -188,7 +189,7 @@ function validateEvaluationShape(
 }
 
 /** Create a quiz. Starts in draft with an empty timeline. */
-router.post("/cms/quizzes", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/quizzes", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const {
     title, titleAr, description, descriptionAr, instructions, instructionsAr,
     levelId, timeLimitSec, maxAttempts, passingScore, xpReward,
@@ -237,7 +238,7 @@ router.post("/cms/quizzes", requireContentManager, async (req, res): Promise<voi
 });
 
 /** Update quiz settings. */
-router.patch("/cms/quizzes/:id", requireContentManager, async (req, res): Promise<void> => {
+router.patch("/cms/quizzes/:id", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid quiz ID" }); return; }
 
@@ -289,7 +290,7 @@ router.patch("/cms/quizzes/:id", requireContentManager, async (req, res): Promis
 });
 
 /** Soft-delete. */
-router.delete("/cms/quizzes/:id", requireContentManager, async (req, res): Promise<void> => {
+router.delete("/cms/quizzes/:id", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid quiz ID" }); return; }
 
@@ -306,12 +307,12 @@ router.delete("/cms/quizzes/:id", requireContentManager, async (req, res): Promi
 // ─── Timeline blocks ─────────────────────────────────────────────────────────
 
 /** The block palette the timeline editor offers. */
-router.get("/cms/quiz-block-types", requireCMSAccess, (_req, res): void => {
+router.get("/cms/quiz-block-types", requirePermission("content.view"), (_req, res): void => {
   res.json({ types: QUIZ_BLOCK_TYPES });
 });
 
 /** Append a block to the timeline. Order defaults to the end. */
-router.post("/cms/quizzes/:id/blocks", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/quizzes/:id/blocks", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid quiz ID" }); return; }
 
@@ -368,7 +369,7 @@ router.post("/cms/quizzes/:id/blocks", requireContentManager, async (req, res): 
 });
 
 /** Update one block. */
-router.patch("/cms/quizzes/:id/blocks/:blockId", requireContentManager, async (req, res): Promise<void> => {
+router.patch("/cms/quizzes/:id/blocks/:blockId", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   const blockId = parseInt(req.params.blockId as string, 10);
   if (isNaN(id) || isNaN(blockId)) { res.status(400).json({ error: "Invalid ID" }); return; }
@@ -411,7 +412,7 @@ router.patch("/cms/quizzes/:id/blocks/:blockId", requireContentManager, async (r
 });
 
 /** Remove a block from the timeline. */
-router.delete("/cms/quizzes/:id/blocks/:blockId", requireContentManager, async (req, res): Promise<void> => {
+router.delete("/cms/quizzes/:id/blocks/:blockId", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   const blockId = parseInt(req.params.blockId as string, 10);
   if (isNaN(id) || isNaN(blockId)) { res.status(400).json({ error: "Invalid ID" }); return; }
@@ -434,7 +435,7 @@ router.delete("/cms/quizzes/:id/blocks/:blockId", requireContentManager, async (
  * list of this quiz's blocks. Rejects a partial list so a dropped id can never
  * silently strand a block at a stale position.
  */
-router.post("/cms/quizzes/:id/blocks/reorder", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/quizzes/:id/blocks/reorder", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid quiz ID" }); return; }
 
@@ -485,7 +486,7 @@ async function blockCount(quizId: number): Promise<number> {
 function transition(
   path: string,
   next: string,
-  guard: typeof requireContentManager,
+  guard: ReturnType<typeof requirePermission>,
   allowedFrom: string[],
 ) {
   router.post(`/cms/quizzes/:id/${path}`, guard, async (req, res): Promise<void> => {
@@ -528,12 +529,12 @@ function transition(
   });
 }
 
-transition("submit", "in_review", requireContentManager, ["draft"]);
-transition("approve", "approved", requireAdmin, ["in_review"]);
-transition("reject", "draft", requireAdmin, ["in_review"]);
-transition("publish", "published", requireAdmin, ["approved", "draft"]);
-transition("unpublish", "draft", requireAdmin, ["published"]);
-transition("archive", "archived", requireAdmin, ["published", "draft", "approved"]);
-transition("restore", "draft", requireAdmin, ["archived"]);
+transition("submit", "in_review", requirePermission("content.edit"), ["draft"]);
+transition("approve", "approved", requirePermission("content.review"), ["in_review"]);
+transition("reject", "draft", requirePermission("content.review"), ["in_review"]);
+transition("publish", "published", requirePermission("content.publish"), ["approved", "draft"]);
+transition("unpublish", "draft", requirePermission("content.publish"), ["published"]);
+transition("archive", "archived", requirePermission("content.publish"), ["published", "draft", "approved"]);
+transition("restore", "draft", requirePermission("content.publish"), ["archived"]);
 
 export default router;

@@ -4,14 +4,14 @@
 
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
-import { requireAdmin, requireCMSAccess } from "../../middlewares/auth";
+import { requirePermission } from "../../middlewares/auth";
 
 const router: IRouter = Router();
 
 // ─── Review queue ──────────────────────────────────────────────────────────
 
 /** Lessons currently in_review — for the review queue page */
-router.get("/cms/reviews", requireCMSAccess, async (_req, res): Promise<void> => {
+router.get("/cms/reviews", requirePermission("content.view"), async (_req, res): Promise<void> => {
   const rows = await pool.query<{
     id: number; title: string; title_ar: string; status: string;
     level_code: string; updated_at: Date;
@@ -47,7 +47,7 @@ router.get("/cms/reviews", requireCMSAccess, async (_req, res): Promise<void> =>
 });
 
 /** All review records for a lesson */
-router.get("/cms/reviews/lesson/:lessonId", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/reviews/lesson/:lessonId", requirePermission("content.view"), async (req, res): Promise<void> => {
   const lessonId = parseInt(req.params.lessonId as string, 10);
   if (isNaN(lessonId)) { res.status(400).json({ error: "Invalid lesson ID" }); return; }
 
@@ -63,7 +63,7 @@ router.get("/cms/reviews/lesson/:lessonId", requireCMSAccess, async (req, res): 
 
 // ─── Audit log ─────────────────────────────────────────────────────────────
 
-router.get("/cms/audit", requireCMSAccess, async (req, res): Promise<void> => {
+router.get("/cms/audit", requirePermission("content.view"), async (req, res): Promise<void> => {
   const page = Math.max(1, parseInt((req.query.page as string) ?? "1", 10));
   const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) ?? "50", 10)));
   const offset = (page - 1) * limit;
