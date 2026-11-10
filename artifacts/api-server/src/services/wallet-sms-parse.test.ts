@@ -1,8 +1,37 @@
 import { describe, it, expect } from "vitest";
 import {
+  ingestTokenDigest,
+  ingestTokenMatches,
   isTrustedServiceCenter,
   parseAllowedServiceCenters,
 } from "./wallet-sms-policy";
+
+describe("companion app token", () => {
+  it("stores a digest, not the token", () => {
+    const stored = ingestTokenDigest("secret-token");
+    expect(stored).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(stored).not.toContain("secret-token");
+  });
+
+  it("matches the token it was made from", () => {
+    expect(ingestTokenMatches("secret-token", ingestTokenDigest("secret-token"))).toBe(true);
+  });
+
+  it("refuses any other token", () => {
+    expect(ingestTokenMatches("guess", ingestTokenDigest("secret-token"))).toBe(false);
+    expect(ingestTokenMatches("", ingestTokenDigest("secret-token"))).toBe(false);
+  });
+
+  it("still accepts a token stored before hashing, so the phone keeps working", () => {
+    expect(ingestTokenMatches("old-plain-token", "old-plain-token")).toBe(true);
+    expect(ingestTokenMatches("guess", "old-plain-token")).toBe(false);
+  });
+
+  it("does not accept the stored digest itself as a token", () => {
+    const stored = ingestTokenDigest("secret-token");
+    expect(ingestTokenMatches(stored, stored)).toBe(false);
+  });
+});
 
 describe("SMS centre check", () => {
   const allowed = parseAllowedServiceCenters("+963 933 000001, 963933000002");

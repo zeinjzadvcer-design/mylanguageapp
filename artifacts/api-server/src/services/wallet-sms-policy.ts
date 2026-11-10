@@ -8,6 +8,9 @@
  * DATABASE_URL to check a regex.
  */
 
+import { createHash, timingSafeEqual } from "node:crypto";
+import { envInt } from "../lib/env";
+
 /**
  * How long a student has to submit after the SMS arrived.
  *
@@ -84,10 +87,31 @@ export function isTrustedServiceCenter(
  * looking. Forged or not, a burst past this waits for an admin: a limit on how
  * much a fake confirmation can buy before someone notices.
  */
-export const SMS_ACTIVATIONS_PER_HOUR = parseInt(
-  process.env.WALLET_SMS_AUTO_MAX_PER_HOUR ?? "30",
-  10,
-);
+export const SMS_ACTIVATIONS_PER_HOUR = envInt("WALLET_SMS_AUTO_MAX_PER_HOUR", 30);
+
+/**
+ * How the companion app's token is stored: its SHA-256, never the token.
+ *
+ * Anything holding the token can activate subscriptions, so a database read —
+ * a leaked backup, a diagnostic script — must not hand it over. The token is
+ * shown once when generated and never needs reading back.
+ */
+export function ingestTokenDigest(token: string): string {
+  return `sha256:${createHash("sha256").update(token, "utf8").digest("hex")}`;
+}
+
+/**
+ * Whether a presented token matches what is stored.
+ *
+ * Compares fixed-length digests, so neither length nor position leaks through
+ * timing. A value stored before tokens were hashed is still accepted, so the
+ * phone keeps working until an admin next generates a token.
+ */
+export function ingestTokenMatches(presented: string, stored: string): boolean {
+  const digest = (s: string) => createHash("sha256").update(s, "utf8").digest();
+  const expected = stored.startsWith("sha256:") ? stored : ingestTokenDigest(stored);
+  return timingSafeEqual(digest(ingestTokenDigest(presented)), digest(expected));
+}
 
 export interface ParsedSms {
   operationNumber: string | null;
