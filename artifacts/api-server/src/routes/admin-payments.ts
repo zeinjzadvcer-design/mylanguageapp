@@ -1,7 +1,7 @@
 /**
  * Admin payment review.
  *
- * The queue an admin works through to turn a claimed payment into an active
+ * The queue payments staff work through to turn a claimed payment into an active
  * subscription. ShamCash submissions always land here — a human reads the
  * receipt. Crypto submissions land here only when the on-chain check could not
  * decide: the right amount at the right address activates without anyone
@@ -24,7 +24,8 @@ import {
   mediaAssetsTable,
   usersTable,
 } from "@workspace/db";
-import { requireAdmin } from "../middlewares/auth";
+import { requirePermission } from "../middlewares/auth";
+import { canChangePaymentSetting, hasPermission } from "../services/access-policy";
 import {
   activateSubscription,
   rejectSubmission,
@@ -48,7 +49,7 @@ const STATUSES = ["pending", "verifying", "approved", "rejected"] as const;
  * has been waiting longest should be served first. The student's own list is
  * newest-first, which is the opposite and deliberate.
  */
-router.get("/admin/payment-submissions", requireAdmin, async (req, res): Promise<void> => {
+router.get("/admin/payment-submissions", requirePermission("payments.review"), async (req, res): Promise<void> => {
   const statusParam = typeof req.query.status === "string" ? req.query.status : "pending";
   const status = (STATUSES as readonly string[]).includes(statusParam)
     ? (statusParam as (typeof STATUSES)[number])
@@ -135,7 +136,7 @@ router.get("/admin/payment-submissions", requireAdmin, async (req, res): Promise
  */
 router.get(
   "/admin/payment-submissions/count",
-  requireAdmin,
+  requirePermission("payments.review"),
   async (_req, res): Promise<void> => {
     // Both statuses, because both are a payment nobody has resolved. A
     // submission stuck in `verifying` — its SMS never arrived, or the student
@@ -159,7 +160,7 @@ const reviewSchema = z.object({
 /** POST /admin/payment-submissions/:id/approve */
 router.post(
   "/admin/payment-submissions/:id/approve",
-  requireAdmin,
+  requirePermission("payments.review"),
   async (req, res): Promise<void> => {
     const submissionId = parseInt(String(req.params.id), 10);
     if (isNaN(submissionId)) {
@@ -170,6 +171,24 @@ router.post(
     const parsed = reviewSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid review note" });
+      return;
+    }
+
+    // Otherwise staff could grant themselves a plan with an invented receipt.
+    const [submission] = await db
+      .select({ userId: paymentSubmissionsTable.userId })
+      .from(paymentSubmissionsTable)
+      .where(eq(paymentSubmissionsTable.id, submissionId))
+      .limit(1);
+    if (
+      submission?.userId === req.session.userId &&
+      !hasPermission(req.session.role, "payments.approve_own")
+    ) {
+      res.status(403).json({
+        error: "You cannot approve a payment from your own account.",
+        errorAr: "لا يمكنك الموافقة على دفعة من حسابك الشخصي.",
+        code: "SELF_APPROVAL",
+      });
       return;
     }
 
@@ -216,7 +235,7 @@ const rejectSchema = z.object({
 /** POST /admin/payment-submissions/:id/reject */
 router.post(
   "/admin/payment-submissions/:id/reject",
-  requireAdmin,
+  requirePermission("payments.review"),
   async (req, res): Promise<void> => {
     const submissionId = parseInt(String(req.params.id), 10);
     if (isNaN(submissionId)) {
@@ -341,7 +360,7 @@ async function isPaymentQr(mediaId: number): Promise<boolean> {
 }
 
 /** GET /admin/payment-settings — what students are currently shown. */
-router.get("/admin/payment-settings", requireAdmin, async (_req, res): Promise<void> => {
+router.get("/admin/payment-settings", requirePermission("payments.settings"), async (_req, res): Promise<void> => {
   res.json(await settingsResponse(await readSettings()));
 });
 
@@ -352,13 +371,24 @@ router.get("/admin/payment-settings", requireAdmin, async (_req, res): Promise<v
  * account number, and a typo in one field must not blank the others. Only the
  * keys actually sent are written.
  */
-router.patch("/admin/payment-settings", requireAdmin, async (req, res): Promise<void> => {
+router.patch("/admin/payment-settings", requirePermission("payments.settings"), async (req, res): Promise<void> => {
   const parsed = settingsSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid payment settings" });
     return;
   }
   const patch = parsed.data;
+
+  // Pricing and receiving accounts share this endpoint but not their owners.
+  // Refused whole rather than saving the fields that were allowed.
+  if (!Object.keys(patch).every((field) => canChangePaymentSetting(req.session.role, field))) {
+    res.status(403).json({
+      error: "Only an administrator can change these payment details.",
+      errorAr: "يمكن للمدير فقط تعديل بيانات الدفع هذه.",
+      code: "PAYMENT_SETTING_FORBIDDEN",
+    });
+    return;
+  }
 
   for (const id of [patch.walletQrMediaId, patch.cryptoQrMediaId]) {
     if (id != null && !(await isPaymentQr(id))) {
@@ -473,7 +503,7 @@ router.patch("/admin/payment-settings", requireAdmin, async (req, res): Promise<
  */
 router.post(
   "/admin/payment-settings/syp-rate/refresh",
-  requireAdmin,
+  requirePermission("payments.settings"),
   async (_req, res): Promise<void> => {
     if (!sptodayConfigured()) {
       res.status(503).json({ error: "SPTODAY_API_KEY is not configured" });
@@ -505,7 +535,7 @@ const planPriceSchema = z.object({
  */
 router.patch(
   "/admin/subscription-plans/:code/price",
-  requireAdmin,
+  requirePermission("payments.settings"),
   async (req, res): Promise<void> => {
     const code = String(req.params.code);
 
@@ -568,7 +598,7 @@ router.patch(
  */
 router.post(
   "/admin/payment-settings/ingest-token",
-  requireAdmin,
+  requirePermission("payments.sms_token"),
   async (req, res): Promise<void> => {
     // 32 bytes of CSPRNG. Not a uuid: this is a credential, and a uuid's
     // structure is partly predictable.

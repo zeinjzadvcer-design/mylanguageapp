@@ -7,13 +7,7 @@
  */
 
 import { Router, type IRouter } from "express";
-import {
-  requireAuth,
-  requireContentManager,
-  requireAdmin,
-  currentRole,
-  isUnmeteredCaller,
-} from "../middlewares/auth";
+import { requirePermission, requireAuth, currentRole, isUnmeteredCaller } from "../middlewares/auth";
 import {
   beginUpload,
   completeUpload,
@@ -189,7 +183,7 @@ router.get("/media/:mediaId/url", requireAuth, async (req, res): Promise<void> =
  * ownership rule all differ: what staff upload has no owner and is playable by
  * every student in the level.
  */
-router.post("/cms/media/uploads", requireContentManager, async (req, res): Promise<void> => {
+router.post("/cms/media/uploads", requirePermission("content.edit"), async (req, res): Promise<void> => {
   const { contentType, sizeBytes, originalName, durationSec } = req.body ?? {};
 
   if (typeof contentType !== "string") {
@@ -215,12 +209,14 @@ router.post("/cms/media/uploads", requireContentManager, async (req, res): Promi
 /**
  * The ShamCash receive QR.
  *
- * Admin-only and separate from both other upload paths, because the ownership
+ * For whoever may change a receiving account (payments.wallet or
+ * payments.crypto; administrators by default), and separate from both other
+ * upload paths, because the ownership
  * rule is unlike either: the QR has no owner, so every student can see it, and
  * a student must never be able to upload one — a QR students scan decides
  * where their money goes.
  */
-router.post("/admin/media/payment-qr", requireAdmin, async (req, res): Promise<void> => {
+router.post("/admin/media/payment-qr", requirePermission("payments.wallet", "payments.crypto"), async (req, res): Promise<void> => {
   const { contentType, sizeBytes, originalName } = req.body ?? {};
 
   if (typeof contentType !== "string") {
