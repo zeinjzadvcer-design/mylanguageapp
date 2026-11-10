@@ -32,6 +32,17 @@ export interface StudentCurriculumContext {
 
 // ─── Curriculum context ───────────────────────────────────────────────────────
 
+/** The curriculum a new student is enrolled in: the first active one by id. */
+export async function getDefaultCurriculumId(): Promise<number | null> {
+  const [curriculum] = await db
+    .select({ id: curriculaTable.id })
+    .from(curriculaTable)
+    .where(eq(curriculaTable.isActive, true))
+    .orderBy(curriculaTable.id)
+    .limit(1);
+  return curriculum?.id ?? null;
+}
+
 /**
  * Load the student's curriculum context (curriculum + current level).
  * Returns null if the student has no profile / no placement.
