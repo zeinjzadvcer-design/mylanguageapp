@@ -1,4 +1,30 @@
 import { describe, it, expect } from "vitest";
+import { rateChangeIsPlausible } from "./syp-rate-policy";
+
+describe("rateChangeIsPlausible", () => {
+  it("accepts any first rate", () => {
+    expect(rateChangeIsPlausible(null, 130)).toBe(true);
+  });
+
+  it("accepts an ordinary move", () => {
+    expect(rateChangeIsPlausible(130, 140)).toBe(true);
+    expect(rateChangeIsPlausible(130, 120)).toBe(true);
+  });
+
+  it("accepts up to halving and doubling", () => {
+    expect(rateChangeIsPlausible(130, 65)).toBe(true);
+    expect(rateChangeIsPlausible(130, 260)).toBe(true);
+  });
+
+  it("refuses a switch between old and new pounds", () => {
+    expect(rateChangeIsPlausible(130, 1.3)).toBe(false);
+    expect(rateChangeIsPlausible(1.3, 130)).toBe(false);
+  });
+
+  it("refuses a sudden collapse", () => {
+    expect(rateChangeIsPlausible(130, 13)).toBe(false);
+  });
+});
 import {
   parseSpTodayRate,
   rateInUnit,

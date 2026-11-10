@@ -57,6 +57,22 @@ export function parseSpTodayRate(body: unknown, city = "damascus"): ParsedRate |
   };
 }
 
+/**
+ * Whether a newly fetched rate is believable next to the last good one.
+ *
+ * Every plan's price follows this rate and payments activate against it with
+ * nobody looking, so a feed that suddenly reports a tenth of the real figure —
+ * or switches between old and new pounds, a factor of 100 — would sell every
+ * plan at a fraction of its price. A real move of more than half, or a
+ * doubling, between two fetches twelve hours apart is far less likely than a
+ * broken feed. With no previous rate there is nothing to compare against.
+ */
+export function rateChangeIsPlausible(previous: number | null, next: number): boolean {
+  if (previous === null || !Number.isFinite(previous) || previous <= 0) return true;
+  const ratio = next / previous;
+  return ratio >= 0.5 && ratio <= 2;
+}
+
 /** Express an old-pound rate in the unit prices are charged in. */
 export function rateInUnit(rateOld: number, unit: SypUnit): number {
   return unit === "new" ? rateOld / OLD_PER_NEW : rateOld;
