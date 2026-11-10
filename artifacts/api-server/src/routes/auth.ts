@@ -4,9 +4,11 @@ import { eq, and, isNull, lt, gt } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomBytes, createHash } from "node:crypto";
 import {
-  db, usersTable, studentProfilesTable, curriculaTable, passwordResetTokensTable,
+  db, usersTable, studentProfilesTable, passwordResetTokensTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
+import { permissionsOf, roleDefinition } from "../services/access-policy";
+import { getDefaultCurriculumId } from "../services/learning";
 import { validate, registerSchema, passwordSchema } from "../lib/validate";
 import { mailer } from "../services/mailer";
 import { destroyUserSessions } from "../services/session-store";
@@ -38,15 +40,26 @@ async function signIn(
   rememberDevice(res, user.email);
 }
 
-/** Look up the default curriculum (first active one by id) */
-async function getDefaultCurriculumId(): Promise<number | null> {
-  const [curriculum] = await db
-    .select({ id: curriculaTable.id })
-    .from(curriculaTable)
-    .where(eq(curriculaTable.isActive, true))
-    .orderBy(curriculaTable.id)
-    .limit(1);
-  return curriculum?.id ?? null;
+/**
+ * The signed-in user as the client sees them.
+ *
+ * Permissions rather than leaving the client to work them out from the role, so
+ * the frontend holds no copy of which role may do what.
+ */
+function authUser(user: typeof usersTable.$inferSelect) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    permissions: permissionsOf(user.role),
+    // A role this version no longer defines holds no permissions; it is shown
+    // the student app rather than sent back to the sign-in page with no reason.
+    usesStudentApp: roleDefinition(user.role)?.usesStudentApp ?? true,
+    preferredLanguage: user.preferredLanguage,
+    country: user.country,
+    createdAt: user.createdAt,
+  };
 }
 
 router.post("/auth/register", async (req, res): Promise<void> => {
@@ -87,15 +100,7 @@ router.post("/auth/register", async (req, res): Promise<void> => {
   await signIn(req, res, user);
 
   res.status(201).json({
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      preferredLanguage: user.preferredLanguage,
-      country: user.country,
-      createdAt: user.createdAt,
-    },
+    user: authUser(user),
   });
 });
 
@@ -122,15 +127,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   await signIn(req, res, user);
 
   res.json({
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      preferredLanguage: user.preferredLanguage,
-      country: user.country,
-      createdAt: user.createdAt,
-    },
+    user: authUser(user),
   });
 });
 
@@ -146,15 +143,7 @@ router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
     res.status(401).json({ error: "User not found" });
     return;
   }
-  res.json({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    preferredLanguage: user.preferredLanguage,
-    country: user.country,
-    createdAt: user.createdAt,
-  });
+  res.json(authUser(user));
 });
 
 // ─── Password reset ───────────────────────────────────────────────────────────
