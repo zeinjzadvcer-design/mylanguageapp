@@ -64,6 +64,20 @@ import {
   CALL_DENIAL_MESSAGES,
 } from "./entitlements";
 import { audit } from "./cms-audit";
+import {
+  cachedForCall,
+  callChanged,
+  forgetCall,
+  liveCallFor,
+  liveStateEnabled,
+  matchGate,
+  notePresence,
+  presenceOf,
+  pushSignal,
+  readStoredSignals,
+  rememberWaiting,
+} from "./practice-live";
+import { bothQuiet } from "./practice-live-policy";
 
 // ─── Server-enforced bounds ───────────────────────────────────────────────────
 
@@ -101,6 +115,24 @@ const CONNECT_TIMEOUT_MS = parseInt(process.env.PRACTICE_CONNECT_TIMEOUT_MS ?? "
 
 /** A session holding a place: ringing or connected. */
 const LIVE_STATUSES = ["waiting", "active"] as const;
+
+/**
+ * How often a waiting student's place in the queue is refreshed in Postgres.
+ *
+ * Every poll used to write it — once a second per waiting student. Matching
+ * treats a candidate as gone only after CANDIDATE_STALE_MS (20 s) without one,
+ * so a write every few seconds keeps everyone visible at a fraction of the cost.
+ */
+const QUEUE_PRESENCE_REFRESH_MS = 5_000;
+
+/**
+ * How often a waiting student searches for a partner from their side.
+ *
+ * Whoever joins the queue searches straight away, so a newcomer finds the people
+ * already waiting at once. Those already waiting only need to look again to
+ * notice someone freed up by a call ending.
+ */
+const MATCH_INTERVAL_MS = 3_000;
 
 /** Tag hygiene: enough to be useful, short enough not to be a message channel. */
 const MAX_TAGS = 10;
@@ -312,20 +344,29 @@ async function viewFor(
   const isCaller = session.requesterId === userId;
   const partnerId = isCaller ? session.partnerId : session.requesterId;
 
-  const [partner] = await db
-    .select({
-      userId: usersTable.id,
-      name: usersTable.name,
-      levelCode: levelsTable.code,
-      interests: practiceProfilesTable.interests,
-      professionalField: practiceProfilesTable.professionalField,
-    })
-    .from(usersTable)
-    .leftJoin(studentProfilesTable, eq(studentProfilesTable.userId, usersTable.id))
-    .leftJoin(levelsTable, eq(levelsTable.id, studentProfilesTable.currentLevelId))
-    .leftJoin(practiceProfilesTable, eq(practiceProfilesTable.userId, usersTable.id))
-    .where(eq(usersTable.id, partnerId))
-    .limit(1);
+  // Read once per call and side: a partner's name and level do not change while
+  // the two of them are talking, and this used to run on every poll. Only while
+  // the call is live: the screen shown as it ends would otherwise cache the card
+  // again just after the call's keys were cleared.
+  const live = (LIVE_STATUSES as readonly string[]).includes(session.status);
+  const readPartner = async () => {
+    const [row] = await db
+      .select({
+        userId: usersTable.id,
+        name: usersTable.name,
+        levelCode: levelsTable.code,
+        interests: practiceProfilesTable.interests,
+        professionalField: practiceProfilesTable.professionalField,
+      })
+      .from(usersTable)
+      .leftJoin(studentProfilesTable, eq(studentProfilesTable.userId, usersTable.id))
+      .leftJoin(levelsTable, eq(levelsTable.id, studentProfilesTable.currentLevelId))
+      .leftJoin(practiceProfilesTable, eq(practiceProfilesTable.userId, usersTable.id))
+      .where(eq(usersTable.id, partnerId))
+      .limit(1);
+    return row ?? null;
+  };
+  const partner = live ? await cachedForCall(session.id, userId, readPartner) : await readPartner();
 
   const secondsRemaining =
     session.status === "active" && session.startedAt
@@ -411,6 +452,8 @@ async function touchSessionPresence(
   session: PracticeSession,
   userId: number,
 ): Promise<void> {
+  if (await notePresence(session.id, userId)) return;
+
   const column =
     session.requesterId === userId ? "requesterSeenAt" : "partnerSeenAt";
 
@@ -451,6 +494,8 @@ async function closeSession(
   await db
     .delete(practiceSignalsTable)
     .where(eq(practiceSignalsTable.sessionId, session.id));
+  await forgetCall(session);
+  await callChanged(session.requesterId, session.partnerId);
 
   return updated ?? session;
 }
@@ -587,13 +632,20 @@ export async function closeAbandonedSessions(): Promise<number> {
         // KNOWN to be stale: a null means that side has not polled since the
         // column existed, so a call in flight when this shipped is left to the
         // `activeCutoff` rule above rather than closed on no evidence.
-        and(
-          eq(practiceSessionsTable.status, "active"),
-          isNotNull(practiceSessionsTable.requesterSeenAt),
-          isNotNull(practiceSessionsTable.partnerSeenAt),
-          lt(practiceSessionsTable.requesterSeenAt, presenceCutoff),
-          lt(practiceSessionsTable.partnerSeenAt, presenceCutoff),
-        ),
+        //
+        // Only where presence is written to these columns. With Valkey it is
+        // kept there instead (see quietActiveSessions), and these columns are
+        // left as the last poll before that — read here, they would end every
+        // call that was running when this deployed.
+        liveStateEnabled()
+          ? undefined
+          : and(
+              eq(practiceSessionsTable.status, "active"),
+              isNotNull(practiceSessionsTable.requesterSeenAt),
+              isNotNull(practiceSessionsTable.partnerSeenAt),
+              lt(practiceSessionsTable.requesterSeenAt, presenceCutoff),
+              lt(practiceSessionsTable.partnerSeenAt, presenceCutoff),
+            ),
         and(
           eq(practiceSessionsTable.status, "waiting"),
           lt(practiceSessionsTable.matchedAt, waitingCutoff),
@@ -602,7 +654,11 @@ export async function closeAbandonedSessions(): Promise<number> {
     )
     .limit(50);
 
-  for (const session of stale) {
+  // With presence in Valkey the columns above stay null, so the same test runs
+  // against Valkey here: both sides known, and both quiet past the cutoff.
+  const quiet = await quietActiveSessions(presenceCutoff, new Set(stale.map((s) => s.id)));
+
+  for (const session of [...stale, ...quiet]) {
     await closeSession(
       session,
       session.status === "waiting" ? "not_answered" : "timeout",
@@ -610,10 +666,48 @@ export async function closeAbandonedSessions(): Promise<number> {
     );
   }
 
-  if (stale.length > 0) {
-    logger.info({ count: stale.length }, "Closed abandoned practice calls");
+  const closed = stale.length + quiet.length;
+  if (closed > 0) {
+    logger.info({ count: closed }, "Closed abandoned practice calls");
   }
-  return stale.length;
+  return closed;
+}
+
+/** Active calls whose two sides have both stopped polling, by Valkey presence. */
+async function quietActiveSessions(
+  cutoff: Date,
+  alreadyClosing: ReadonlySet<number>,
+): Promise<PracticeSession[]> {
+  if (!liveStateEnabled()) return [];
+
+  // Only calls old enough to have gone quiet; a call that started a moment ago
+  // has had no chance to poll.
+  const candidates = (
+    await db
+      .select()
+      .from(practiceSessionsTable)
+      .where(
+        and(
+          eq(practiceSessionsTable.status, "active"),
+          lt(practiceSessionsTable.startedAt, cutoff),
+        ),
+      )
+      .limit(500)
+  ).filter((s) => !alreadyClosing.has(s.id));
+  if (candidates.length === 0) return [];
+
+  const seen = await presenceOf(
+    candidates.flatMap((s) => [
+      { sessionId: s.id, userId: s.requesterId },
+      { sessionId: s.id, userId: s.partnerId },
+    ]),
+  );
+  // Valkey could not be asked: close nothing on no evidence.
+  if (!seen) return [];
+
+  return candidates.filter((_, i) =>
+    bothQuiet([seen[i * 2], seen[i * 2 + 1]], cutoff.getTime()),
+  );
 }
 
 export async function joinQueue(
@@ -733,6 +827,7 @@ async function tryMatch(
     // The site is full. Like an empty pool this is not a refusal: both students
     // stay queued, and whoever polls after a call ends takes the free place.
     if (!created) return { session: null, waiting: candidates.length };
+    await callChanged(userId, match.userId);
 
     await db
       .delete(practiceQueueTable)
@@ -820,7 +915,9 @@ export interface PracticeStatus {
 export async function pollStatus(userId: number): Promise<PracticeStatus> {
   const now = new Date();
 
-  const existing = await liveSessionFor(userId);
+  // From Valkey when the cached copy is current, which during a call is every
+  // poll but the first after each change.
+  const existing = await liveCallFor(userId, () => liveSessionFor(userId));
   if (existing) {
     const session = await expireIfDue(existing);
     // Record that this side is still here, but only while the call is live and
@@ -838,13 +935,30 @@ export async function pollStatus(userId: number): Promise<PracticeStatus> {
   }
 
   const [entry] = await db
-    .update(practiceQueueTable)
-    .set({ lastSeenAt: now })
+    .select()
+    .from(practiceQueueTable)
     .where(eq(practiceQueueTable.userId, userId))
-    .returning();
+    .limit(1);
 
   if (!entry) {
     return { session: null, queued: false, waiting: 0, secondsWaiting: 0 };
+  }
+
+  // Refreshed every few seconds rather than on every poll; see
+  // QUEUE_PRESENCE_REFRESH_MS.
+  if (now.getTime() - entry.lastSeenAt.getTime() >= QUEUE_PRESENCE_REFRESH_MS) {
+    await db
+      .update(practiceQueueTable)
+      .set({ lastSeenAt: now })
+      .where(eq(practiceQueueTable.userId, userId));
+  }
+
+  const secondsWaiting = Math.round((now.getTime() - entry.joinedAt.getTime()) / 1000);
+
+  // Between searches, answer with the last count rather than searching again.
+  const gate = await matchGate(userId, MATCH_INTERVAL_MS);
+  if (gate && !gate.open) {
+    return { session: null, queued: true, waiting: gate.waiting, secondsWaiting };
   }
 
   const { levelOrder, preferences } = await loadStudent(userId);
@@ -857,12 +971,13 @@ export async function pollStatus(userId: number): Promise<PracticeStatus> {
 
   // Nobody matched with us while we waited, so look from this side too.
   const result = await tryMatch(userId, levelOrder, preferences, now);
+  if (!result.session) await rememberWaiting(userId, result.waiting);
 
   return {
     session: result.session,
     queued: result.session === null,
     waiting: result.waiting,
-    secondsWaiting: Math.round((now.getTime() - entry.joinedAt.getTime()) / 1000),
+    secondsWaiting,
   };
 }
 
@@ -907,6 +1022,7 @@ export async function acceptSession(
       ),
     )
     .returning();
+  await callChanged(session.requesterId, session.partnerId);
 
   return viewFor(updated ?? session, userId);
 }
@@ -964,6 +1080,11 @@ export async function sendSignal(
 
   const toUserId = session.requesterId === userId ? session.partnerId : session.requesterId;
 
+  if (liveStateEnabled()) {
+    await pushSignal(sessionId, userId, toUserId, kind, payload);
+    return;
+  }
+
   await db.insert(practiceSignalsTable).values({
     sessionId,
     fromUserId: userId,
@@ -979,7 +1100,14 @@ export async function readSignals(
   userId: number,
   afterId: number,
 ): Promise<SignalMessage[]> {
-  await loadOwnSession(sessionId, userId);
+  // Polled every second during a call. The cached live call proves this
+  // student is in it; anything else is checked against the database.
+  const live = await liveCallFor(userId, () => liveSessionFor(userId));
+  if (live?.id !== sessionId) await loadOwnSession(sessionId, userId);
+
+  if (liveStateEnabled()) {
+    return (await readStoredSignals(sessionId, userId, afterId)) as SignalMessage[];
+  }
 
   const rows = await db
     .select({
