@@ -64,7 +64,8 @@ export const en = {
     login: "Log in",
     startFree: "Start free",
     heroTitle1: "Speak English",
-    heroTitle2: "with confidence, step by step.",
+    heroTitle2: "with confidence, from the heart of Damascus.",
+    heroImageAlt: "A study desk in a Damascene house, looking over the old city",
     heroBody:
       "EnStep is built for Arabic-speaking learners. A complete curriculum focused on conversation, pronunciation and real-life English — not on piles of complicated grammar.",
     heroCta: "Start your journey",

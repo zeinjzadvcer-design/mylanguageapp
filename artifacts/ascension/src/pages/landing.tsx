@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { BookOpen, Mic, Award, CheckCircle2, ChevronLeft, Target } from "lucide-react";
 import { useGetMe, useGetSubscriptionPlans } from "@workspace/api-client-react";
 import { useEffect } from "react";
-import { BrandLogo, LanguageSwitcher, LOGO_FULL_SRC } from "@/components/brand";
+import { BrandLogo, LanguageSwitcher } from "@/components/brand";
+import heroImg from "@assets/generated_images/landing-hero.jpg";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/lib/i18n";
 import { landingPath } from "@/lib/permissions";
@@ -81,12 +82,15 @@ export default function Landing() {
           </div>
 
           <div className="relative">
-            <div className="relative mx-auto max-w-md rounded-[2.5rem] border border-border bg-card/70 p-8 md:p-12 shadow-2xl shadow-primary/10 backdrop-blur-sm">
+            <div className="relative overflow-hidden rounded-[2.5rem] border border-border shadow-2xl shadow-primary/10">
               <img
-                src={LOGO_FULL_SRC}
-                alt={`${t.common.appName} — ${t.common.tagline}`}
-                className="w-full h-auto"
+                src={heroImg}
+                alt={l.heroImageAlt}
+                fetchPriority="high"
+                className="w-full aspect-[4/3] object-cover"
               />
+              {/* A light wash of the brand colour, so the photo sits in the theme. */}
+              <div aria-hidden className="absolute inset-0 bg-primary/10 mix-blend-multiply" />
             </div>
           </div>
         </div>
