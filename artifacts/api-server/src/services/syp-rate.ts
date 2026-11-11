@@ -136,12 +136,14 @@ export async function refreshSypRate(): Promise<RefreshOutcome> {
   const rate = rateInUnit(parsed.rateOld, config.unit);
 
   // Kept out rather than stored: every plan is priced from this, and payments
-  // activate against it with nobody looking. The admin sees the error and can
-  // set prices by hand meanwhile.
+  // activate against it with nobody looking. A real move this large does
+  // happen, so a person accepts it: switching automatic pricing off and on
+  // again clears the last rate (admin-payments.ts), and the next fetch has
+  // nothing to be compared with.
   if (!rateChangeIsPlausible(config.rate, rate)) {
     return record({
       ok: false,
-      error: `SP Today reported ${rate.toFixed(4)}, against ${config.rate?.toFixed(4)} last time. That jump looks like a broken feed, so the last rate is kept. Check sp-today.com, or switch automatic pricing off and set prices by hand.`,
+      error: `SP Today reported ${rate.toFixed(4)}, against ${config.rate?.toFixed(4)} last time. That jump looks like a broken feed, so the last rate is kept. Check sp-today.com: if the new rate is right, switch automatic pricing off and on again to accept it.`,
     });
   }
 

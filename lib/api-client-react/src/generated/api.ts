@@ -33,6 +33,8 @@ import type {
   AuthUser,
   BeginPaymentQrUpload201,
   BeginPaymentQrUploadBody,
+  CheckAdminPassword200,
+  CheckAdminPasswordBody,
   CodedError,
   ConversationEnded,
   ConversationStart,
@@ -3617,6 +3619,78 @@ export const useUpdatePaymentSettings = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getUpdatePaymentSettingsMutationOptions(options));
+    }
+
+export const getCheckAdminPasswordUrl = () => {
+
+
+
+
+  return `/api/admin/payment-settings/check-password`
+}
+
+/**
+ * Spares an upload when the password is wrong. The settings save checks it again. Wrong guesses count against the same per-account limit.
+ * @summary Check the administrator's password before a crypto QR upload
+ */
+export const checkAdminPassword = async (checkAdminPasswordBody: CheckAdminPasswordBody, options?: Parameters<typeof customFetch>[1]): Promise<CheckAdminPassword200> => {
+
+  return customFetch<CheckAdminPassword200>(getCheckAdminPasswordUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(checkAdminPasswordBody)
+  }
+);}
+
+
+
+
+
+export const getCheckAdminPasswordMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkAdminPassword>>, TError,{data: BodyType<CheckAdminPasswordBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof checkAdminPassword>>, TError,{data: BodyType<CheckAdminPasswordBody>}, TContext> => {
+
+const mutationKey = ['checkAdminPassword'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkAdminPassword>>, {data: BodyType<CheckAdminPasswordBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  checkAdminPassword(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckAdminPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof checkAdminPassword>>>
+    export type CheckAdminPasswordMutationBody = BodyType<CheckAdminPasswordBody>
+    export type CheckAdminPasswordMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Check the administrator's password before a crypto QR upload
+ */
+export const useCheckAdminPassword = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkAdminPassword>>, TError,{data: BodyType<CheckAdminPasswordBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof checkAdminPassword>>,
+        TError,
+        {data: BodyType<CheckAdminPasswordBody>},
+        TContext
+      > => {
+      return useMutation(getCheckAdminPasswordMutationOptions(options));
     }
 
 export const getGetPaymentSettingsHistoryUrl = () => {

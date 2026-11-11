@@ -429,7 +429,8 @@ const registerLimiter = rateLimit({
 // Wrong passwords typed to change the crypto wallet, per account. The password
 // is asked for so a stolen session alone cannot redirect payments; without a
 // limit, that session could guess the password here instead. Only requests
-// that carry a password are counted, and only the ones refused.
+// that carry a password are counted, and only the ones refused for a wrong
+// password — the route marks those — so a mistyped address costs no try.
 const reauthLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "900000", 10),
   limit: envInt("RATE_LIMIT_REAUTH", 5),
@@ -437,7 +438,9 @@ const reauthLimiter = rateLimit({
   legacyHeaders: false,
   store: makeRedisStore("rl:reauth:"),
   skipSuccessfulRequests: true,
-  skip: (req) => req.method !== "PATCH" || typeof req.body?.currentPassword !== "string",
+  requestWasSuccessful: (_req, res) => res.locals.wrongPassword !== true,
+  // The settings save and the password check before a QR upload.
+  skip: (req) => req.method === "GET" || typeof req.body?.currentPassword !== "string",
   keyGenerator: (req) => (req.session?.userId ? `user:${req.session.userId}` : clientIp(req)),
   message: { error: "Too many password attempts, please try again later" },
 });

@@ -11,6 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 const h = vi.hoisted(() => ({
   results: [] as unknown[][],
   update: vi.fn(),
+  set: vi.fn(),
   insert: vi.fn(),
   values: vi.fn(),
   activate: vi.fn(),
@@ -76,9 +77,9 @@ beforeEach(() => {
   h.results = [];
   h.session = null;
   h.update.mockReset();
-  h.update.mockReturnValue({
-    set: () => ({ where: () => ({ returning: async () => [{}] }) }),
-  });
+  h.set.mockReset();
+  h.set.mockReturnValue({ where: () => ({ returning: async () => [{}] }) });
+  h.update.mockReturnValue({ set: h.set });
   h.insert.mockReset();
   h.values.mockReset();
   h.values.mockReturnValue({ onConflictDoNothing: async () => undefined });
@@ -396,6 +397,44 @@ describe("changing the crypto wallet", () => {
       action: "settings",
       changes: [{ field: "sypRateAuto", change: "changed" }],
     });
+  });
+
+  it("checks the address before the password, so a typo does not cost a try", async () => {
+    signIn("admin", 1, [{ passwordHash }]);
+    const r = await call("PATCH", "/admin/payment-settings", {
+      cryptoWalletAddress: "T" + "x".repeat(33),
+      currentPassword: "right-password",
+    });
+    expect(r.status).toBe(400);
+    expect(r.data.code).toBe("TRON_ADDRESS");
+  });
+
+  it("checks the password before a QR upload", async () => {
+    signIn("admin", 1, [{ passwordHash }]);
+    expect((await call("POST", "/admin/payment-settings/check-password", { currentPassword: "right-password" })).status).toBe(200);
+    signIn("admin", 1, [{ passwordHash }]);
+    const wrong = await call("POST", "/admin/payment-settings/check-password", { currentPassword: "nope" });
+    expect(`${wrong.status} ${wrong.data.code}`).toBe("403 WRONG_PASSWORD");
+    signIn("admin", 1);
+    const none = await call("POST", "/admin/payment-settings/check-password", {});
+    expect(`${none.status} ${none.data.code}`).toBe("403 PASSWORD_REQUIRED");
+  });
+
+  it("keeps the password check from payments staff", async () => {
+    signIn("payments_manager", 2);
+    expect((await call("POST", "/admin/payment-settings/check-password", { currentPassword: "x" })).status).toBe(403);
+  });
+
+  it("switching automatic pricing back on starts from no rate, to accept a real move", async () => {
+    signIn("admin", 1, [{ sypRateAuto: false, sypRate: "13000.0000" }], [{}]);
+    expect((await call("PATCH", "/admin/payment-settings", { sypRateAuto: true })).status).toBe(200);
+    expect(h.set.mock.calls[0][0]).toMatchObject({ sypRateAuto: true, sypRate: null, sypRateError: null });
+  });
+
+  it("keeps the rate when automatic pricing was already on", async () => {
+    signIn("admin", 1, [{ sypRateAuto: true, sypRate: "13000.0000" }], [{}]);
+    expect((await call("PATCH", "/admin/payment-settings", { sypRateAuto: true })).status).toBe(200);
+    expect(h.set.mock.calls[0][0]).not.toHaveProperty("sypRate");
   });
 
   it("records nothing when a save changes nothing", async () => {

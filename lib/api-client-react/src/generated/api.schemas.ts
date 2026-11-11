@@ -2620,6 +2620,14 @@ export type RejectPaymentSubmission200 = {
   ok?: boolean;
 };
 
+export type CheckAdminPasswordBody = {
+  currentPassword: string;
+};
+
+export type CheckAdminPassword200 = {
+  ok?: boolean;
+};
+
 export type UpdatePlanPriceBody = {
   priceUsd?: number;
   /**

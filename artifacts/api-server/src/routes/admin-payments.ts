@@ -11,7 +11,7 @@
  * which owns the transaction. Nothing in this file changes a subscription.
  */
 
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { randomBytes } from "node:crypto";
 import { asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -324,6 +324,36 @@ async function recordChange(
   await tx.insert(paymentSettingsAuditTable).values({ userId, action, target, changes });
 }
 
+/** Whether `password` is this user's password. False for a missing one. */
+async function passwordIsCorrect(userId: number, password: string | undefined): Promise<boolean> {
+  if (!password) return false;
+  const [me] = await db
+    .select({ passwordHash: usersTable.passwordHash })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId))
+    .limit(1);
+  return Boolean(me) && (await verifyPassword(password, me!.passwordHash));
+}
+
+/**
+ * Refuse a crypto change made without the right password.
+ *
+ * Marks the response for reauthLimiter (app.ts), which counts these and
+ * nothing else: an address typo is refused too, but is not a guess.
+ */
+function refusePassword(res: Response, password: string | undefined): void {
+  res.locals.wrongPassword = true;
+  res.status(403).json(
+    password
+      ? { error: "That password is not correct.", errorAr: "كلمة المرور غير صحيحة.", code: "WRONG_PASSWORD" }
+      : {
+          error: "Enter your password to change the crypto wallet.",
+          errorAr: "أدخل كلمة المرور لتعديل المحفظة الرقمية.",
+          code: "PASSWORD_REQUIRED",
+        },
+  );
+}
+
 type SettingsRow = typeof paymentSettingsTable.$inferSelect;
 
 /**
@@ -440,28 +470,6 @@ router.patch("/admin/payment-settings", requirePermission("payments.settings"), 
     }
   }
 
-  // Wrong guesses are counted per account by reauthLimiter (app.ts), so a
-  // stolen session cannot try passwords here without limit.
-  if (needsPassword(Object.keys(patch))) {
-    const [me] = await db
-      .select({ passwordHash: usersTable.passwordHash })
-      .from(usersTable)
-      .where(eq(usersTable.id, req.session.userId!))
-      .limit(1);
-    if (!currentPassword || !me || !(await verifyPassword(currentPassword, me.passwordHash))) {
-      res.status(403).json({
-        error: currentPassword
-          ? "That password is not correct."
-          : "Enter your password to change the crypto wallet.",
-        errorAr: currentPassword
-          ? "كلمة المرور غير صحيحة."
-          : "أدخل كلمة المرور لتعديل المحفظة الرقمية.",
-        code: currentPassword ? "WRONG_PASSWORD" : "PASSWORD_REQUIRED",
-      });
-      return;
-    }
-  }
-
   const update: Record<string, unknown> = { updatedBy: req.session.userId! };
   if ("walletQrMediaId" in patch) update.walletQrMediaId = patch.walletQrMediaId;
   if ("walletAccountName" in patch) update.walletAccountName = patch.walletAccountName;
@@ -502,6 +510,13 @@ router.patch("/admin/payment-settings", requirePermission("payments.settings"), 
     update.cryptoUpdatedAt = new Date();
   }
 
+  // After the address is validated, so a mistyped address is answered as one
+  // rather than spending a password check.
+  if (needsPassword(Object.keys(patch)) && !(await passwordIsCorrect(req.session.userId!, currentPassword))) {
+    refusePassword(res, currentPassword);
+    return;
+  }
+
   // ── Pricing ─────────────────────────────────────────────────────────────
   const before = await readSettings();
   if ("sypRateAuto" in patch) update.sypRateAuto = patch.sypRateAuto;
@@ -514,6 +529,14 @@ router.patch("/admin/payment-settings", requirePermission("payments.settings"), 
       const rate = Number(before.sypRate);
       update.sypRate = (patch.sypUnit === "new" ? rate / OLD_PER_NEW : rate * OLD_PER_NEW).toFixed(4);
     }
+  }
+  // Switching automatic pricing back on starts from no rate, so the fetch
+  // below is not compared with the old one. This is how an admin accepts a
+  // real move that the plausibility check (syp-rate.ts) refused. Prices fall
+  // back to the manual SYP figures until the fetch lands.
+  if (patch.sypRateAuto === true && before?.sypRateAuto === false) {
+    update.sypRate = null;
+    update.sypRateError = null;
   }
 
   const changes = fieldChanges(before, update, AUDITED_SETTINGS);
@@ -702,6 +725,28 @@ router.post(
     );
 
     res.json({ token });
+  },
+);
+
+/**
+ * POST /admin/payment-settings/check-password
+ *
+ * Whether the admin's password is right, before the screen uploads a new
+ * crypto QR. The upload stores an image before the save that needs the
+ * password, so without this a mistyped password left an unused image behind.
+ * The save checks the password again; this only spares the upload. Wrong
+ * guesses count against the same per-account limit (reauthLimiter, app.ts).
+ */
+router.post(
+  "/admin/payment-settings/check-password",
+  requirePermission("payments.crypto"),
+  async (req, res): Promise<void> => {
+    const password = typeof req.body?.currentPassword === "string" ? req.body.currentPassword : undefined;
+    if (!(await passwordIsCorrect(req.session.userId!, password))) {
+      refusePassword(res, password);
+      return;
+    }
+    res.json({ ok: true });
   },
 );
 
