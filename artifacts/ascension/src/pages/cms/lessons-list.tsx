@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useCan } from "@/lib/permissions";
-import { Plus, Search, Copy, Archive, Eye, Pencil, RotateCcw } from "lucide-react";
+import { Plus, Search, Copy, Archive, Eye, Pencil, RotateCcw, Star } from "lucide-react";
 
 const STATUSES: LessonStatus[] = ["draft", "in_review", "approved", "published", "archived"];
 
@@ -49,6 +49,22 @@ export default function CMSLessonsList() {
   const restoreMut = useMutation({
     mutationFn: (id: number) => cmsApi.lessons.restore(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["cms-lessons"] }); toast({ title: "Lesson restored" }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  // One free lesson for the whole site: choosing another moves it.
+  const freeMut = useMutation({
+    mutationFn: (lessonId: number | null) => cmsApi.lessons.setFree(lessonId),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ["cms-lessons"] });
+      toast({
+        title: result.lessonId === null ? "Free lesson cleared" : "Free lesson set",
+        description:
+          result.lessonId === null
+            ? "Free-plan students get one lesson a month in their track again."
+            : "Free-plan students can open this lesson and no other.",
+      });
+    },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -113,7 +129,14 @@ export default function CMSLessonsList() {
                 {data.lessons.map(l => (
                   <tr key={l.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900 truncate max-w-xs">{l.title}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900 truncate max-w-xs">{l.title}</span>
+                        {l.isFreeLesson && (
+                          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                            Free lesson
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-gray-400 truncate">{l.titleAr}</div>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
@@ -132,6 +155,17 @@ export default function CMSLessonsList() {
                           <Link href={`/cms/lessons/${l.id}/edit`} title="Edit" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
                             <Pencil className="h-3.5 w-3.5" />
                           </Link>
+                        )}
+                        {canEdit && l.status === "published" && (
+                          <button
+                            title={l.isFreeLesson ? "Free lesson — click to clear" : "Make this the free lesson"}
+                            aria-pressed={Boolean(l.isFreeLesson)}
+                            disabled={freeMut.isPending}
+                            onClick={() => freeMut.mutate(l.isFreeLesson ? null : l.id)}
+                            className={`p-1.5 rounded hover:bg-gray-100 ${l.isFreeLesson ? "text-amber-500" : "text-gray-400"}`}
+                          >
+                            <Star className="h-3.5 w-3.5" fill={l.isFreeLesson ? "currentColor" : "none"} />
+                          </button>
                         )}
                         {canEdit && (
                           <button

@@ -30,6 +30,7 @@ async function request<T>(
 const get = <T>(path: string) => request<T>("GET", path);
 const post = <T>(path: string, body?: unknown) => request<T>("POST", path, body);
 const patch = <T>(path: string, body: unknown) => request<T>("PATCH", path, body);
+const put = <T>(path: string, body: unknown) => request<T>("PUT", path, body);
 const del = <T>(path: string) => request<T>("DELETE", path);
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -163,6 +164,8 @@ export type LessonStatus = "draft" | "in_review" | "approved" | "published" | "a
 export interface CMSLesson {
   id: number; levelId: number; levelCode?: string; curriculumId?: number;
   title: string; titleAr: string; subtitle?: string | null;
+  /** The lesson free-plan students get. Set in the lessons list. */
+  isFreeLesson?: boolean;
   description?: string | null; status: LessonStatus;
   lessonType: string; estimatedMinutes: number; order: number;
   xpReward: number; passingScore: number; difficulty?: string | null;
@@ -240,6 +243,8 @@ export const cmsApi = {
     archive: (id: number) => post<{ id: number; status: string }>(`/cms/lessons/${id}/archive`),
     restore: (id: number) => post<{ id: number; status: string }>(`/cms/lessons/${id}/restore`),
     delete: (id: number) => del<{ deleted: boolean }>(`/cms/lessons/${id}`),
+    /** Make a published lesson the free lesson, or clear it with null. */
+    setFree: (lessonId: number | null) => put<{ lessonId: number | null }>("/cms/free-lesson", { lessonId }),
     preview: (id: number) => get<{
       isPreview: boolean; lesson: CMSLesson; contentBlocks: CMSBlock[]; vocabulary: CMSVocabItem[];
       /** Active blocks in the student lesson shape, for the real player. */

@@ -70,6 +70,7 @@ export default function Level({ params }: { params: { levelId: string } }) {
   };
 
   const getLessonStateLabel = (lesson: LessonSummary): string => {
+    if (lesson.state === "LOCKED" && lesson.lockedReason) return lv.lockedByPlan;
     switch (lesson.state) {
       case "LOCKED": return lv.locked;
       case "AVAILABLE": return lv.available;
@@ -144,9 +145,11 @@ export default function Level({ params }: { params: { levelId: string } }) {
           const isCompleted = lesson.state === "COMPLETED";
           const isInProgress = lesson.state === "IN_PROGRESS";
           const canNavigate = !isLocked;
+          // Locked by the plan, not by progression: the way in is a plan.
+          const href = canNavigate ? `/lesson/${lesson.id}` : lesson.lockedReason ? "/subscription" : "#";
 
           return (
-            <Link key={lesson.id} href={canNavigate ? `/lesson/${lesson.id}` : "#"}>
+            <Link key={lesson.id} href={href}>
               <Card className={`transition-all duration-200 border-2 ${
                 isCompleted ? "border-transparent bg-secondary/30" :
                 isInProgress ? "border-primary/30 hover:border-primary/60 cursor-pointer shadow-sm" :
@@ -175,6 +178,11 @@ export default function Level({ params }: { params: { levelId: string } }) {
                       <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${getLessonStateBadgeColor(lesson)}`}>
                         {getLessonStateLabel(lesson)}
                       </span>
+                      {lesson.isFreeLesson && (
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-accent/15 text-accent-foreground border border-accent/30">
+                          {lv.freeLesson}
+                        </span>
+                      )}
                     </div>
                     <h3 className={`text-lg font-bold truncate ${isLocked ? "text-muted-foreground" : "text-foreground"}`}>
                       {pick(lesson.titleAr, lesson.title)}

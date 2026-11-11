@@ -1196,7 +1196,9 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
     const status = (error as { status?: number } | null)?.status;
     if (status !== 403) return null;
     const reason = (error as { data?: { reason?: string } } | null)?.data?.reason;
-    return reason === "quota_exhausted" || reason === "wrong_track" ? reason : null;
+    return reason === "quota_exhausted" || reason === "wrong_track" || reason === "free_lesson_only"
+      ? reason
+      : null;
   })();
 
   if (denial) {
@@ -1206,10 +1208,10 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
           <Crown className="h-8 w-8 text-amber-500" />
         </div>
         <h2 className="text-xl font-bold mb-3">
-          {denial === "quota_exhausted" ? ls.quotaTitle : ls.wrongTrackTitle}
+          {denial === "quota_exhausted" ? ls.quotaTitle : denial === "free_lesson_only" ? ls.freeOnlyTitle : ls.wrongTrackTitle}
         </h2>
         <p className="text-muted-foreground mb-6 leading-relaxed">
-          {denial === "quota_exhausted" ? ls.quotaBody : ls.wrongTrackBody}
+          {denial === "quota_exhausted" ? ls.quotaBody : denial === "free_lesson_only" ? ls.freeOnlyBody : ls.wrongTrackBody}
         </p>
         <div className="flex gap-3 justify-center">
           <Link href="/subscription">
