@@ -43,7 +43,77 @@ async function waitForDatabase({ attempts = 30, delayMs = 1000 } = {}) {
   }
 }
 
-function pushDrizzleSchema() {
+/**
+ * The tables the Drizzle schema defines, read from its source.
+ *
+ * The push is limited to these. Other tables live in the same database: some
+ * are created by the SQL migrations (ai_usage_logs), some by the app
+ * (`session`, from when sessions were kept in Postgres), and extensions add
+ * views (pg_stat_statements). Seen by the push, each was a problem — a view
+ * it tried to drop, or a table it asked about interactively ("is
+ * payment_settings_audit new, or a rename of ai_usage_logs?"), which cannot be
+ * answered here and stopped the migration.
+ */
+function schemaTableNames() {
+  const dir = path.join(root, 'lib', 'db', 'src', 'schema');
+  const names = new Set();
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.ts'))) {
+    const source = readFileSync(path.join(dir, file), 'utf8');
+    for (const match of source.matchAll(/pgTable\(\s*["']([a-z0-9_]+)["']/g)) names.add(match[1]);
+  }
+  if (names.size === 0) throw new Error(`No pgTable definitions found in ${dir}.`);
+  return [...names].sort();
+}
+
+/**
+ * Refuse, before anything is changed, when the push would try to drop an id
+ * counter (sequence) that no schema table owns.
+ *
+ * Drizzle treats every sequence in the database as its own unless a table it
+ * can see owns it, so a table outside the schema has its counter dropped — or,
+ * when the table still uses it, the push fails partway through. Tables outside
+ * the schema are otherwise harmless here and are only listed.
+ */
+async function checkNothingOutsideSchema(tables) {
+  const client = new pg.Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    const unknownTables = await client.query(
+      `select c.relname as name
+         from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
+        where ns.nspname = 'public' and c.relkind = 'r' and c.relname <> all($1)
+        order by 1`,
+      [tables],
+    );
+    const strayCounters = await client.query(
+      `select s.relname as name
+         from pg_class s join pg_namespace ns on ns.oid = s.relnamespace
+        where ns.nspname = 'public' and s.relkind = 'S'
+          and not exists (
+            select 1 from pg_depend d join pg_class t on t.oid = d.refobjid
+             where d.objid = s.oid and d.deptype in ('a', 'i') and t.relname = any($1))
+        order by 1`,
+      [tables],
+    );
+    if (unknownTables.rows.length > 0) {
+      console.log(
+        `Tables outside the Drizzle schema, left alone: ${unknownTables.rows.map((r) => r.name).join(', ')}`,
+      );
+    }
+    if (strayCounters.rows.length > 0) {
+      throw new Error(
+        `Nothing was changed. The schema push would try to drop these sequences, which no ` +
+          `table in lib/db/src/schema owns: ${strayCounters.rows.map((r) => r.name).join(', ')}. ` +
+          'Describe the table that uses each one in the Drizzle schema (as ai_usage_logs is), ' +
+          'or drop it with a SQL migration if it is no longer used.',
+      );
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+function pushDrizzleSchema(tables) {
   console.log('Pushing Drizzle schema...');
   // Schema and url are passed explicitly rather than via drizzle.config.ts:
   // the config resolves its schema path with __dirname, which breaks when the
@@ -59,12 +129,9 @@ function pushDrizzleSchema() {
       '--force',
       '--dialect=postgresql',
       '--schema=./src/schema/index.ts',
-      // The pg_stat_statements extension keeps two views in `public`. They are
-      // not in our schema, so the push tried to drop them, Postgres refused,
-      // and the push stopped after creating tables but before their indexes and
-      // foreign keys. Managed Postgres (DigitalOcean's query insights) commonly
-      // has the extension enabled.
-      arg('--tablesFilter=!pg_stat_statements*'),
+      // Only the schema's own tables; see schemaTableNames. One glob with a
+      // brace list, because the command line takes a single filter.
+      arg(`--tablesFilter={${tables.join(',')}}`),
       arg(`--url=${databaseUrl}`),
     ],
     {
@@ -121,6 +188,8 @@ async function applySqlMigrations() {
 }
 
 await waitForDatabase();
-pushDrizzleSchema();
+const schemaTables = schemaTableNames();
+await checkNothingOutsideSchema(schemaTables);
+pushDrizzleSchema(schemaTables);
 await applySqlMigrations();
 console.log('Migrations complete.');

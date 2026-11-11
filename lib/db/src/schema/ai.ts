@@ -8,6 +8,8 @@ import {
   boolean,
   timestamp,
   uniqueIndex,
+  index,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 
@@ -186,3 +188,48 @@ export const aiPlanPoliciesTable = pgTable(
 );
 
 export type AiPlanPolicy = typeof aiPlanPoliciesTable.$inferSelect;
+
+/**
+ * One row per AI call: who, which task, tokens and cost. Quotas and the cost
+ * figures on the admin screen are counted from here (services/ai-config.ts,
+ * which queries it in SQL).
+ *
+ * Created and changed by the SQL migrations (001, 006, 007, 016), and
+ * described here exactly as they left it, names included. While it was missing
+ * from this schema, the schema push could not tell a new table from a rename
+ * of this one and stopped to ask; and hiding it from the push instead made its
+ * id sequence look like something to drop. Change it with a SQL migration,
+ * then match it here, so the push finds nothing to do.
+ */
+export const aiUsageLogsTable = pgTable(
+  "ai_usage_logs",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull(),
+    feature: text("feature").notNull(),
+    modelId: text("model_id"),
+    provider: text("provider"),
+    tokensUsed: integer("tokens_used").notNull().default(0),
+    costUsd: real("cost_usd"),
+    succeeded: boolean("succeeded").notNull().default(true),
+    requestId: text("request_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    task: text("task"),
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+  },
+  (t) => ({
+    userFk: foreignKey({
+      name: "ai_usage_logs_user_id_fkey",
+      columns: [t.userId],
+      foreignColumns: [usersTable.id],
+    }).onDelete("cascade"),
+    createdAtIdx: index("ai_usage_logs_created_at_idx").on(t.createdAt),
+    createdIdx: index("ai_usage_logs_created_idx").on(t.createdAt.desc()),
+    taskCreatedIdx: index("ai_usage_logs_task_created_idx").on(t.task, t.createdAt.desc()),
+    userCreatedIdx: index("ai_usage_logs_user_created_idx").on(t.userId, t.createdAt.desc()),
+    userIdIdx: index("ai_usage_logs_user_id_idx").on(t.userId, t.createdAt),
+  }),
+);
+
+export type AiUsageLog = typeof aiUsageLogsTable.$inferSelect;
