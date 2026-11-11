@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetPaymentSubmissions1,
   useApprovePaymentSubmission,
@@ -22,6 +23,8 @@ import {
   useRefreshSypRate,
   useGetSubscriptionPlans,
   useUpdatePlanPrice,
+  useGetPaymentSettingsHistory,
+  getGetPaymentSettingsHistoryQueryKey,
   type PaymentSettings,
   type PaymentSettingsUpdate,
 } from "@workspace/api-client-react";
@@ -156,7 +159,11 @@ export default function AdminPayments() {
 
           <WalletSettings />
 
-          <CryptoSettings />
+          {/* Not shown at all to staff: they cannot change it, and the
+              server sends them none of it. */}
+          {can("payments.crypto") && <CryptoSettings />}
+
+          {can("payments.crypto") && <SettingsHistory />}
         </>
       )}
 
@@ -335,11 +342,18 @@ export default function AdminPayments() {
  * server's own reason shown on a refusal — an address rejected as TRON says so
  * rather than reporting a generic failure.
  */
+/** Refetch the change history after anything that adds to it. */
+function useRefreshHistory() {
+  const queryClient = useQueryClient();
+  return () => void queryClient.invalidateQueries({ queryKey: getGetPaymentSettingsHistoryQueryKey() });
+}
+
 function useSaveSettings() {
   const { toast } = useToast();
   const { t, lang } = useI18n();
   const settings = useGetPaymentSettings();
   const update = useUpdatePaymentSettings();
+  const refreshHistory = useRefreshHistory();
 
   const save = (patch: PaymentSettingsUpdate, onDone?: () => void) => {
     update.mutate(
@@ -348,6 +362,7 @@ function useSaveSettings() {
         onSuccess: () => {
           toast({ title: t.payment.admin.saved });
           void settings.refetch();
+          refreshHistory();
           onDone?.();
         },
         onError: (err) => {
@@ -397,15 +412,18 @@ function QrPicker({
   hasQr,
   uploading,
   onFile,
+  disabled = false,
 }: {
   hasQr: boolean;
   uploading: boolean;
   onFile: (file: File) => void;
+  disabled?: boolean;
 }) {
   const { t } = useI18n();
+  const off = uploading || disabled;
   return (
-    <Button variant="outline" asChild disabled={uploading}>
-      <label className="cursor-pointer">
+    <Button variant="outline" asChild disabled={off}>
+      <label className={off ? "pointer-events-none opacity-50" : "cursor-pointer"} aria-disabled={off}>
         {uploading ? (
           <Loader2 className="h-4 w-4 animate-spin me-2" />
         ) : (
@@ -416,6 +434,7 @@ function QrPicker({
           type="file"
           accept="image/jpeg,image/png,image/webp"
           className="hidden"
+          disabled={off}
           onChange={(e) => {
             const f = e.target.files?.[0];
             // Cleared so picking the same file again still fires a change.
@@ -433,6 +452,57 @@ function formatWhen(iso: string | null | undefined, lang: string): string | null
 }
 
 /**
+ * Who changed what in the payment settings, and when.
+ *
+ * Field names only: the server keeps no values in the history, so nothing
+ * here can leak a wallet address or account number.
+ */
+function SettingsHistory() {
+  const { t, lang } = useI18n();
+  const pa = t.payment.admin;
+  const history = useGetPaymentSettingsHistory();
+  const entries = history.data?.entries ?? [];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{pa.historyTitle}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground leading-relaxed">{pa.historyHelp}</p>
+        {history.isLoading ? (
+          <Skeleton className="h-24 w-full rounded-lg" />
+        ) : history.isError ? (
+          <p className="text-sm text-destructive">{pa.historyFailed}</p>
+        ) : entries.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{pa.historyEmpty}</p>
+        ) : (
+          <ul className="divide-y rounded-lg border max-h-80 overflow-y-auto">
+            {entries.map((entry) => (
+              <li key={entry.id} className="p-3 text-sm space-y-1">
+                <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                  <span>{entry.byName ?? pa.unknownAdmin}</span>
+                  <span>{formatWhen(entry.createdAt, lang)}</span>
+                </div>
+                <div>
+                  {entry.target && <span className="font-medium">{pa.historyPlan(entry.target)}: </span>}
+                  {entry.changes
+                    .map(
+                      (c) =>
+                        `${pa.historyFields[c.field] ?? c.field} — ${pa.historyChange[c.change] ?? c.change}`,
+                    )
+                    .join(lang === "ar" ? "، " : ", ")}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
  * Plan prices, in dollars and Syrian pounds.
  *
  * Two modes for the SYP figure. Manual: the admin types it. Automatic: it is
@@ -442,6 +512,7 @@ function formatWhen(iso: string | null | undefined, lang: string): string | null
  * automatic never takes a selling plan off sale.
  */
 function PricingSettings() {
+  const refreshHistory = useRefreshHistory();
   const { toast } = useToast();
   const { t, lang, pick } = useI18n();
   const pa = t.payment.admin;
@@ -481,6 +552,7 @@ function PricingSettings() {
       {
         onSuccess: () => {
           toast({ title: pa.pricesSaved });
+          refreshHistory();
           setDraft((d) => {
             const next = { ...d };
             delete next[code];
@@ -699,6 +771,7 @@ function WalletSettings() {
   const can = useCan();
   const canEdit = can("payments.wallet");
   const canIssueToken = can("payments.sms_token");
+  const refreshHistory = useRefreshHistory();
   const pa = t.payment.admin;
   const { settings, save, saving } = useSaveSettings();
   const { upload, uploading } = useQrUpload();
@@ -829,6 +902,7 @@ function WalletSettings() {
                   onSuccess: (res) => {
                     setFreshToken(res?.token ?? null);
                     void settings.refetch();
+                    refreshHistory();
                   },
                   onError: () =>
                     toast({ variant: "destructive", title: t.subscription.error, description: pa.tokenFailed }),
@@ -886,6 +960,14 @@ function CryptoSettings() {
   const { settings, save, saving } = useSaveSettings();
   const { upload, uploading } = useQrUpload();
   const [address, setAddress] = useState("");
+  // Asked for on every change, and forgotten once it has been used.
+  const [password, setPassword] = useState("");
+  const hasPassword = password !== "";
+  const saveCrypto = (patch: PaymentSettingsUpdate, onDone?: () => void) =>
+    save({ ...patch, currentPassword: password }, () => {
+      setPassword("");
+      onDone?.();
+    });
 
   useEffect(() => {
     setAddress(settings.data?.cryptoWalletAddress ?? "");
@@ -914,6 +996,24 @@ function CryptoSettings() {
 
         {!canEdit && <p className="text-sm text-muted-foreground">{pa.adminOnly}</p>}
 
+        {canEdit && (
+          <div className="space-y-2">
+            <Label className="font-bold" htmlFor="crypto-password">
+              {pa.cryptoPassword}
+            </Label>
+            <Input
+              id="crypto-password"
+              type="password"
+              autoComplete="current-password"
+              className="max-w-xs"
+              dir="ltr"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">{pa.cryptoPasswordHelp}</p>
+          </div>
+        )}
+
         <div className="space-y-2">
           <Label className="font-bold">{pa.cryptoAddress}</Label>
           <div className="flex flex-wrap gap-2">
@@ -927,8 +1027,8 @@ function CryptoSettings() {
             />
             {canEdit && (
               <Button
-                disabled={!addressDirty || saving || address.trim() === ""}
-                onClick={() => save({ cryptoWalletAddress: address.trim() })}
+                disabled={!addressDirty || saving || address.trim() === "" || !hasPassword}
+                onClick={() => saveCrypto({ cryptoWalletAddress: address.trim() })}
               >
                 {t.common.save}
               </Button>
@@ -936,8 +1036,8 @@ function CryptoSettings() {
             {canEdit && savedAddress && (
               <Button
                 variant="outline"
-                disabled={saving}
-                onClick={() => save({ cryptoWalletAddress: null }, () => setAddress(""))}
+                disabled={saving || !hasPassword}
+                onClick={() => saveCrypto({ cryptoWalletAddress: null }, () => setAddress(""))}
                 aria-label={pa.remove}
               >
                 <Trash2 className="h-4 w-4" />
@@ -954,9 +1054,10 @@ function CryptoSettings() {
               <QrPicker
                 hasQr={hasQr}
                 uploading={uploading}
+                disabled={!hasPassword}
                 onFile={async (file) => {
                   const mediaId = await upload(file);
-                  if (mediaId !== null) save({ cryptoQrMediaId: mediaId });
+                  if (mediaId !== null) saveCrypto({ cryptoQrMediaId: mediaId });
                 }}
               />
             )}
@@ -969,8 +1070,8 @@ function CryptoSettings() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={saving}
-                onClick={() => save({ cryptoQrMediaId: null })}
+                disabled={saving || !hasPassword}
+                onClick={() => saveCrypto({ cryptoQrMediaId: null })}
               >
                 <Trash2 className="h-4 w-4 me-2" />
                 {pa.remove}
