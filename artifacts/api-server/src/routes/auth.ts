@@ -172,6 +172,12 @@ const RESET_COOLDOWN_MS = envInt("RESET_COOLDOWN_MS", 120_000);
  */
 const RESET_DAILY_MAX = envInt("RESET_DAILY_MAX", 5);
 
+/**
+ * The window RESET_DAILY_MAX is counted over. Reset rows are the count, so
+ * none may be cleaned up before they leave it.
+ */
+const RESET_COUNT_WINDOW_MS = 24 * 3_600_000;
+
 /** The token travels in the URL; only this hash is ever stored. */
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -215,7 +221,7 @@ router.post("/auth/forgot-password", async (req, res): Promise<void> => {
     .from(passwordResetTokensTable)
     .where(and(
       eq(passwordResetTokensTable.userId, user.id),
-      gt(passwordResetTokensTable.createdAt, new Date(Date.now() - 24 * 3_600_000)),
+      gt(passwordResetTokensTable.createdAt, new Date(Date.now() - RESET_COUNT_WINDOW_MS)),
     ));
   if (sentToday >= RESET_DAILY_MAX) {
     logger.warn({ userId: user.id }, "Password reset not sent: daily limit for this address reached");
@@ -314,9 +320,11 @@ router.post("/auth/reset-password", async (req, res): Promise<void> => {
     .set({ usedAt: new Date() })
     .where(eq(passwordResetTokensTable.id, row.id));
 
-  // Housekeeping, not security: spent and expired rows have no further use.
+  // Housekeeping: rows older than the daily count's window have no further
+  // use. Younger ones stay even when spent or expired — they ARE the count, and
+  // deleting them let any completed reset hand every address a fresh allowance.
   await db.delete(passwordResetTokensTable)
-    .where(lt(passwordResetTokensTable.expiresAt, new Date(Date.now() - RESET_TTL_MS)));
+    .where(lt(passwordResetTokensTable.createdAt, new Date(Date.now() - RESET_COUNT_WINDOW_MS)));
 
   logger.info({ userId: row.userId }, "Password reset completed");
 
