@@ -23,7 +23,8 @@ import {
   ConversationUnavailableError,
 } from "../services/conversation";
 import { assertUsableRecording, MediaValidationError } from "../services/media";
-import { DENIAL_MESSAGES, getEntitlement, isLessonInTrack } from "../services/entitlements";
+import { DENIAL_MESSAGES, getEntitlement } from "../services/entitlements";
+import { lessonOpenDenialFor } from "../services/free-lesson";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -83,14 +84,15 @@ router.post("/conversation/start", requireAuth, async (req, res): Promise<void> 
     // plan rule: a student on one track does not get the other track's lessons
     // through the tutor either.
     const [lesson] = await db
-      .select({ track: lessonsTable.track })
+      .select({ id: lessonsTable.id, track: lessonsTable.track })
       .from(lessonsTable)
       .where(eq(lessonsTable.id, parsed.data.lessonId))
       .limit(1);
     if (lesson) {
       const entitlement = await getEntitlement(userId, req.session.role);
-      if (!isLessonInTrack(entitlement, lesson.track)) {
-        res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
+      const openDenial = await lessonOpenDenialFor(userId, entitlement, lesson);
+      if (openDenial) {
+        res.status(403).json({ ...DENIAL_MESSAGES[openDenial], reason: openDenial });
         return;
       }
     }

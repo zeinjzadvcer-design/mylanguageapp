@@ -423,7 +423,7 @@ export const LessonSummaryState = {
 } as const;
 
 /**
- * Set when the lesson is locked by the student's PLAN rather than by curriculum progression, so the UI can offer an upgrade instead of "finish the previous lesson". Null when the lock is ordinary progression, or when the lesson is not locked.
+ * Set when the lesson is locked by the student's PLAN rather than by curriculum progression, so the UI can offer an upgrade instead of "finish the previous lesson". `free_lesson_only`: the student is on the free plan and a free lesson is chosen, so only that one is open. Null when the lock is ordinary progression, or when the lesson is not locked.
  * @nullable
  */
 export type LessonSummaryLockedReason = typeof LessonSummaryLockedReason[keyof typeof LessonSummaryLockedReason] | null;
@@ -431,6 +431,7 @@ export type LessonSummaryLockedReason = typeof LessonSummaryLockedReason[keyof t
 
 export const LessonSummaryLockedReason = {
   quota_exhausted: 'quota_exhausted',
+  free_lesson_only: 'free_lesson_only',
 } as const;
 
 export interface LessonSummary {
@@ -448,7 +449,7 @@ export interface LessonSummary {
   estimatedMinutes: number;
   state: LessonSummaryState;
   /**
-     * Set when the lesson is locked by the student's PLAN rather than by curriculum progression, so the UI can offer an upgrade instead of "finish the previous lesson". Null when the lock is ordinary progression, or when the lesson is not locked.
+     * Set when the lesson is locked by the student's PLAN rather than by curriculum progression, so the UI can offer an upgrade instead of "finish the previous lesson". `free_lesson_only`: the student is on the free plan and a free lesson is chosen, so only that one is open. Null when the lock is ordinary progression, or when the lesson is not locked.
      * @nullable
      */
   lockedReason?: LessonSummaryLockedReason;
@@ -457,6 +458,8 @@ export interface LessonSummary {
   /** @nullable */
   bestScore: number | null;
   xpReward: number;
+  /** The lesson chosen as free. A student on the free plan can open it and no other, whatever its track or place in the curriculum. */
+  isFreeLesson?: boolean;
 }
 
 export interface LevelDetail {

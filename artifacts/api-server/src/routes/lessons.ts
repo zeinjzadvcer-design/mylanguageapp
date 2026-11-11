@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, asc, inArray, isNull, sql } from "drizzle-orm";
+import { eq, and, asc, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   db,
@@ -33,13 +33,15 @@ import {
   getEntitlement,
   countLessonsStarted,
   checkLessonAccess,
-  isLessonInTrack,
+  limitedToFreeLesson,
+  stateForFreeLessonStudent,
   lessonTrackFilter,
   previousLessonInTrack,
   DENIAL_MESSAGES,
   type LessonDenial,
 } from "../services/entitlements";
 import { gradeLessonActivity } from "../services/grading-runner";
+import { getFreeLessonId, lessonOpenDenialFor } from "../services/free-lesson";
 import {
   toStudentContentBlocks,
   isRecordingBlock,
@@ -113,8 +115,12 @@ router.get("/lessons", requireAuth, async (req, res): Promise<void> => {
   // this plan makes available.
   const entitlement = await getEntitlement(userId, req.session.role);
 
-  // Staff get no filter: they see both tracks.
-  const trackFilter = lessonTrackFilter(entitlement);
+  // Staff get no filter: they see both tracks. A free-plan student limited to
+  // the free lesson is also shown that lesson, whatever its track.
+  const freeLessonId = await getFreeLessonId();
+  const freeOnly = limitedToFreeLesson(entitlement, freeLessonId);
+  const ownTrack = lessonTrackFilter(entitlement);
+  const trackFilter = freeOnly && ownTrack ? or(ownTrack, eq(lessonsTable.id, freeLessonId!)) : ownTrack;
 
   const whereFilter = levelId
     ? and(
@@ -181,8 +187,19 @@ router.get("/lessons", requireAuth, async (req, res): Promise<void> => {
 
     // The plan can only ever lock further, never unlock: a lesson the
     // curriculum has not reached stays LOCKED whatever the plan says.
-    const lockedByQuota = quotaSpent && !startedLessonIds.has(lesson.id);
-    const state = lockedByQuota ? "LOCKED" : curriculumState;
+    const started = startedLessonIds.has(lesson.id);
+    let state = curriculumState;
+    let lockedReason: "quota_exhausted" | "free_lesson_only" | null = null;
+    if (freeOnly) {
+      // The free lesson replaces the monthly allowance: it is open, and every
+      // lesson not already started is locked behind a plan.
+      const isFree = lesson.id === freeLessonId;
+      state = stateForFreeLessonStudent(curriculumState, { isFree, started });
+      if (state === "LOCKED" && !isFree && !started) lockedReason = "free_lesson_only";
+    } else if (quotaSpent && !started) {
+      state = "LOCKED";
+      lockedReason = "quota_exhausted";
+    }
 
     return {
       id: lesson.id,
@@ -200,7 +217,8 @@ router.get("/lessons", requireAuth, async (req, res): Promise<void> => {
        * curriculum. Lets the UI show an upgrade prompt instead of the usual
        * "finish the previous lesson" message.
        */
-      lockedReason: lockedByQuota ? "quota_exhausted" : null,
+      lockedReason,
+      isFreeLesson: lesson.id === freeLessonId,
       // Legacy compatibility
       isUnlocked: state !== "LOCKED",
       isCompleted: state === "COMPLETED",
@@ -336,10 +354,15 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
   // so it needs its own gate: without one a student could skip /start and read
   // everything the paywall is meant to cover.
   const entitlement = await getEntitlement(userId, req.session.role);
-  if (!isLessonInTrack(entitlement, bundle.lesson.track)) {
-    res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
+  const openDenial = await lessonOpenDenialFor(userId, entitlement, bundle.lesson);
+  if (openDenial) {
+    res.status(403).json({ ...DENIAL_MESSAGES[openDenial], reason: openDenial });
     return;
   }
+  // A student on the free plan with a free lesson chosen: that lesson is open
+  // whatever its place in the curriculum, and uses no allowance.
+  const freeLessonId = await getFreeLessonId();
+  const freeOnly = limitedToFreeLesson(entitlement, freeLessonId);
 
   const [completedIds, progressRow, currentLevel] = await Promise.all([
     getCompletedLessonIds(userId),
@@ -367,7 +390,7 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
   // Quota gate. Deferred until here because it needs progressRow: a lesson the
   // student already started stays readable however spent the quota is, so they
   // can finish what they opened.
-  if (entitlement.lessonQuota !== null && !progressRow?.startedAt) {
+  if (!freeOnly && entitlement.lessonQuota !== null && !progressRow?.startedAt) {
     const lessonsStarted = await countLessonsStarted(userId, entitlement.periodStartedAt);
     if (lessonsStarted >= entitlement.lessonQuota) {
       res
@@ -398,7 +421,7 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
   })();
 
   const currentLevelOrder = currentLevel?.order ?? null;
-  const state = deriveLessonStateWithOrders(
+  const curriculumState = deriveLessonStateWithOrders(
     bundle.lesson,
     bundle.levelOrder,
     currentLevelOrder,
@@ -407,6 +430,12 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
     progressRow?.status,
     entitlement.unlimited,
   );
+  const state = freeOnly
+    ? stateForFreeLessonStudent(curriculumState, {
+        isFree: bundle.lesson.id === freeLessonId,
+        started: Boolean(progressRow?.startedAt),
+      })
+    : curriculumState;
 
   // Enforce that locked lessons are not accessible for detail
   if (state === "LOCKED") {
@@ -520,6 +549,7 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
   // Resolved before the progression check below, which needs `unlimited` to
   // let staff past it, as well as by the plan gate further down.
   const entitlement = await getEntitlement(userId, req.session.role);
+  const freeLessonId = await getFreeLessonId();
 
   const state = deriveLessonStateWithOrders(
     lessonRow,
@@ -531,7 +561,23 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
     entitlement.unlimited,
   );
 
-  if (state === "LOCKED") {
+  // The free lesson opens whatever its place in the curriculum: the lessons
+  // before it are paid, so a free-plan student could never unlock it in order.
+  const freeOnly = limitedToFreeLesson(entitlement, freeLessonId);
+  const isOpenFreeLesson = lessonId === freeLessonId && freeOnly;
+  // And one already begun stays open to finish: a lesson started as the free
+  // lesson before an admin chose another.
+  let resumable = false;
+  if (state === "LOCKED" && freeOnly && !isOpenFreeLesson) {
+    const [begun] = await db
+      .select({ startedAt: lessonProgressTable.startedAt })
+      .from(lessonProgressTable)
+      .where(and(eq(lessonProgressTable.userId, userId), eq(lessonProgressTable.lessonId, lessonId)))
+      .limit(1);
+    resumable = Boolean(begun?.startedAt);
+  }
+
+  if (state === "LOCKED" && !isOpenFreeLesson && !resumable) {
     res.status(403).json({ error: "This lesson is locked" });
     return;
   }
@@ -578,11 +624,13 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
 
     denial = checkLessonAccess({
       entitlement,
+      lessonId,
+      freeLessonId,
       lessonTrack: lessonRow.track,
       // Only counted when it can actually change the answer. An unlimited plan
       // and a resume both short-circuit, so the common paths skip the count.
       lessonsStarted:
-        entitlement.lessonQuota !== null && !existing?.startedAt
+        entitlement.lessonQuota !== null && !existing?.startedAt && !limitedToFreeLesson(entitlement, freeLessonId)
           ? await countLessonsStarted(userId, entitlement.periodStartedAt, tx)
           : 0,
       // `startedAt`, not the row: a not_started row has opened nothing.
@@ -658,8 +706,9 @@ async function refuseUnopenedLesson(
   const entitlement = await getEntitlement(userId, role);
   if (entitlement.unlimited) return false;
 
-  if (!isLessonInTrack(entitlement, lesson.track)) {
-    res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
+  const openDenial = await lessonOpenDenialFor(userId, entitlement, lesson);
+  if (openDenial) {
+    res.status(403).json({ ...DENIAL_MESSAGES[openDenial], reason: openDenial });
     return true;
   }
 

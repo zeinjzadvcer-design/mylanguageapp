@@ -100,12 +100,21 @@ export const lessonsTable = pgTable("lessons", {
   createdBy: integer("created_by").references(() => usersTable.id),
   /** Soft-delete timestamp. Non-null = soft-deleted. */
   softDeletedAt: timestamp("soft_deleted_at", { withTimezone: true }),
+  /**
+   * The lesson students on the free plan get. Chosen by an admin or a lesson
+   * editor; at most one lesson has it (the index below). While it is set on a
+   * published lesson, free-plan students can open that lesson and no other —
+   * see services/free-lesson.ts.
+   */
+  isFreeLesson: boolean("is_free_lesson").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 }, (t) => ({
     lessonsStatusIdx: index("lessons_status_idx").on(t.status),
     lessonsSoftDeletedIdx: index("lessons_soft_deleted_idx").on(t.softDeletedAt).where(sql`(soft_deleted_at IS NULL)`),
     lessonsTrackIdx: index("lessons_track_idx").on(t.track),
+    // One free lesson at most: a second `true` is refused by the database.
+    lessonsOneFreeLesson: uniqueIndex("lessons_one_free_lesson").on(t.isFreeLesson).where(sql`is_free_lesson`),
 }));
 
 export type Lesson = typeof lessonsTable.$inferSelect;

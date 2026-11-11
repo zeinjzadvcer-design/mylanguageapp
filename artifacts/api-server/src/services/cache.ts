@@ -56,6 +56,9 @@ export const TTL = {
   VOCABULARY: 900,                // 15 minutes
   /** Subscription plan definitions are very stable */
   SUBSCRIPTION_PLANS: 3600,       // 1 hour
+  /** Which lesson is free. Cleared when it is changed; short so publishing or
+   * unpublishing that lesson shows within a minute without its own hook. */
+  FREE_LESSON: 60,
 } as const;
 
 // ─── Cache key registry ───────────────────────────────────────────────────────
@@ -76,6 +79,7 @@ export const CK = {
   vocabByLesson:      (lid: number) => `v2:vocab:lesson:${lid}`,
   vocabByLevel:       (lid: number) => `v2:vocab:level:${lid}`,
   vocabAll:           () => "v2:vocab:all",
+  freeLesson:         () => "v1:free-lesson",
 } as const;
 
 // ─── In-process fallback cache ────────────────────────────────────────────────

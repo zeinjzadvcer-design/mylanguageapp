@@ -3470,12 +3470,14 @@ components:
           enum: [LOCKED, AVAILABLE, IN_PROGRESS, COMPLETED]
         lockedReason:
           type: ["string", "null"]
-          enum: [quota_exhausted, null]
+          enum: [quota_exhausted, free_lesson_only, null]
           description: >-
             Set when the lesson is locked by the student's PLAN rather than by
             curriculum progression, so the UI can offer an upgrade instead of
-            "finish the previous lesson". Null when the lock is ordinary
-            progression, or when the lesson is not locked.
+            "finish the previous lesson". `free_lesson_only`: the student is on
+            the free plan and a free lesson is chosen, so only that one is open.
+            Null when the lock is ordinary progression, or when the lesson is
+            not locked.
         isUnlocked:
           type: boolean
         isCompleted:
@@ -3484,6 +3486,11 @@ components:
           type: ["number", "null"]
         xpReward:
           type: number
+        isFreeLesson:
+          type: boolean
+          description: >-
+            The lesson chosen as free. A student on the free plan can open it
+            and no other, whatever its track or place in the curriculum.
 
     ContentBlock:
       type: object

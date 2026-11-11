@@ -25,6 +25,7 @@ import { hasPermission } from "../../services/access-policy";
 import { audit } from "../../services/cms-audit";
 import { invalidate, invalidatePrefix, CK } from "../../services/cache";
 import { toStudentContentBlocks } from "../../services/lesson-content";
+import { setFreeLesson } from "../../services/free-lesson";
 
 const router: IRouter = Router();
 
@@ -68,10 +69,12 @@ router.get("/cms/lessons", requirePermission("content.view"), async (req, res): 
       order: number; xp_reward: number; passing_score: number;
       is_published: boolean; difficulty: string | null; tags: string[] | null;
       created_at: Date; updated_at: Date; level_code: string; curriculum_id: number;
+      is_free_lesson: boolean;
     }>(
       `SELECT l.id, l.level_id, l.title, l.title_ar, l.status, l.lesson_type,
               l.estimated_minutes, l.order, l.xp_reward, l.passing_score,
               l.is_published, l.difficulty, l.tags, l.created_at, l.updated_at,
+              l.is_free_lesson,
               lv.code AS level_code, lv.curriculum_id
        FROM lessons l ${joinClause}
        ${where}
@@ -91,10 +94,63 @@ router.get("/cms/lessons", requirePermission("content.view"), async (req, res): 
       xpReward: l.xp_reward, passingScore: l.passing_score,
       difficulty: l.difficulty, tags: l.tags,
       createdAt: l.created_at, updatedAt: l.updated_at,
+      isFreeLesson: l.is_free_lesson,
     })),
     total: parseInt(countResult.rows[0].count, 10),
     page, limit,
   });
+});
+
+// ─── The free lesson ─────────────────────────────────────────────────────────
+
+/**
+ * PUT /cms/free-lesson — choose the lesson free-plan students get, or clear it.
+ *
+ * Body: { lessonId: number | null }. Admins and lesson editors (content.edit).
+ * Only a published lesson can be chosen: students on the free plan could not
+ * open anything else. One lesson at most; choosing another moves it.
+ */
+router.put("/cms/free-lesson", requirePermission("content.edit"), async (req, res): Promise<void> => {
+  const raw = req.body?.lessonId;
+  const lessonId = raw === null ? null : Number(raw);
+  if (lessonId !== null && (!Number.isInteger(lessonId) || lessonId <= 0)) {
+    res.status(400).json({ error: "lessonId must be a lesson id or null" });
+    return;
+  }
+
+  let title: string | null = null;
+  if (lessonId !== null) {
+    const [lesson] = await db
+      .select({ title: lessonsTable.title, status: lessonsTable.status, softDeletedAt: lessonsTable.softDeletedAt })
+      .from(lessonsTable)
+      .where(eq(lessonsTable.id, lessonId))
+      .limit(1);
+    if (!lesson || lesson.softDeletedAt) {
+      res.status(404).json({ error: "Lesson not found" });
+      return;
+    }
+    if (lesson.status !== "published") {
+      res.status(422).json({
+        error: "Only a published lesson can be the free lesson.",
+        errorAr: "يمكن اختيار درس منشور فقط كدرس مجاني.",
+        code: "NOT_PUBLISHED",
+      });
+      return;
+    }
+    title = lesson.title;
+  }
+
+  await setFreeLesson(lessonId);
+  await audit(
+    req.session.userId!,
+    lessonId === null ? "clear_free_lesson" : "set_free_lesson",
+    "lesson",
+    lessonId,
+    null,
+    null,
+    title ? { title } : undefined,
+  );
+  res.json({ lessonId });
 });
 
 // ─── Get single lesson (full metadata, no content blocks) ─────────────────

@@ -106,7 +106,60 @@ export function currentPeriodStart(anchor: Date, now: Date = new Date()): Date {
 }
 
 /** Why a lesson is not startable. `null` means it is. */
-export type LessonDenial = "wrong_track" | "quota_exhausted";
+export type LessonDenial = "wrong_track" | "quota_exhausted" | "free_lesson_only";
+
+/**
+ * Whether this student is limited to the chosen free lesson.
+ *
+ * Applies to anyone without a paid plan and not staff, once an admin or a
+ * lesson editor has chosen a free lesson (`freeLessonId`, null when none is
+ * chosen or it is not published). With none chosen the free plan keeps its
+ * monthly allowance of any lesson in its track, as before.
+ */
+export function limitedToFreeLesson(entitlement: Entitlement, freeLessonId: number | null): boolean {
+  return !entitlement.unlimited && !entitlement.isPaid && freeLessonId !== null;
+}
+
+/**
+ * Whether this student may open (read) a lesson at all.
+ *
+ * The free lesson is open to a free-plan student whatever its track. A lesson
+ * they had already started before a free lesson was chosen stays open, so no
+ * one loses work they began.
+ */
+export function lessonOpenDenial(args: {
+  entitlement: Entitlement;
+  lessonId: number;
+  lessonTrack: string;
+  freeLessonId: number | null;
+  alreadyStarted: boolean;
+}): LessonDenial | null {
+  const { entitlement, lessonId, lessonTrack, freeLessonId, alreadyStarted } = args;
+  if (entitlement.unlimited) return null;
+  if (limitedToFreeLesson(entitlement, freeLessonId)) {
+    return lessonId === freeLessonId || alreadyStarted ? null : "free_lesson_only";
+  }
+  return isLessonInTrack(entitlement, lessonTrack) ? null : "wrong_track";
+}
+
+/**
+ * A lesson's state in the curriculum, for a student limited to the free lesson.
+ *
+ * The free lesson is always open, whatever level or order it sits at: the
+ * lessons before it are paid, so a student could never unlock it by
+ * progression. Every other lesson shows as locked unless it was started: one
+ * begun as the free lesson before an admin chose another stays open to finish,
+ * even where the curriculum's order would lock it.
+ */
+export function stateForFreeLessonStudent(
+  state: LessonState,
+  lesson: { isFree: boolean; started: boolean },
+): LessonState {
+  if (state === "COMPLETED" || state === "IN_PROGRESS") return state;
+  if (lesson.isFree) return "AVAILABLE";
+  if (lesson.started) return state === "LOCKED" ? "IN_PROGRESS" : state;
+  return "LOCKED";
+}
 
 /** Why a peer call is not startable. `null` means it is. */
 export type CallDenial = "call_quota_exhausted";
@@ -165,10 +218,20 @@ export function checkLessonAccess(args: {
   lessonTrack: string;
   lessonsStarted: number;
   alreadyStarted: boolean;
+  /** The lesson being started; needed only when a free lesson is chosen. */
+  lessonId?: number;
+  /** The chosen free lesson; null or absent when none is chosen. */
+  freeLessonId?: number | null;
 }): LessonDenial | null {
   const { entitlement, lessonTrack, lessonsStarted, alreadyStarted } = args;
 
   if (entitlement.unlimited) return null;
+
+  // The free lesson replaces the free plan's monthly allowance: it does not
+  // count against one, and nothing else can be started.
+  if (limitedToFreeLesson(entitlement, args.freeLessonId ?? null)) {
+    return args.lessonId === args.freeLessonId || alreadyStarted ? null : "free_lesson_only";
+  }
 
   if (!isLessonInTrack(entitlement, lessonTrack)) return "wrong_track";
 
@@ -208,6 +271,10 @@ export const DENIAL_MESSAGES: Record<LessonDenial, { error: string; errorAr: str
   wrong_track: {
     error: "This lesson is not part of your plan",
     errorAr: "هذا الدرس غير متضمن في خطتك",
+  },
+  free_lesson_only: {
+    error: "The free plan includes one free lesson. Subscribe to open the others.",
+    errorAr: "تشمل الخطة المجانية درساً مجانياً واحداً. اشترك لفتح بقية الدروس.",
   },
   quota_exhausted: {
     // Worded for a monthly allowance now, not a one-off trial: the free plan

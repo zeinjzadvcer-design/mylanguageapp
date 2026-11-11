@@ -13,7 +13,8 @@ import {
 import { requireAuth, currentRole } from "../middlewares/auth";
 import { isUnmeteredRole } from "../services/entitlement-policy";
 import { getStudentCurriculumContext, publishedLessonFilter } from "../services/learning";
-import { DENIAL_MESSAGES, getEntitlement, isLessonInTrack } from "../services/entitlements";
+import { DENIAL_MESSAGES, getEntitlement } from "../services/entitlements";
+import { lessonOpenDenialFor } from "../services/free-lesson";
 
 const router: IRouter = Router();
 
@@ -105,8 +106,9 @@ router.post("/exercises/:exerciseId/submit", requireAuth, async (req, res): Prom
     // Same plan gate as the lesson itself: grading an exercise from the other
     // track would reveal its answers to a student who cannot open the lesson.
     const entitlement = await getEntitlement(userId, role);
-    if (!isLessonInTrack(entitlement, lesson.track)) {
-      res.status(403).json({ ...DENIAL_MESSAGES.wrong_track, reason: "wrong_track" });
+    const openDenial = await lessonOpenDenialFor(userId, entitlement, lesson);
+    if (openDenial) {
+      res.status(403).json({ ...DENIAL_MESSAGES[openDenial], reason: openDenial });
       return;
     }
   }
