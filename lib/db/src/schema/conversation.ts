@@ -7,6 +7,7 @@ import {
   timestamp,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
@@ -70,6 +71,8 @@ export const conversationSessionsTable = pgTable(
       .on(table.userId)
       .where(sql`${table.status} = 'active'`),
     userIdx: index("conversation_sessions_user_idx").on(table.userId, table.startedAt),
+    conversationSessionsCapsCheck: check("conversation_sessions_caps_check", sql`(max_turns > 0) AND (max_turns <= 10000) AND (max_minutes > 0) AND (max_minutes <= 1440)`),
+    conversationSessionsStatusCheck: check("conversation_sessions_status_check", sql`status = ANY (ARRAY['active'::text, 'completed'::text, 'abandoned'::text])`),
   }),
 );
 
@@ -101,6 +104,7 @@ export const conversationTurnsTable = pgTable(
       table.sessionId,
       table.createdAt,
     ),
+    conversationTurnsRoleCheck: check("conversation_turns_role_check", sql`role = ANY (ARRAY['student'::text, 'tutor'::text])`),
   }),
 );
 

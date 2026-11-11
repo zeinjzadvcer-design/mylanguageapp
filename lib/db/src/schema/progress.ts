@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -9,6 +10,7 @@ import {
   jsonb,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { lessonsTable, contentBlocksTable, exercisesTable } from "./levels";
@@ -36,7 +38,8 @@ export const lessonProgressTable = pgTable("lesson_progress", {
 }, (table) => ({
   userLessonUnique: uniqueIndex("lesson_progress_user_lesson_unique").on(table.userId, table.lessonId),
   userIdIdx: index("lesson_progress_user_id_idx").on(table.userId),
-}));
+    lessonProgressUserStartedIdx: index("lesson_progress_user_started_idx").on(table.userId, table.startedAt).where(sql`(started_at IS NOT NULL)`),
+  }));
 
 export type LessonProgress = typeof lessonProgressTable.$inferSelect;
 
@@ -157,6 +160,11 @@ export const learningActivityAttemptsTable = pgTable("learning_activity_attempts
   ),
   userLessonIdx: index("laa_user_lesson_idx").on(table.userId, table.lessonId),
   userBlockIdx: index("laa_user_block_idx").on(table.userId, table.blockId),
-}));
+    laaMediaAssetIdx: index("laa_media_asset_idx").on(table.mediaAssetId).where(sql`(media_asset_id IS NOT NULL)`),
+    laaPendingIdx: index("laa_pending_idx").on(table.submittedAt).where(sql`(evaluation_status = 'pending'::text)`),
+    laaSweepIdx: index("laa_sweep_idx").on(table.submittedAt).where(sql`(evaluation_status = 'pending'::text)`),
+    laaGradedByCheck: check("laa_graded_by_check", sql`graded_by = ANY (ARRAY['auto'::text, 'ai'::text, 'teacher'::text, 'pending'::text])`),
+    laaSpeechScoresCheck: check("laa_speech_scores_check", sql`((pronunciation_score IS NULL) OR ((pronunciation_score >= (0)::double precision) AND (pronunciation_score <= (100)::double precision))) AND ((fluency_score IS NULL) OR ((fluency_score >= (0)::double precision) AND (fluency_score <= (100)::double precision)))`),
+  }));
 
 export type LearningActivityAttempt = typeof learningActivityAttemptsTable.$inferSelect;

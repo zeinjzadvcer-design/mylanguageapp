@@ -1,6 +1,22 @@
-import { pgTable, text, serial, integer, boolean, timestamp, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  boolean,
+  timestamp,
+  uniqueIndex,
+  jsonb,
+  index,
+  check,
+  foreignKey,
+} from "drizzle-orm/pg-core";
 import { curriculaTable } from "./languages";
 import { usersTable } from "./users";
+// Circular with ./quizzes, which imports levelsTable. Safe because both sides
+// only read the other inside callbacks Drizzle runs after every module loads.
+import { quizzesTable } from "./quizzes";
 
 export const levelsTable = pgTable("levels", {
   id: serial("id").primaryKey(),
@@ -29,7 +45,8 @@ export const levelsTable = pgTable("levels", {
     table.curriculumId,
     table.code,
   ),
-}));
+    levelsEvaluationUnlockPercentCheck: check("levels_evaluation_unlock_percent_check", sql`(evaluation_unlock_percent >= 0) AND (evaluation_unlock_percent <= 100)`),
+  }));
 
 export type Level = typeof levelsTable.$inferSelect;
 
@@ -85,7 +102,11 @@ export const lessonsTable = pgTable("lessons", {
   softDeletedAt: timestamp("soft_deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (t) => ({
+    lessonsStatusIdx: index("lessons_status_idx").on(t.status),
+    lessonsSoftDeletedIdx: index("lessons_soft_deleted_idx").on(t.softDeletedAt).where(sql`(soft_deleted_at IS NULL)`),
+    lessonsTrackIdx: index("lessons_track_idx").on(t.track),
+}));
 
 export type Lesson = typeof lessonsTable.$inferSelect;
 
@@ -99,7 +120,8 @@ export const contentBlocksTable = pgTable("content_blocks", {
   /**
    * A block belongs to EITHER a lesson OR a quiz — exactly one of these is
    * set, enforced by the content_blocks_parent_ck CHECK constraint.
-   * quizId is untyped here to avoid a circular import with ./quizzes.
+   * quizId's foreign key is declared below, under the name migration 003
+   * gave it, so the schema push keeps it rather than dropping it.
    */
   lessonId: integer("lesson_id").references(() => lessonsTable.id, { onDelete: "cascade" }),
   quizId: integer("quiz_id"),
@@ -149,7 +171,17 @@ export const contentBlocksTable = pgTable("content_blocks", {
   config: jsonb("config"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }),
-});
+}, (t) => ({
+    contentBlocksQuizOrderIdx: index("content_blocks_quiz_order_idx").on(t.quizId, t.order),
+    contentBlocksImageMediaIdx: index("content_blocks_image_media_idx").on(t.imageMediaId).where(sql`(image_media_id IS NOT NULL)`),
+    contentBlocksAudioMediaIdx: index("content_blocks_audio_media_idx").on(t.audioMediaId).where(sql`(audio_media_id IS NOT NULL)`),
+    contentBlocksParentCk: check("content_blocks_parent_ck", sql`num_nonnulls(lesson_id, quiz_id) = 1`),
+    contentBlocksQuizIdFk: foreignKey({
+      name: "content_blocks_quiz_id_fk",
+      columns: [t.quizId],
+      foreignColumns: [quizzesTable.id],
+    }).onDelete("cascade"),
+}));
 
 export type ContentBlock = typeof contentBlocksTable.$inferSelect;
 

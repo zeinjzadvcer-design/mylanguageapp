@@ -1,9 +1,21 @@
+import { sql } from "drizzle-orm";
 /**
  * CMS-specific tables: media assets, audit logs, lesson reviews.
  * These are internal admin tables not exposed to students.
  */
 
-import { pgTable, text, serial, integer, real, jsonb, timestamp, index } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  real,
+  jsonb,
+  timestamp,
+  index,
+  uniqueIndex,
+  check,
+} from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { lessonsTable } from "./levels";
 
@@ -63,7 +75,10 @@ export const mediaAssetsTable = pgTable("media_assets", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   ownerIdx: index("media_assets_owner_idx").on(table.ownerUserId, table.createdAt),
-}));
+    mediaAssetsKeyUnique: uniqueIndex("media_assets_key_unique").on(table.key),
+    mediaAssetsPendingIdx: index("media_assets_pending_idx").on(table.createdAt).where(sql`(status = 'pending'::text)`),
+    mediaAssetsStatusCheck: check("media_assets_status_check", sql`status = ANY (ARRAY['pending'::text, 'ready'::text, 'failed'::text])`),
+  }));
 
 export type MediaAsset = typeof mediaAssetsTable.$inferSelect;
 
@@ -84,7 +99,11 @@ export const cmsAuditLogsTable = pgTable("cms_audit_logs", {
   /** Optional JSON bag of additional context (title, level, etc.) */
   meta: jsonb("meta"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+    cmsAuditLogsContentIdx: index("cms_audit_logs_content_idx").on(t.contentType, t.contentId),
+    cmsAuditLogsUserIdx: index("cms_audit_logs_user_idx").on(t.userId),
+    cmsAuditLogsCreatedIdx: index("cms_audit_logs_created_idx").on(t.createdAt.desc().nullsFirst()),
+}));
 
 export type CmsAuditLog = typeof cmsAuditLogsTable.$inferSelect;
 
@@ -99,6 +118,8 @@ export const lessonReviewsTable = pgTable("lesson_reviews", {
   decision: text("decision").notNull(),
   notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+    lessonReviewsLessonIdx: index("lesson_reviews_lesson_idx").on(t.lessonId),
+}));
 
 export type LessonReview = typeof lessonReviewsTable.$inferSelect;

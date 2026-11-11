@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   index,
   foreignKey,
+  check,
 } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 
@@ -117,6 +118,8 @@ export const aiProvidersTable = pgTable(
     oneActivePerRole: uniqueIndex("ai_providers_one_active_per_role")
       .on(table.role)
       .where(sql`${table.isActive}`),
+    aiProvidersPricesCheck: check("ai_providers_prices_check", sql`((input_price_per_mtok IS NULL) OR (input_price_per_mtok >= (0)::double precision)) AND ((output_price_per_mtok IS NULL) OR (output_price_per_mtok >= (0)::double precision)) AND ((price_per_minute IS NULL) OR (price_per_minute >= (0)::double precision))`),
+    aiProvidersRoleCheck: check("ai_providers_role_check", sql`role = ANY (ARRAY['chat'::text, 'speech'::text])`),
   }),
 );
 
@@ -145,7 +148,11 @@ export const aiTaskSettingsTable = pgTable("ai_task_settings", {
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date()),
-});
+}, (t) => ({
+    aiTaskSettingsMaxTokensCheck: check("ai_task_settings_max_tokens_check", sql`(max_tokens > 0) AND (max_tokens <= 32768)`),
+    aiTaskSettingsTemperatureCheck: check("ai_task_settings_temperature_check", sql`(temperature >= (0)::double precision) AND (temperature <= (2)::double precision)`),
+    aiTaskSettingsTaskCheck: check("ai_task_settings_task_check", sql`task = ANY (ARRAY['open_answer'::text, 'placement_analysis'::text, 'conversation'::text, 'feedback'::text, 'weakness_analysis'::text, 'transcription'::text, 'peer_call_analysis'::text])`),
+}));
 
 export type AiTaskSettings = typeof aiTaskSettingsTable.$inferSelect;
 
@@ -184,6 +191,7 @@ export const aiPlanPoliciesTable = pgTable(
       table.planCode,
       table.task,
     ),
+    aiPlanPoliciesDailyLimitCheck: check("ai_plan_policies_daily_limit_check", sql`daily_limit >= '-1'::integer`),
   }),
 );
 
@@ -195,7 +203,9 @@ export type AiPlanPolicy = typeof aiPlanPoliciesTable.$inferSelect;
  * which queries it in SQL).
  *
  * Created and changed by the SQL migrations (001, 006, 007, 016), and
- * described here exactly as they left it, names included. While it was missing
+ * described here exactly as they left it, names included. DESC indexes say
+ * nullsFirst() because that is what a plain DESC in SQL means; Drizzle's
+ * .desc() alone means NULLS LAST, a different index. While it was missing
  * from this schema, the schema push could not tell a new table from a rename
  * of this one and stopped to ask; and hiding it from the push instead made its
  * id sequence look like something to drop. Change it with a SQL migration,
@@ -225,9 +235,9 @@ export const aiUsageLogsTable = pgTable(
       foreignColumns: [usersTable.id],
     }).onDelete("cascade"),
     createdAtIdx: index("ai_usage_logs_created_at_idx").on(t.createdAt),
-    createdIdx: index("ai_usage_logs_created_idx").on(t.createdAt.desc()),
-    taskCreatedIdx: index("ai_usage_logs_task_created_idx").on(t.task, t.createdAt.desc()),
-    userCreatedIdx: index("ai_usage_logs_user_created_idx").on(t.userId, t.createdAt.desc()),
+    createdIdx: index("ai_usage_logs_created_idx").on(t.createdAt.desc().nullsFirst()),
+    taskCreatedIdx: index("ai_usage_logs_task_created_idx").on(t.task, t.createdAt.desc().nullsFirst()),
+    userCreatedIdx: index("ai_usage_logs_user_created_idx").on(t.userId, t.createdAt.desc().nullsFirst()),
     userIdIdx: index("ai_usage_logs_user_id_idx").on(t.userId, t.createdAt),
   }),
 );

@@ -1,6 +1,16 @@
 import {
-  pgTable, text, serial, integer, boolean, timestamp, real, numeric, jsonb,
-  uniqueIndex, index,
+  pgTable,
+  text,
+  serial,
+  integer,
+  boolean,
+  timestamp,
+  real,
+  numeric,
+  jsonb,
+  uniqueIndex,
+  index,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
@@ -81,7 +91,9 @@ export const subscriptionPlansTable = pgTable("subscription_plans", {
   priceSyp: numeric("price_syp", { precision: 14, scale: 2 }),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+    subscriptionPlansLessonTrackIdx: index("subscription_plans_lesson_track_idx").on(t.lessonTrack),
+}));
 
 export type SubscriptionPlan = typeof subscriptionPlansTable.$inferSelect;
 
@@ -134,7 +146,10 @@ export const studentSubscriptionsTable = pgTable("student_subscriptions", {
   quotedAt: timestamp("quoted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (t) => ({
+    studentSubscriptionsUserStatusIdx: index("student_subscriptions_user_status_idx").on(t.userId, t.status),
+    studentSubscriptionsExpiryIdx: index("student_subscriptions_expiry_idx").on(t.expiresAt).where(sql`(status = 'active'::text)`),
+}));
 
 export type StudentSubscription = typeof studentSubscriptionsTable.$inferSelect;
 
@@ -394,10 +409,7 @@ export const walletSmsMessagesTable = pgTable("wallet_sms_messages", {
    */
   parsedOperationNumber: text("parsed_operation_number"),
   parsedAmountSyp: numeric("parsed_amount_syp", { precision: 14, scale: 2 }),
-  matchedSubmissionId: integer("matched_submission_id").references(
-    () => paymentSubmissionsTable.id,
-    { onDelete: "set null" },
-  ),
+  matchedSubmissionId: integer("matched_submission_id"),
   matchedAt: timestamp("matched_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
@@ -420,6 +432,14 @@ export const walletSmsMessagesTable = pgTable("wallet_sms_messages", {
   unmatchedIdx: index("wallet_sms_unmatched_idx")
     .on(table.receivedAt)
     .where(sql`${table.matchedSubmissionId} is null`),
+  // Named here because the name Drizzle would generate is longer than the 63
+  // characters Postgres keeps: it stored this shortened form, and every push
+  // then dropped and re-added the key to "fix" the difference.
+  matchedSubmissionFk: foreignKey({
+    name: "wallet_sms_messages_matched_submission_id_payment_submissions_i",
+    columns: [table.matchedSubmissionId],
+    foreignColumns: [paymentSubmissionsTable.id],
+  }).onDelete("set null"),
 }));
 
 export type WalletSmsMessage = typeof walletSmsMessagesTable.$inferSelect;

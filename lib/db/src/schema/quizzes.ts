@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   serial,
@@ -7,6 +8,9 @@ import {
   timestamp,
   jsonb,
   real,
+  index,
+  uniqueIndex,
+  check,
 } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { levelsTable } from "./levels";
@@ -84,7 +88,15 @@ export const quizzesTable = pgTable("quizzes", {
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date()),
-});
+}, (t) => ({
+    quizzesStatusIdx: index("quizzes_status_idx").on(t.status),
+    quizzesLevelIdx: index("quizzes_level_idx").on(t.levelId),
+    quizzesKindIdx: index("quizzes_kind_idx").on(t.kind),
+    quizzesOnePublishedEvaluationPerLevel: uniqueIndex("quizzes_one_published_evaluation_per_level").on(t.levelId).where(sql`((kind = 'level_evaluation'::text) AND (status = 'published'::text) AND (soft_deleted_at IS NULL))`),
+    quizzesCooldownHoursCheck: check("quizzes_cooldown_hours_check", sql`(cooldown_hours IS NULL) OR (cooldown_hours >= 0)`),
+    quizzesEvaluationNeedsLevelCheck: check("quizzes_evaluation_needs_level_check", sql`(kind <> 'level_evaluation'::text) OR (level_id IS NOT NULL)`),
+    quizzesKindCheck: check("quizzes_kind_check", sql`kind = ANY (ARRAY['practice'::text, 'level_evaluation'::text])`),
+}));
 export type Quiz = typeof quizzesTable.$inferSelect;
 export type NewQuiz = typeof quizzesTable.$inferInsert;
 
@@ -118,7 +130,11 @@ export const quizAttemptsTable = pgTable("quiz_attempts", {
     .defaultNow(),
   submittedAt: timestamp("submitted_at", { withTimezone: true }),
   gradedAt: timestamp("graded_at", { withTimezone: true }),
-});
+}, (t) => ({
+    quizAttemptsUserQuizIdx: index("quiz_attempts_user_quiz_idx").on(t.userId, t.quizId),
+    quizAttemptsStatusIdx: index("quiz_attempts_status_idx").on(t.status),
+    quizAttemptsOneActiveIdx: uniqueIndex("quiz_attempts_one_active_idx").on(t.userId, t.quizId).where(sql`(status = 'in_progress'::text)`),
+}));
 export type QuizAttempt = typeof quizAttemptsTable.$inferSelect;
 
 /**
@@ -174,5 +190,11 @@ export const quizResponsesTable = pgTable("quiz_responses", {
     .notNull()
     .defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }),
-});
+}, (t) => ({
+    quizResponsesAttemptBlockIdx: uniqueIndex("quiz_responses_attempt_block_idx").on(t.attemptId, t.blockId),
+    quizResponsesPendingIdx: index("quiz_responses_pending_idx").on(t.gradedBy).where(sql`(graded_by = 'pending'::text)`),
+    quizResponsesMediaAssetIdx: index("quiz_responses_media_asset_idx").on(t.mediaAssetId).where(sql`(media_asset_id IS NOT NULL)`),
+    quizResponsesSweepIdx: index("quiz_responses_sweep_idx").on(t.createdAt).where(sql`(graded_by = 'pending'::text)`),
+    quizResponsesSpeechScoresCheck: check("quiz_responses_speech_scores_check", sql`((pronunciation_score IS NULL) OR ((pronunciation_score >= (0)::double precision) AND (pronunciation_score <= (100)::double precision))) AND ((fluency_score IS NULL) OR ((fluency_score >= (0)::double precision) AND (fluency_score <= (100)::double precision)))`),
+}));
 export type QuizResponse = typeof quizResponsesTable.$inferSelect;

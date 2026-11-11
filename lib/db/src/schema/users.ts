@@ -1,4 +1,13 @@
-import { pgTable, text, serial, integer, timestamp, boolean, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  timestamp,
+  boolean,
+  uniqueIndex,
+  index,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { curriculaTable } from "./languages";
@@ -33,7 +42,9 @@ export const usersTable = pgTable("users", {
   referralDetail: text("referral_detail"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (t) => ({
+    usersReferralSourceIdx: index("users_referral_source_idx").on(t.referralSource),
+}));
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({
   id: true, createdAt: true, updatedAt: true, passwordHash: true,
@@ -75,6 +86,9 @@ export const passwordResetTokensTable = pgTable("password_reset_tokens", {
   /** Set when spent. A link works exactly once. */
   usedAt: timestamp("used_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+    passwordResetUserIdx: index("password_reset_user_idx").on(t.userId),
+    passwordResetExpiryIdx: index("password_reset_expiry_idx").on(t.expiresAt),
+}));
 
 export type PasswordResetToken = typeof passwordResetTokensTable.$inferSelect;

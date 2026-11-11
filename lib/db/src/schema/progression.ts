@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   serial,
@@ -5,6 +6,8 @@ import {
   integer,
   timestamp,
   index,
+  uniqueIndex,
+  check,
 } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { levelsTable } from "./levels";
@@ -71,6 +74,8 @@ export const levelProgressionsTable = pgTable(
       table.userId,
       table.createdAt,
     ),
+    levelProgressionsOnePerAttempt: uniqueIndex("level_progressions_one_per_attempt").on(table.quizAttemptId).where(sql`(quiz_attempt_id IS NOT NULL)`),
+    levelProgressionsReasonCheck: check("level_progressions_reason_check", sql`reason = ANY (ARRAY['placement'::text, 'evaluation'::text, 'admin_override'::text])`),
   }),
 );
 

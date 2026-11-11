@@ -1,4 +1,16 @@
-import { pgTable, text, serial, integer, boolean, timestamp, real, jsonb } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  boolean,
+  timestamp,
+  real,
+  jsonb,
+  index,
+  check,
+} from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { levelsTable } from "./levels";
 import { curriculaTable } from "./languages";
@@ -27,7 +39,12 @@ export const placementQuestionsTable = pgTable("placement_questions", {
   isActive: boolean("is_active").notNull().default(true),
   order: integer("order").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+    placementQuestionsActiveIdx: index("placement_questions_active_idx").on(t.order).where(sql`is_active`),
+    placementQuestionsTypeCheck: check("placement_questions_type_check", sql`type = ANY (ARRAY['mcq'::text, 'fill_blank'::text, 'written'::text])`),
+    placementQuestionsDifficultyCheck: check("placement_questions_difficulty_check", sql`difficulty = ANY (ARRAY['A1'::text, 'A2'::text, 'B1'::text, 'B2'::text, 'C1'::text, 'C2'::text])`),
+    placementQuestionsSkillCheck: check("placement_questions_skill_check", sql`skill = ANY (ARRAY['reading'::text, 'listening'::text, 'vocabulary'::text, 'grammar'::text, 'comprehension'::text, 'writing'::text])`),
+}));
 
 export type PlacementQuestion = typeof placementQuestionsTable.$inferSelect;
 
@@ -74,6 +91,8 @@ export const placementResultsTable = pgTable("placement_results", {
   adjustmentReason: text("adjustment_reason"),
 
   completedAt: timestamp("completed_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+    placementResultsWritingScoreCheck: check("placement_results_writing_score_check", sql`(writing_score IS NULL) OR ((writing_score >= (0)::double precision) AND (writing_score <= (100)::double precision))`),
+}));
 
 export type PlacementResult = typeof placementResultsTable.$inferSelect;

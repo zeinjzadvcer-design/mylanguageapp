@@ -8,6 +8,7 @@ import {
   timestamp,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 import { real } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -177,6 +178,9 @@ export const practiceSessionsTable = pgTable(
       table.matchedAt,
     ),
     partnerIdx: index("practice_sessions_partner_idx").on(table.partnerId, table.matchedAt),
+    practiceSessionsActivePresenceIdx: index("practice_sessions_active_presence_idx").on(table.status, table.startedAt).where(sql`(status = 'active'::text)`),
+    practiceSessionsDistinctCheck: check("practice_sessions_distinct_check", sql`requester_id <> partner_id`),
+    practiceSessionsStatusCheck: check("practice_sessions_status_check", sql`status = ANY (ARRAY['waiting'::text, 'active'::text, 'ended'::text, 'declined'::text])`),
   }),
 );
 
@@ -210,6 +214,7 @@ export const practiceBlocksTable = pgTable(
       table.blockedId,
     ),
     blockedIdx: index("practice_blocks_blocked_idx").on(table.blockedId),
+    practiceBlocksDistinctCheck: check("practice_blocks_distinct_check", sql`blocker_id <> blocked_id`),
   }),
 );
 
@@ -258,6 +263,9 @@ export const practiceReportsTable = pgTable(
       table.reportedId,
       table.createdAt,
     ),
+    practiceReportsDistinctCheck: check("practice_reports_distinct_check", sql`reporter_id <> reported_id`),
+    practiceReportsReasonCheck: check("practice_reports_reason_check", sql`reason = ANY (ARRAY['harassment'::text, 'inappropriate'::text, 'spam'::text, 'language'::text, 'other'::text])`),
+    practiceReportsStatusCheck: check("practice_reports_status_check", sql`status = ANY (ARRAY['open'::text, 'reviewed'::text, 'actioned'::text])`),
   }),
 );
 
@@ -295,6 +303,7 @@ export const practiceSignalsTable = pgTable(
       table.toUserId,
       table.id,
     ),
+    practiceSignalsKindCheck: check("practice_signals_kind_check", sql`kind = ANY (ARRAY['offer'::text, 'answer'::text, 'ice'::text, 'bye'::text])`),
   }),
 );
 
@@ -404,6 +413,7 @@ export const practiceCallEvaluationsTable = pgTable(
       table.requestedBy,
       table.requestedAt,
     ),
+    practiceCallEvaluationsPendingIdx: index("practice_call_evaluations_pending_idx").on(table.status, table.requestedAt).where(sql`(status = ANY (ARRAY['requested'::text, 'consented'::text, 'uploaded'::text, 'analyzing'::text]))`),
   }),
 );
 
