@@ -9,7 +9,7 @@
  *
  * Usage: DATABASE_URL=postgresql://... node scripts/migrate.mjs
  */
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,17 +48,24 @@ function pushDrizzleSchema() {
   // Schema and url are passed explicitly rather than via drizzle.config.ts:
   // the config resolves its schema path with __dirname, which breaks when the
   // project lives under a path containing non-ASCII characters.
-  const output = execFileSync(
+  // Quoted for cmd.exe, which the win32 shell below goes through: hosted URLs
+  // carry query strings (Neon: ?sslmode=require&channel_binding=...) and an
+  // unquoted & would end the command there.
+  const arg = (value) => (process.platform === 'win32' ? `"${value}"` : value);
+  const result = spawnSync(
     'pnpm',
     [
       '--filter', '@workspace/db', 'exec', 'drizzle-kit', 'push',
       '--force',
       '--dialect=postgresql',
       '--schema=./src/schema/index.ts',
-      // Quoted for cmd.exe, which the win32 shell below goes through: hosted
-      // URLs carry query strings (Neon: ?sslmode=require&channel_binding=...)
-      // and an unquoted & would end the command there.
-      process.platform === 'win32' ? `"--url=${databaseUrl}"` : `--url=${databaseUrl}`,
+      // The pg_stat_statements extension keeps two views in `public`. They are
+      // not in our schema, so the push tried to drop them, Postgres refused,
+      // and the push stopped after creating tables but before their indexes and
+      // foreign keys. Managed Postgres (DigitalOcean's query insights) commonly
+      // has the extension enabled.
+      arg('--tablesFilter=!pg_stat_statements*'),
+      arg(`--url=${databaseUrl}`),
     ],
     {
       cwd: root,
@@ -68,17 +75,26 @@ function pushDrizzleSchema() {
     },
   );
 
-  process.stdout.write(output);
+  const stdout = result.stdout ?? '';
+  const stderr = result.stderr ?? '';
+  process.stdout.write(stdout);
+  process.stderr.write(stderr);
 
-  // drizzle-kit exits 0 even when the push fails — notably when a structural
-  // change (dropping a NOT NULL, renaming a column) triggers an interactive
-  // confirmation that cannot be answered without a TTY. Trusting the exit code
-  // alone lets the schema silently drift from the code. Scan the output too.
-  if (/Interactive prompts require a TTY|^Error:/m.test(output)) {
+  // drizzle-kit exits 0 even when the push fails, and writes the database's
+  // error to stderr, which this used not to read: a refused statement left the
+  // schema half applied and the script still printed "Migrations complete."
+  // The exit code, stdout and stderr are all checked.
+  if (/Interactive prompts require a TTY/.test(stdout + stderr)) {
     throw new Error(
       'drizzle-kit push did not complete: it needs an interactive prompt for a ' +
         'structural change (exit code 0 is not trustworthy here). Express that ' +
         'change as a SQL file in artifacts/api-server/migrations instead.',
+    );
+  }
+  if (result.error || result.status !== 0 || /^\s*error:/im.test(stdout + stderr)) {
+    throw new Error(
+      'drizzle-kit push failed, so the schema is only partly applied. The ' +
+        "database's error is printed above. Nothing after this step was run.",
     );
   }
 }
