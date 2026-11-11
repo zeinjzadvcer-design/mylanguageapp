@@ -60,10 +60,14 @@ BEGIN
       CHECK (status IN ('active', 'completed', 'abandoned'));
   END IF;
 
+  -- The limits 031 set, not the 100 turns / 120 minutes this first had. The
+  -- schema push drops this constraint on every run (Drizzle does not declare
+  -- it) and this file runs before 031, so re-adding the old limits failed on
+  -- any administrator's conversation 031 allows, and stopped the migration.
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversation_sessions_caps_check') THEN
     ALTER TABLE conversation_sessions
       ADD CONSTRAINT conversation_sessions_caps_check
-      CHECK (max_turns > 0 AND max_turns <= 100 AND max_minutes > 0 AND max_minutes <= 120);
+      CHECK (max_turns > 0 AND max_turns <= 10000 AND max_minutes > 0 AND max_minutes <= 1440);
   END IF;
 END $$;
 
