@@ -72,9 +72,10 @@ export const CK = {
   // compares against undefined and 403s a paying student until it expires. v3
   // retires every entry from both.
   lessonContent:      (lid: number) => `v3:lesson:${lid}:content`,
-  vocabByLesson:      (lid: number) => `v1:vocab:lesson:${lid}`,
-  vocabByLevel:       (lid: number) => `v1:vocab:level:${lid}`,
-  vocabAll:           () => "v1:vocab:all",
+  // v2: deleted words are left out. A v1 list may still hold them.
+  vocabByLesson:      (lid: number) => `v2:vocab:lesson:${lid}`,
+  vocabByLevel:       (lid: number) => `v2:vocab:level:${lid}`,
+  vocabAll:           () => "v2:vocab:all",
 } as const;
 
 // ─── In-process fallback cache ────────────────────────────────────────────────

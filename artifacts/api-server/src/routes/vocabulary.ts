@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db, vocabularyTable } from "@workspace/db";
 import { cached, CK, TTL } from "../services/cache";
 import { requireAuth } from "../middlewares/auth";
@@ -32,7 +32,7 @@ router.get("/vocabulary", requireAuth, async (req, res): Promise<void> => {
 
   if (lessonId && !isNaN(lessonId)) {
     const items = await cached(CK.vocabByLesson(lessonId), TTL.VOCABULARY, () =>
-      db.select().from(vocabularyTable).where(eq(vocabularyTable.lessonId, lessonId)).then(r => r.map(mapItem)),
+      db.select().from(vocabularyTable).where(and(eq(vocabularyTable.lessonId, lessonId), isNull(vocabularyTable.deletedAt))).then(r => r.map(mapItem)),
     );
     res.json(items);
     return;
@@ -40,7 +40,7 @@ router.get("/vocabulary", requireAuth, async (req, res): Promise<void> => {
 
   if (levelId && !isNaN(levelId)) {
     const items = await cached(CK.vocabByLevel(levelId), TTL.VOCABULARY, () =>
-      db.select().from(vocabularyTable).where(eq(vocabularyTable.levelId, levelId)).then(r => r.map(mapItem)),
+      db.select().from(vocabularyTable).where(and(eq(vocabularyTable.levelId, levelId), isNull(vocabularyTable.deletedAt))).then(r => r.map(mapItem)),
     );
     res.json(items);
     return;
@@ -49,7 +49,7 @@ router.get("/vocabulary", requireAuth, async (req, res): Promise<void> => {
   // No filter: the vocabulary page asks for everything. Cached like the other
   // two, rather than reading the whole table on every visit.
   const items = await cached(CK.vocabAll(), TTL.VOCABULARY, () =>
-    db.select().from(vocabularyTable).then((r) => r.map(mapItem)),
+    db.select().from(vocabularyTable).where(isNull(vocabularyTable.deletedAt)).then((r) => r.map(mapItem)),
   );
   res.json(items);
 });

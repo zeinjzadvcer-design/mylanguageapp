@@ -82,8 +82,12 @@ router.patch("/cms/vocabulary/:id", requirePermission("content.edit"), async (re
 
   const [item] = await db.update(vocabularyTable).set(update).where(eq(vocabularyTable.id, id)).returning();
   await audit(req.session.userId!, "update", "vocabulary", id, null, null);
-  if (existing.lessonId) await invalidate(CK.vocabByLesson(existing.lessonId));
-  await invalidate(CK.vocabByLevel(existing.levelId));
+  // Old and new lesson and level both: a word moved to another level leaves
+  // one list and joins the other.
+  const lessons = new Set([existing.lessonId, item?.lessonId].filter((id): id is number => Boolean(id)));
+  const levels = new Set([existing.levelId, item?.levelId].filter((id): id is number => Boolean(id)));
+  for (const id of lessons) await invalidate(CK.vocabByLesson(id));
+  for (const id of levels) await invalidate(CK.vocabByLevel(id));
   await invalidate(CK.vocabAll());
   res.json(item);
 });
