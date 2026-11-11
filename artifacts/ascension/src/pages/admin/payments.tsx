@@ -25,6 +25,7 @@ import {
   useUpdatePlanPrice,
   useGetPaymentSettingsHistory,
   getGetPaymentSettingsHistoryQueryKey,
+  useCheckAdminPassword,
   type PaymentSettings,
   type PaymentSettingsUpdate,
 } from "@workspace/api-client-react";
@@ -954,11 +955,11 @@ function WalletSettings() {
  */
 function CryptoSettings() {
   const { t, lang } = useI18n();
-  const can = useCan();
-  const canEdit = can("payments.crypto");
+  const { toast } = useToast();
   const pa = t.payment.admin;
   const { settings, save, saving } = useSaveSettings();
   const { upload, uploading } = useQrUpload();
+  const checkPassword = useCheckAdminPassword();
   const [address, setAddress] = useState("");
   // Asked for on every change, and forgotten once it has been used.
   const [password, setPassword] = useState("");
@@ -968,6 +969,24 @@ function CryptoSettings() {
       setPassword("");
       onDone?.();
     });
+
+  // Checked before the upload as well as on save: the image is stored first,
+  // so a wrong password would otherwise leave it behind unused.
+  const uploadQr = async (file: File) => {
+    try {
+      await checkPassword.mutateAsync({ data: { currentPassword: password } });
+    } catch (err) {
+      const data = (err as ApiErr)?.data;
+      toast({
+        variant: "destructive",
+        title: t.subscription.error,
+        description: (lang === "ar" ? data?.errorAr : data?.error) ?? pa.saveFailed,
+      });
+      return;
+    }
+    const mediaId = await upload(file);
+    if (mediaId !== null) saveCrypto({ cryptoQrMediaId: mediaId });
+  };
 
   useEffect(() => {
     setAddress(settings.data?.cryptoWalletAddress ?? "");
@@ -994,25 +1013,21 @@ function CryptoSettings() {
       <CardContent className="space-y-5">
         <p className="text-xs text-muted-foreground leading-relaxed">{pa.cryptoHelp}</p>
 
-        {!canEdit && <p className="text-sm text-muted-foreground">{pa.adminOnly}</p>}
-
-        {canEdit && (
-          <div className="space-y-2">
-            <Label className="font-bold" htmlFor="crypto-password">
-              {pa.cryptoPassword}
-            </Label>
-            <Input
-              id="crypto-password"
-              type="password"
-              autoComplete="current-password"
-              className="max-w-xs"
-              dir="ltr"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">{pa.cryptoPasswordHelp}</p>
-          </div>
-        )}
+        <div className="space-y-2">
+          <Label className="font-bold" htmlFor="crypto-password">
+            {pa.cryptoPassword}
+          </Label>
+          <Input
+            id="crypto-password"
+            type="password"
+            autoComplete="current-password"
+            className="max-w-xs"
+            dir="ltr"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">{pa.cryptoPasswordHelp}</p>
+        </div>
 
         <div className="space-y-2">
           <Label className="font-bold">{pa.cryptoAddress}</Label>
@@ -1022,18 +1037,15 @@ function CryptoSettings() {
               dir="ltr"
               placeholder="0x…"
               value={address}
-              readOnly={!canEdit}
               onChange={(e) => setAddress(e.target.value)}
             />
-            {canEdit && (
-              <Button
-                disabled={!addressDirty || saving || address.trim() === "" || !hasPassword}
-                onClick={() => saveCrypto({ cryptoWalletAddress: address.trim() })}
-              >
-                {t.common.save}
-              </Button>
-            )}
-            {canEdit && savedAddress && (
+            <Button
+              disabled={!addressDirty || saving || address.trim() === "" || !hasPassword}
+              onClick={() => saveCrypto({ cryptoWalletAddress: address.trim() })}
+            >
+              {t.common.save}
+            </Button>
+            {savedAddress && (
               <Button
                 variant="outline"
                 disabled={saving || !hasPassword}
@@ -1050,23 +1062,18 @@ function CryptoSettings() {
         <div className="space-y-2">
           <Label className="font-bold">{pa.cryptoQr}</Label>
           <div className="flex flex-wrap items-center gap-3">
-            {canEdit && (
-              <QrPicker
-                hasQr={hasQr}
-                uploading={uploading}
-                disabled={!hasPassword}
-                onFile={async (file) => {
-                  const mediaId = await upload(file);
-                  if (mediaId !== null) saveCrypto({ cryptoQrMediaId: mediaId });
-                }}
-              />
-            )}
+            <QrPicker
+              hasQr={hasQr}
+              uploading={uploading || checkPassword.isPending}
+              disabled={!hasPassword}
+              onFile={(file) => void uploadQr(file)}
+            />
             {hasQr && (
               <span className="text-sm text-mint-foreground flex items-center gap-1">
                 <CheckCircle2 className="h-4 w-4" /> {pa.uploaded}
               </span>
             )}
-            {canEdit && hasQr && (
+            {hasQr && (
               <Button
                 variant="outline"
                 size="sm"
