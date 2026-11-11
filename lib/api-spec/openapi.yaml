@@ -1320,6 +1320,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: >-
+            Not allowed to change one of these fields, or a crypto change sent
+            without the right password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/payment-settings/history:
+    get:
+      operationId: getPaymentSettingsHistory
+      tags: [admin]
+      summary: The newest hundred changes to payment settings, prices and the SMS token
+      description: >-
+        Who changed what and when — field names only, never the values.
+        Administrators only.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentSettingsHistory"
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /admin/subscription-plans/{code}/price:
     patch:
@@ -4286,6 +4316,52 @@ components:
         sypUnit:
           type: string
           enum: [new, old]
+        currentPassword:
+          type: string
+          description: >-
+            The signed-in administrator's password. Required when the request
+            changes cryptoWalletAddress or cryptoQrMediaId; refused with 403
+            (PASSWORD_REQUIRED or WRONG_PASSWORD) otherwise.
+
+    PaymentSettingsChange:
+      type: object
+      required: [field, change]
+      properties:
+        field:
+          type: string
+        change:
+          type: string
+          enum: [added, changed, removed]
+
+    PaymentSettingsHistoryEntry:
+      type: object
+      required: [id, action, target, changes, byName, createdAt]
+      properties:
+        id:
+          type: number
+        action:
+          type: string
+          enum: [settings, plan_price, sms_token]
+        target:
+          type: ["string", "null"]
+          description: The plan code, for a plan_price entry.
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentSettingsChange"
+        byName:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    PaymentSettingsHistory:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentSettingsHistoryEntry"
 
     AdminStats:
       type: object

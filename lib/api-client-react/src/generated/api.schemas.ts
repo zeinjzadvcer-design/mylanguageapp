@@ -1341,6 +1341,49 @@ export interface PaymentSettingsUpdate {
   cryptoQrMediaId?: number | null;
   sypRateAuto?: boolean;
   sypUnit?: PaymentSettingsUpdateSypUnit;
+  /** The signed-in administrator's password. Required when the request changes cryptoWalletAddress or cryptoQrMediaId; refused with 403 (PASSWORD_REQUIRED or WRONG_PASSWORD) otherwise. */
+  currentPassword?: string;
+}
+
+export type PaymentSettingsChangeChange = typeof PaymentSettingsChangeChange[keyof typeof PaymentSettingsChangeChange];
+
+
+export const PaymentSettingsChangeChange = {
+  added: 'added',
+  changed: 'changed',
+  removed: 'removed',
+} as const;
+
+export interface PaymentSettingsChange {
+  field: string;
+  change: PaymentSettingsChangeChange;
+}
+
+export type PaymentSettingsHistoryEntryAction = typeof PaymentSettingsHistoryEntryAction[keyof typeof PaymentSettingsHistoryEntryAction];
+
+
+export const PaymentSettingsHistoryEntryAction = {
+  settings: 'settings',
+  plan_price: 'plan_price',
+  sms_token: 'sms_token',
+} as const;
+
+export interface PaymentSettingsHistoryEntry {
+  id: number;
+  action: PaymentSettingsHistoryEntryAction;
+  /**
+     * The plan code, for a plan_price entry.
+     * @nullable
+     */
+  target: string | null;
+  changes: PaymentSettingsChange[];
+  /** @nullable */
+  byName: string | null;
+  createdAt: string;
+}
+
+export interface PaymentSettingsHistory {
+  entries: PaymentSettingsHistoryEntry[];
 }
 
 export interface AdminStats {

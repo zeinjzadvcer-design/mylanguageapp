@@ -13,12 +13,13 @@
 
 import { Router, type IRouter } from "express";
 import { randomBytes } from "node:crypto";
-import { asc, count, eq, inArray, sql } from "drizzle-orm";
+import { asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   db,
   paymentSubmissionsTable,
   paymentSettingsTable,
+  paymentSettingsAuditTable,
   subscriptionPlansTable,
   studentSubscriptionsTable,
   mediaAssetsTable,
@@ -37,6 +38,8 @@ import { refreshSypRate, sptodayConfigured } from "../services/syp-rate";
 import { OLD_PER_NEW } from "../services/syp-rate-policy";
 import { SETTINGS_ROW_ID } from "../services/payment-settings";
 import { ingestTokenDigest } from "../services/wallet-sms-policy";
+import { fieldChanges, needsPassword, type FieldChange } from "../services/payment-audit-policy";
+import { verifyPassword } from "../lib/password";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -285,7 +288,41 @@ const settingsSchema = z.object({
 
   sypRateAuto: z.boolean().optional(),
   sypUnit: z.enum(["new", "old"]).optional(),
+
+  /** The admin's own password. Required to change the crypto details. */
+  currentPassword: z.string().max(200).optional(),
 });
+
+/** The fields the history records for a settings change. */
+const AUDITED_SETTINGS = [
+  "walletQrMediaId",
+  "walletAccountName",
+  "walletAccountNumber",
+  "walletInstructionsAr",
+  "walletMerchantPhone",
+  "cryptoWalletAddress",
+  "cryptoQrMediaId",
+  "sypRateAuto",
+  "sypUnit",
+] as const;
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Add an entry to the payment settings history.
+ *
+ * Inside the caller's transaction, so a change that cannot be recorded is not
+ * made either.
+ */
+async function recordChange(
+  tx: Tx,
+  userId: number,
+  action: "settings" | "plan_price" | "sms_token",
+  changes: FieldChange[],
+  target: string | null = null,
+): Promise<void> {
+  await tx.insert(paymentSettingsAuditTable).values({ userId, action, target, changes });
+}
 
 type SettingsRow = typeof paymentSettingsTable.$inferSelect;
 
@@ -293,12 +330,17 @@ type SettingsRow = typeof paymentSettingsTable.$inferSelect;
  * What the admin screen is given. One builder for GET and PATCH, so the two
  * cannot drift apart.
  */
-async function settingsResponse(row: SettingsRow | undefined) {
+async function settingsResponse(row: SettingsRow | undefined, role: string | undefined) {
+  // Only someone who may change the crypto details sees them. Staff who
+  // review payments have no use for the address, and a crypto payment needs
+  // no review unless the automatic check could not decide.
+  const seesCrypto = hasPermission(role, "payments.crypto");
+
   // Who last changed the crypto details, by name. The address decides where
   // money goes and nothing reviews a crypto payment, so a change has to be
   // visibly attributable to someone.
   let cryptoUpdatedByName: string | null = null;
-  if (row?.cryptoUpdatedBy) {
+  if (seesCrypto && row?.cryptoUpdatedBy) {
     const [user] = await db
       .select({ name: usersTable.name, email: usersTable.email })
       .from(usersTable)
@@ -318,9 +360,9 @@ async function settingsResponse(row: SettingsRow | undefined) {
     // generated, because anything holding it can mint a subscription.
     hasIngestToken: Boolean(row?.smsIngestToken),
 
-    cryptoWalletAddress: row?.cryptoWalletAddress ?? null,
-    cryptoQrMediaId: row?.cryptoQrMediaId ?? null,
-    cryptoUpdatedAt: row?.cryptoUpdatedAt?.toISOString() ?? null,
+    cryptoWalletAddress: seesCrypto ? (row?.cryptoWalletAddress ?? null) : null,
+    cryptoQrMediaId: seesCrypto ? (row?.cryptoQrMediaId ?? null) : null,
+    cryptoUpdatedAt: seesCrypto ? (row?.cryptoUpdatedAt?.toISOString() ?? null) : null,
     cryptoUpdatedByName,
 
     sypRateAuto: row?.sypRateAuto ?? false,
@@ -361,8 +403,8 @@ async function isPaymentQr(mediaId: number): Promise<boolean> {
 }
 
 /** GET /admin/payment-settings — what students are currently shown. */
-router.get("/admin/payment-settings", requirePermission("payments.settings"), async (_req, res): Promise<void> => {
-  res.json(await settingsResponse(await readSettings()));
+router.get("/admin/payment-settings", requirePermission("payments.settings"), async (req, res): Promise<void> => {
+  res.json(await settingsResponse(await readSettings(), req.session.role));
 });
 
 /**
@@ -378,7 +420,7 @@ router.patch("/admin/payment-settings", requirePermission("payments.settings"), 
     res.status(400).json({ error: "Invalid payment settings" });
     return;
   }
-  const patch = parsed.data;
+  const { currentPassword, ...patch } = parsed.data;
 
   // Pricing and receiving accounts share this endpoint but not their owners.
   // Refused whole rather than saving the fields that were allowed.
@@ -394,6 +436,28 @@ router.patch("/admin/payment-settings", requirePermission("payments.settings"), 
   for (const id of [patch.walletQrMediaId, patch.cryptoQrMediaId]) {
     if (id != null && !(await isPaymentQr(id))) {
       res.status(400).json({ error: "That media id is not a completed payment QR upload" });
+      return;
+    }
+  }
+
+  // Wrong guesses are counted per account by reauthLimiter (app.ts), so a
+  // stolen session cannot try passwords here without limit.
+  if (needsPassword(Object.keys(patch))) {
+    const [me] = await db
+      .select({ passwordHash: usersTable.passwordHash })
+      .from(usersTable)
+      .where(eq(usersTable.id, req.session.userId!))
+      .limit(1);
+    if (!currentPassword || !me || !(await verifyPassword(currentPassword, me.passwordHash))) {
+      res.status(403).json({
+        error: currentPassword
+          ? "That password is not correct."
+          : "Enter your password to change the crypto wallet.",
+        errorAr: currentPassword
+          ? "كلمة المرور غير صحيحة."
+          : "أدخل كلمة المرور لتعديل المحفظة الرقمية.",
+        code: currentPassword ? "WRONG_PASSWORD" : "PASSWORD_REQUIRED",
+      });
       return;
     }
   }
@@ -452,22 +516,29 @@ router.patch("/admin/payment-settings", requirePermission("payments.settings"), 
     }
   }
 
-  const [row] = await db
-    .update(paymentSettingsTable)
-    .set(update)
-    .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID))
-    .returning();
+  const changes = fieldChanges(before, update, AUDITED_SETTINGS);
 
-  // A quote is a number in the unit that was set when it was taken, so a unit
-  // change makes every open quote wrong by a factor of 100: a student could
-  // send a hundredth of the price and be checked against the stale figure.
-  // Cleared, so their next step is priced in the new unit.
-  if (update.sypUnit) {
-    await db
-      .update(studentSubscriptionsTable)
-      .set({ quotedPriceSyp: null, quotedAt: null })
-      .where(eq(studentSubscriptionsTable.status, "pending_payment"));
-  }
+  const row = await db.transaction(async (tx) => {
+    const [saved] = await tx
+      .update(paymentSettingsTable)
+      .set(update)
+      .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID))
+      .returning();
+
+    // A quote is a number in the unit that was set when it was taken, so a unit
+    // change makes every open quote wrong by a factor of 100: a student could
+    // send a hundredth of the price and be checked against the stale figure.
+    // Cleared, so their next step is priced in the new unit.
+    if (update.sypUnit) {
+      await tx
+        .update(studentSubscriptionsTable)
+        .set({ quotedPriceSyp: null, quotedAt: null })
+        .where(eq(studentSubscriptionsTable.status, "pending_payment"));
+    }
+
+    if (changes.length > 0) await recordChange(tx, req.session.userId!, "settings", changes);
+    return saved;
+  });
 
   const pricingChanged = "sypRateAuto" in patch || "sypUnit" in patch;
 
@@ -479,20 +550,11 @@ router.patch("/admin/payment-settings", requirePermission("payments.settings"), 
   // Every price students see is derived from these, and plans are cached.
   if (pricingChanged) await invalidate(CK.subPlans());
 
-  logger.info(
-    {
-      adminId: req.session.userId,
-      fields: Object.keys(patch),
-      // Logged in full: an address change is the one edit here that decides
-      // where money goes with no review behind it.
-      ...("cryptoWalletAddress" in patch
-        ? { cryptoWalletAddress: update.cryptoWalletAddress ?? null }
-        : {}),
-    },
-    "Payment settings updated",
-  );
+  // Which fields, not their values — the same as the history. The address a
+  // crypto payment was checked against is kept on that payment.
+  logger.info({ adminId: req.session.userId, changes }, "Payment settings updated");
 
-  res.json(await settingsResponse(await readSettings()));
+  res.json(await settingsResponse(await readSettings(), req.session.role));
 });
 
 /**
@@ -505,13 +567,13 @@ router.patch("/admin/payment-settings", requirePermission("payments.settings"), 
 router.post(
   "/admin/payment-settings/syp-rate/refresh",
   requirePermission("payments.settings"),
-  async (_req, res): Promise<void> => {
+  async (req, res): Promise<void> => {
     if (!sptodayConfigured()) {
       res.status(503).json({ error: "SPTODAY_API_KEY is not configured" });
       return;
     }
     const outcome = await refreshSypRate();
-    const body = await settingsResponse(await readSettings());
+    const body = await settingsResponse(await readSettings(), req.session.role);
     res.status(outcome.ok ? 200 : 502).json(body);
   },
 );
@@ -563,15 +625,28 @@ router.patch(
       return;
     }
 
-    const [row] = await db
-      .update(subscriptionPlansTable)
-      .set(update)
-      .where(sql`${subscriptionPlansTable.code} = ${code}`)
-      .returning({
-        code: subscriptionPlansTable.code,
-        priceUsd: subscriptionPlansTable.priceUsd,
-        priceSyp: subscriptionPlansTable.priceSyp,
-      });
+    const row = await db.transaction(async (tx) => {
+      const [before] = await tx
+        .select({ priceUsd: subscriptionPlansTable.priceUsd, priceSyp: subscriptionPlansTable.priceSyp })
+        .from(subscriptionPlansTable)
+        .where(sql`${subscriptionPlansTable.code} = ${code}`)
+        .limit(1);
+      if (!before) return undefined;
+
+      const [saved] = await tx
+        .update(subscriptionPlansTable)
+        .set(update)
+        .where(sql`${subscriptionPlansTable.code} = ${code}`)
+        .returning({
+          code: subscriptionPlansTable.code,
+          priceUsd: subscriptionPlansTable.priceUsd,
+          priceSyp: subscriptionPlansTable.priceSyp,
+        });
+
+      const changes = fieldChanges(before, update, ["priceUsd", "priceSyp"]);
+      if (changes.length > 0) await recordChange(tx, req.session.userId!, "plan_price", changes, code);
+      return saved;
+    });
 
     if (!row) {
       res.status(404).json({ error: "No such plan" });
@@ -605,11 +680,21 @@ router.post(
     // structure is partly predictable.
     const token = randomBytes(32).toString("base64url");
 
-    await db
-      .update(paymentSettingsTable)
-      // Only the digest is kept: the token itself is returned once, below.
-      .set({ smsIngestToken: ingestTokenDigest(token), updatedBy: req.session.userId! })
-      .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID));
+    await db.transaction(async (tx) => {
+      const [before] = await tx
+        .select({ smsIngestToken: paymentSettingsTable.smsIngestToken })
+        .from(paymentSettingsTable)
+        .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID))
+        .limit(1);
+      await tx
+        .update(paymentSettingsTable)
+        // Only the digest is kept: the token itself is returned once, below.
+        .set({ smsIngestToken: ingestTokenDigest(token), updatedBy: req.session.userId! })
+        .where(eq(paymentSettingsTable.id, SETTINGS_ROW_ID));
+      await recordChange(tx, req.session.userId!, "sms_token", [
+        { field: "smsIngestToken", change: before?.smsIngestToken ? "changed" : "added" },
+      ]);
+    });
 
     logger.info(
       { adminId: req.session.userId },
@@ -617,6 +702,46 @@ router.post(
     );
 
     res.json({ token });
+  },
+);
+
+/**
+ * GET /admin/payment-settings/history
+ *
+ * The newest hundred changes to payment settings, prices and the SMS token:
+ * who, when, which fields. Never the values — see paymentSettingsAuditTable.
+ * Administrators only, through the crypto permission, because the list is
+ * how an unexpected change to the wallet is noticed.
+ */
+router.get(
+  "/admin/payment-settings/history",
+  requirePermission("payments.crypto"),
+  async (_req, res): Promise<void> => {
+    const rows = await db
+      .select({
+        id: paymentSettingsAuditTable.id,
+        action: paymentSettingsAuditTable.action,
+        target: paymentSettingsAuditTable.target,
+        changes: paymentSettingsAuditTable.changes,
+        createdAt: paymentSettingsAuditTable.createdAt,
+        name: usersTable.name,
+        email: usersTable.email,
+      })
+      .from(paymentSettingsAuditTable)
+      .leftJoin(usersTable, eq(usersTable.id, paymentSettingsAuditTable.userId))
+      .orderBy(desc(paymentSettingsAuditTable.createdAt), desc(paymentSettingsAuditTable.id))
+      .limit(100);
+
+    res.json({
+      entries: rows.map((r) => ({
+        id: r.id,
+        action: r.action,
+        target: r.target,
+        changes: Array.isArray(r.changes) ? r.changes : [],
+        byName: r.name || r.email || null,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
   },
 );
 

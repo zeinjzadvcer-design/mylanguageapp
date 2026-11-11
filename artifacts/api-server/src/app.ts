@@ -426,6 +426,22 @@ const registerLimiter = rateLimit({
   message: { error: "Too many accounts created from this address, please try again later" },
 });
 
+// Wrong passwords typed to change the crypto wallet, per account. The password
+// is asked for so a stolen session alone cannot redirect payments; without a
+// limit, that session could guess the password here instead. Only requests
+// that carry a password are counted, and only the ones refused.
+const reauthLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "900000", 10),
+  limit: envInt("RATE_LIMIT_REAUTH", 5),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  store: makeRedisStore("rl:reauth:"),
+  skipSuccessfulRequests: true,
+  skip: (req) => req.method !== "PATCH" || typeof req.body?.currentPassword !== "string",
+  keyGenerator: (req) => (req.session?.userId ? `user:${req.session.userId}` : clientIp(req)),
+  message: { error: "Too many password attempts, please try again later" },
+});
+
 if (!clientAddressIsKnown()) {
   logger.warn(
     "CLIENT_IP_HEADER is not set: per-address limits on sign-up and forgot-password are off",
@@ -450,6 +466,7 @@ app.use("/api/auth/register", failOpen(authLimiter), failOpen(registerLimiter));
 // used to probe which addresses are registered, or to flood an inbox.
 app.use("/api/auth/forgot-password", failOpen(forgotPasswordLimiter));
 app.use("/api/auth/reset-password", failOpen(authLimiter));
+app.use("/api/admin/payment-settings", failOpen(reauthLimiter));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/api", router);

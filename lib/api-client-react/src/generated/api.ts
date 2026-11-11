@@ -74,6 +74,7 @@ import type {
   MediaUploadTicket,
   OkResponse,
   PaymentSettings,
+  PaymentSettingsHistory,
   PaymentSettingsUpdate,
   PaymentSubmission,
   PaymentSubmissionInput,
@@ -3617,6 +3618,84 @@ export const useUpdatePaymentSettings = <TError = ErrorType<ErrorResponse>,
       > => {
       return useMutation(getUpdatePaymentSettingsMutationOptions(options));
     }
+
+export const getGetPaymentSettingsHistoryUrl = () => {
+
+
+
+
+  return `/api/admin/payment-settings/history`
+}
+
+/**
+ * Who changed what and when — field names only, never the values. Administrators only.
+ * @summary The newest hundred changes to payment settings, prices and the SMS token
+ */
+export const getPaymentSettingsHistory = async ( options?: Parameters<typeof customFetch>[1]): Promise<PaymentSettingsHistory> => {
+
+  return customFetch<PaymentSettingsHistory>(getGetPaymentSettingsHistoryUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPaymentSettingsHistoryQueryKey = () => {
+    return [
+    `/api/admin/payment-settings/history`
+    ] as const;
+    }
+
+
+export const getGetPaymentSettingsHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getPaymentSettingsHistory>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSettingsHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPaymentSettingsHistoryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPaymentSettingsHistory>>> = ({ signal }) => getPaymentSettingsHistory({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPaymentSettingsHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPaymentSettingsHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getPaymentSettingsHistory>>>
+export type GetPaymentSettingsHistoryQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary The newest hundred changes to payment settings, prices and the SMS token
+ */
+
+export function useGetPaymentSettingsHistory<TData = Awaited<ReturnType<typeof getPaymentSettingsHistory>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPaymentSettingsHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPaymentSettingsHistoryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getUpdatePlanPriceUrl = (code: string,) => {
 

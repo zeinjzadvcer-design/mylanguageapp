@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   results: [] as unknown[][],
   update: vi.fn(),
   insert: vi.fn(),
+  values: vi.fn(),
   activate: vi.fn(),
   query: vi.fn(),
   session: null as { userId: number; role: string } | null,
@@ -23,9 +24,17 @@ vi.mock("@workspace/db", async (importOriginal) => {
   const select = () => ({
     from: () => ({ where: () => ({ limit, orderBy: () => ({ limit }) }) }),
   });
+  const db = {
+    select,
+    update: h.update,
+    insert: h.insert,
+    // The callback gets the same fake, so writes inside a transaction are
+    // seen by the same mocks as writes outside one.
+    transaction: async (fn: (tx: unknown) => unknown) => fn(db),
+  };
   return {
     ...actual,
-    db: { select, update: h.update, insert: h.insert },
+    db,
     pool: { query: h.query },
   };
 });
@@ -42,6 +51,7 @@ import gradingRouter from "./cms/grading";
 import cmsMediaRouter from "./cms/media";
 import { resolvePlanCode } from "../services/ai-quota";
 import { destroyUserSessions } from "../services/session-store";
+import { hashPassword } from "../lib/password";
 
 let server: Server;
 let base: string;
@@ -70,7 +80,9 @@ beforeEach(() => {
     set: () => ({ where: () => ({ returning: async () => [{}] }) }),
   });
   h.insert.mockReset();
-  h.insert.mockReturnValue({ values: () => ({ onConflictDoNothing: async () => undefined }) });
+  h.values.mockReset();
+  h.values.mockReturnValue({ onConflictDoNothing: async () => undefined });
+  h.insert.mockReturnValue({ values: h.values });
   h.query.mockReset();
   vi.mocked(destroyUserSessions).mockClear();
   h.activate.mockReset();
@@ -291,6 +303,105 @@ describe("payment settings", () => {
     signIn("payments_manager", 2);
     expect((await call("POST", "/admin/payment-settings/ingest-token")).status).toBe(403);
     expect(h.update).not.toHaveBeenCalled();
+  });
+
+  it("does not show payments staff the crypto wallet at all", async () => {
+    signIn("payments_manager", 2, [
+      { cryptoWalletAddress: WALLET, cryptoQrMediaId: 9, cryptoUpdatedBy: 1, cryptoUpdatedAt: new Date() },
+    ]);
+    const r = await call("GET", "/admin/payment-settings");
+    expect(r.status).toBe(200);
+    const body = r.data as Record<string, unknown>;
+    expect(body.cryptoWalletAddress).toBeNull();
+    expect(body.cryptoQrMediaId).toBeNull();
+    expect(body.cryptoUpdatedAt).toBeNull();
+    expect(body.cryptoUpdatedByName).toBeNull();
+  });
+
+  it("shows an administrator the crypto wallet", async () => {
+    signIn("admin", 1, [{ cryptoWalletAddress: WALLET, cryptoUpdatedBy: 1 }], [{ name: "Boss" }]);
+    const r = await call("GET", "/admin/payment-settings");
+    const body = r.data as Record<string, unknown>;
+    expect(body.cryptoWalletAddress).toBe(WALLET);
+    expect(body.cryptoUpdatedByName).toBe("Boss");
+  });
+
+  it("keeps the change history from payments staff", async () => {
+    signIn("payments_manager", 2);
+    expect((await call("GET", "/admin/payment-settings/history")).status).toBe(403);
+  });
+});
+
+const WALLET = "0x" + "ab".repeat(20);
+
+describe("changing the crypto wallet", () => {
+  let passwordHash = "";
+  beforeAll(async () => {
+    passwordHash = await hashPassword("right-password");
+  });
+
+  it.each([
+    ["cryptoWalletAddress", WALLET],
+    ["cryptoWalletAddress", null],
+    ["cryptoQrMediaId", null],
+  ])("asks an administrator for their password to change %s", async (field, value) => {
+    signIn("admin", 1, [{ passwordHash }]);
+    const r = await call("PATCH", "/admin/payment-settings", { [field]: value });
+    expect(r.status).toBe(403);
+    expect(r.data.code).toBe("PASSWORD_REQUIRED");
+    expect(h.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses the wrong password", async () => {
+    signIn("admin", 1, [{ passwordHash }]);
+    const r = await call("PATCH", "/admin/payment-settings", {
+      cryptoWalletAddress: WALLET,
+      currentPassword: "wrong-password",
+    });
+    expect(r.status).toBe(403);
+    expect(r.data.code).toBe("WRONG_PASSWORD");
+    expect(h.update).not.toHaveBeenCalled();
+    expect(h.insert).not.toHaveBeenCalled();
+  });
+
+  it("saves with the right password, and records the change without the address", async () => {
+    signIn(
+      "admin",
+      1,
+      [{ passwordHash }],
+      [{ cryptoWalletAddress: "0x" + "cd".repeat(20) }],
+      [{ cryptoWalletAddress: WALLET }],
+    );
+    const r = await call("PATCH", "/admin/payment-settings", {
+      cryptoWalletAddress: WALLET,
+      currentPassword: "right-password",
+    });
+    expect(r.status).toBe(200);
+    expect(h.update).toHaveBeenCalledTimes(1);
+    expect(h.values).toHaveBeenCalledTimes(1);
+    const entry = h.values.mock.calls[0][0] as Record<string, unknown>;
+    expect(entry).toMatchObject({
+      userId: 1,
+      action: "settings",
+      changes: [{ field: "cryptoWalletAddress", change: "changed" }],
+    });
+    expect(JSON.stringify(entry)).not.toMatch(/abab|cdcd/);
+  });
+
+  it("needs no password for pricing", async () => {
+    signIn("admin", 1, [{ sypRateAuto: true }], [{}]);
+    const r = await call("PATCH", "/admin/payment-settings", { sypRateAuto: false });
+    expect(r.status).toBe(200);
+    expect(h.values.mock.calls[0][0]).toMatchObject({
+      action: "settings",
+      changes: [{ field: "sypRateAuto", change: "changed" }],
+    });
+  });
+
+  it("records nothing when a save changes nothing", async () => {
+    signIn("admin", 1, [{ sypRateAuto: false }], [{}]);
+    expect((await call("PATCH", "/admin/payment-settings", { sypRateAuto: false })).status).toBe(200);
+    expect(h.values).not.toHaveBeenCalled();
   });
 });
 
