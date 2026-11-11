@@ -342,6 +342,33 @@ export const paymentSettingsTable = pgTable("payment_settings", {
 export type PaymentSettings = typeof paymentSettingsTable.$inferSelect;
 
 /**
+ * Every change to the payment settings, plan prices and the SMS forwarder
+ * token: who, when, and which fields — never the values.
+ *
+ * Values are left out on purpose. A wallet address or account number in a
+ * history list is one more place it can be read from; what this list is for
+ * is noticing a change nobody expected. The address each crypto payment was
+ * checked against is kept on the submission itself.
+ *
+ * Append-only: the app never updates or deletes a row.
+ */
+export const paymentSettingsAuditTable = pgTable("payment_settings_audit", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  /** `settings` | `plan_price` | `sms_token` */
+  action: text("action").notNull(),
+  /** The plan code for `plan_price`; null otherwise. */
+  target: text("target"),
+  /** `[{ field, change }]`, change being `added` | `changed` | `removed`. */
+  changes: jsonb("changes").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  createdIdx: index("payment_settings_audit_created_idx").on(table.createdAt),
+}));
+
+export type PaymentSettingsAudit = typeof paymentSettingsAuditTable.$inferSelect;
+
+/**
  * Confirmation SMS forwarded by the companion app on the merchant phone.
  *
  * Stored before matching is attempted, and kept whether or not it matches: an
