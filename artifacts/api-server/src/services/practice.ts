@@ -33,7 +33,7 @@
  * nothing is harmed by waiting.
  */
 
-import { eq, and, or, ne, gte, lt, sql, desc, inArray, asc, isNotNull } from "drizzle-orm";
+import { eq, and, or, ne, gt, gte, lt, sql, desc, inArray, asc, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
   db,
@@ -429,12 +429,14 @@ async function expireIfDue(session: PracticeSession): Promise<PracticeSession> {
     session.status === "waiting" &&
     now - session.matchedAt.getTime() > RING_TIMEOUT_MS
   ) {
-    return closeSession(session, "not_answered", null);
+    // Guarded: `session` may be a cached copy from just before the call was
+    // answered, and an answered call must not be ended as unanswered.
+    return closeSession(session, "not_answered", null, { onlyIfStill: "waiting" });
   }
 
   if (session.status === "active" && session.startedAt) {
     if (now - session.startedAt.getTime() > MAX_CALL_MINUTES * 60_000) {
-      return closeSession(session, "timeout", null);
+      return closeSession(session, "timeout", null, { onlyIfStill: "active" });
     }
   }
 
@@ -471,6 +473,14 @@ async function closeSession(
   session: PracticeSession,
   reason: NonNullable<PracticeSession["endReason"]>,
   endedBy: number | null,
+  options: {
+    /**
+     * Close only if the call still has this status. For closes decided on a
+     * copy that may be stale — a cached poll, a sweep. If it has moved on,
+     * nothing is changed and the call as it now stands is returned.
+     */
+    onlyIfStill?: PracticeSession["status"];
+  } = {},
 ): Promise<PracticeSession> {
   const endedAt = new Date();
   const durationSeconds = session.startedAt
@@ -486,8 +496,24 @@ async function closeSession(
       endReason: reason,
       endedBy,
     })
-    .where(eq(practiceSessionsTable.id, session.id))
+    .where(
+      and(
+        eq(practiceSessionsTable.id, session.id),
+        options.onlyIfStill ? eq(practiceSessionsTable.status, options.onlyIfStill) : undefined,
+      ),
+    )
     .returning();
+
+  if (!updated && options.onlyIfStill) {
+    // Changed meanwhile, so this close no longer applies. Whoever changed it
+    // also marked it changed, so the next poll reads it afresh.
+    const [current] = await db
+      .select()
+      .from(practiceSessionsTable)
+      .where(eq(practiceSessionsTable.id, session.id))
+      .limit(1);
+    return current ?? session;
+  }
 
   // The handshake messages are dead weight the moment the call is over, and
   // they are the only place a student's SDP has been written down.
@@ -663,6 +689,8 @@ export async function closeAbandonedSessions(): Promise<number> {
       session,
       session.status === "waiting" ? "not_answered" : "timeout",
       null,
+      // Read a moment ago; a call answered or ended since is left alone.
+      { onlyIfStill: session.status },
     );
   }
 
@@ -673,41 +701,59 @@ export async function closeAbandonedSessions(): Promise<number> {
   return closed;
 }
 
-/** Active calls whose two sides have both stopped polling, by Valkey presence. */
+/** How many active calls are checked against Valkey presence per batch. */
+const PRESENCE_SWEEP_BATCH = 500;
+
+/**
+ * Active calls whose two sides have both stopped polling, by Valkey presence.
+ *
+ * Every active call old enough to have gone quiet is checked, a batch at a
+ * time in id order. One capped read with no order checked the same calls on
+ * every sweep and never reached the rest once there were more than a batch.
+ */
 async function quietActiveSessions(
   cutoff: Date,
   alreadyClosing: ReadonlySet<number>,
 ): Promise<PracticeSession[]> {
   if (!liveStateEnabled()) return [];
 
-  // Only calls old enough to have gone quiet; a call that started a moment ago
-  // has had no chance to poll.
-  const candidates = (
-    await db
+  const quiet: PracticeSession[] = [];
+  let afterId = 0;
+  for (;;) {
+    // Only calls old enough to have gone quiet; a call that started a moment
+    // ago has had no chance to poll.
+    const batch = await db
       .select()
       .from(practiceSessionsTable)
       .where(
         and(
           eq(practiceSessionsTable.status, "active"),
           lt(practiceSessionsTable.startedAt, cutoff),
+          gt(practiceSessionsTable.id, afterId),
         ),
       )
-      .limit(500)
-  ).filter((s) => !alreadyClosing.has(s.id));
-  if (candidates.length === 0) return [];
+      .orderBy(asc(practiceSessionsTable.id))
+      .limit(PRESENCE_SWEEP_BATCH);
+    if (batch.length === 0) break;
+    afterId = batch[batch.length - 1]!.id;
 
-  const seen = await presenceOf(
-    candidates.flatMap((s) => [
-      { sessionId: s.id, userId: s.requesterId },
-      { sessionId: s.id, userId: s.partnerId },
-    ]),
-  );
-  // Valkey could not be asked: close nothing on no evidence.
-  if (!seen) return [];
-
-  return candidates.filter((_, i) =>
-    bothQuiet([seen[i * 2], seen[i * 2 + 1]], cutoff.getTime()),
-  );
+    const candidates = batch.filter((s) => !alreadyClosing.has(s.id));
+    if (candidates.length > 0) {
+      const seen = await presenceOf(
+        candidates.flatMap((s) => [
+          { sessionId: s.id, userId: s.requesterId },
+          { sessionId: s.id, userId: s.partnerId },
+        ]),
+      );
+      // Valkey could not be asked: close nothing on no evidence.
+      if (!seen) return [];
+      quiet.push(
+        ...candidates.filter((_, i) => bothQuiet([seen[i * 2], seen[i * 2 + 1]], cutoff.getTime())),
+      );
+    }
+    if (batch.length < PRESENCE_SWEEP_BATCH) break;
+  }
+  return quiet;
 }
 
 export async function joinQueue(

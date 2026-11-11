@@ -55,6 +55,7 @@ const keys = {
   signals: (sessionId: number, toUserId: number) => `practice:sig:${sessionId}:${toUserId}`,
   signalSeq: (sessionId: number) => `practice:sigseq:${sessionId}`,
   matchGate: (userId: number) => `practice:matchgate:${userId}`,
+  ended: (sessionId: number) => `practice:ended:${sessionId}`,
 };
 
 /** Whether this deployment keeps call state in Valkey at all. */
@@ -241,9 +242,18 @@ export async function pushSignal(
     .rpush(list, JSON.stringify(signal))
     .ltrim(list, -SIGNAL_LIST_MAX, -1)
     .expire(list, CALL_DATA_TTL_S)
+    .exists(keys.ended(sessionId))
     .exec();
   const failed = results?.find(([err]) => err)?.[0];
   if (failed) throw failed;
+
+  // The call ended between the caller checking it was live and this push, so
+  // forgetCall has already run and would not see what was just written. The
+  // ended mark is set before forgetCall deletes, so one of the two always
+  // clears it.
+  if (results?.[3]?.[1] === 1) {
+    await r.del(list, seq).catch(() => {});
+  }
 }
 
 /** This student's messages in a call after `afterId`. */
@@ -272,12 +282,18 @@ export async function forgetCall(session: PracticeSession): Promise<void> {
   if (!r) return;
   const people = [session.requesterId, session.partnerId];
   try {
-    await r.del(
-      keys.signalSeq(session.id),
-      ...people.map((id) => keys.signals(session.id, id)),
-      ...people.map((id) => keys.card(session.id, id)),
-      ...people.map((id) => keys.seen(session.id, id)),
-    );
+    // Marked ended first, in the same transaction: a message pushed after the
+    // delete sees the mark and removes itself (pushSignal).
+    await r
+      .multi()
+      .set(keys.ended(session.id), "1", "EX", CALL_DATA_TTL_S)
+      .del(
+        keys.signalSeq(session.id),
+        ...people.map((id) => keys.signals(session.id, id)),
+        ...people.map((id) => keys.card(session.id, id)),
+        ...people.map((id) => keys.seen(session.id, id)),
+      )
+      .exec();
   } catch (err) {
     // Every one of these expires within the hour regardless.
     logger.warn({ err, sessionId: session.id }, "Could not clear a finished call from Valkey");
