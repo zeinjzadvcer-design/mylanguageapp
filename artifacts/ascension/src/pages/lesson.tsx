@@ -1297,19 +1297,26 @@ export function LessonPlayer({
   // blocks, a saved position into the old list must not be reused.
   const blockSignature = (lesson.contentBlocks ?? []).map((b) => b.id).join(".");
   const positionKey = `lesson-position:${me?.id ?? "anon"}:${lessonId}:${blockSignature}`;
-  const doneCount = lesson.completedBlockIds?.length ?? 0;
+  const serverDoneCount = lesson.completedBlockIds?.length ?? 0;
   const resume = ((): { index: number; intro: boolean } => {
     if (isPreview || lesson.isCompleted || blockCount === 0) return { index: 0, intro: hasIntro };
     try {
       const saved = JSON.parse(localStorage.getItem(positionKey) ?? "null") as
+        | number
         | { index?: unknown; intro?: unknown; done?: unknown }
         | null;
+      // The first version saved the block index alone. Still exactly where the
+      // student was, so it is used once, then replaced by the form below.
+      if (typeof saved === "number" && Number.isInteger(saved) && saved >= 0 && saved < blockCount) {
+        return { index: saved, intro: false };
+      }
       if (
-        saved &&
+        saved !== null &&
+        typeof saved === "object" &&
         Number.isInteger(saved.index) &&
         (saved.index as number) >= 0 &&
         (saved.index as number) < blockCount &&
-        saved.done === doneCount
+        saved.done === serverDoneCount
       ) {
         return { index: saved.index as number, intro: hasIntro && saved.intro === true };
       }
@@ -1338,10 +1345,16 @@ export function LessonPlayer({
   const [previewFinished, setPreviewFinished] = useState(false);
   const [startTime] = useState(Date.now());
   const initialized = useRef(false);
+  /**
+   * Blocks finished in this visit. Every accepted submit is recorded on the
+   * server as finished, so they count at once, without waiting for the lesson
+   * to be fetched again: otherwise a refresh in that moment found the saved
+   * position one block short of the server's count and set it aside.
+   */
+  const [finishedHere, setFinishedHere] = useState<number[]>([]);
+  const doneCount = new Set([...(lesson.completedBlockIds ?? []), ...finishedHere]).size;
 
-  // Remember the position on this device; see `resume`. Saved again when the
-  // server's count of finished blocks catches up after a submit, so the saved
-  // position stays current rather than looking stale on the next load.
+  // Remember the position on this device; see `resume`.
   useEffect(() => {
     if (isPreview) return;
     try {
@@ -1510,6 +1523,7 @@ export function LessonPlayer({
       {
         onSuccess: (result) => {
           setBlockField(key, { submitted: true, submitting: false, result });
+          setFinishedHere((prev) => (prev.includes(block.id) ? prev : [...prev, block.id]));
           // Invalidate lesson detail so completedBlockIds updates
           queryClient.invalidateQueries({ queryKey: getGetLessonQueryKey(lessonId) });
 
