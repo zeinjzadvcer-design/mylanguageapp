@@ -1277,14 +1277,17 @@ export function LessonPlayer({
   const hasIntro = hasObjectives(lesson);
 
   // Where to pick up, so a refresh, a closed tab or another device does not
-  // start the lesson again. Two sources, and the further one wins:
+  // start the lesson again. Two sources:
   //
-  //  - The server records every block the student finishes (`completedBlockIds`).
-  //    The lesson resumes after the FURTHEST of them, not at the first gap: a
-  //    required block cannot be passed without finishing it, so a gap before
-  //    the furthest one is an optional block the student chose to skip.
-  //  - A skip records nothing on the server, so the position is also kept on
-  //    this device. Skipping and then refreshing keeps its place.
+  //  - This device remembers exactly where the student was: the block, or the
+  //    objectives screen, including after going back, and after skipping an
+  //    optional block, which records nothing on the server. It is used while
+  //    it is current: saved alongside how many blocks the server had recorded
+  //    as finished, and set aside once more are (progress made elsewhere).
+  //  - Otherwise the server's record (`completedBlockIds`): the lesson resumes
+  //    after the FURTHEST finished block, not at the first gap, since a
+  //    required block cannot be passed without finishing it and a gap before
+  //    the furthest one is an optional block the student skipped.
   //
   // A lesson already completed opens at the beginning, for review; a preview
   // always does.
@@ -1294,31 +1297,39 @@ export function LessonPlayer({
   // blocks, a saved position into the old list must not be reused.
   const blockSignature = (lesson.contentBlocks ?? []).map((b) => b.id).join(".");
   const positionKey = `lesson-position:${me?.id ?? "anon"}:${lessonId}:${blockSignature}`;
-  const resumeIndex = (() => {
-    if (isPreview || lesson.isCompleted || blockCount === 0) return 0;
+  const doneCount = lesson.completedBlockIds?.length ?? 0;
+  const resume = ((): { index: number; intro: boolean } => {
+    if (isPreview || lesson.isCompleted || blockCount === 0) return { index: 0, intro: hasIntro };
+    try {
+      const saved = JSON.parse(localStorage.getItem(positionKey) ?? "null") as
+        | { index?: unknown; intro?: unknown; done?: unknown }
+        | null;
+      if (
+        saved &&
+        Number.isInteger(saved.index) &&
+        (saved.index as number) >= 0 &&
+        (saved.index as number) < blockCount &&
+        saved.done === doneCount
+      ) {
+        return { index: saved.index as number, intro: hasIntro && saved.intro === true };
+      }
+    } catch {
+      // Storage unavailable or unreadable: the server's record alone.
+    }
     const done = new Set(lesson.completedBlockIds ?? []);
-    const blocks = lesson.contentBlocks ?? [];
     let furthestDone = -1;
-    blocks.forEach((b, i) => {
+    (lesson.contentBlocks ?? []).forEach((b, i) => {
       if (done.has(b.id)) furthestDone = i;
     });
-    // Every block done but the lesson not finished: the last one, where the
-    // student finishes it.
-    const fromServer = furthestDone === -1 ? 0 : Math.min(furthestDone + 1, blockCount - 1);
-    let saved = 0;
-    try {
-      const value = Number(localStorage.getItem(positionKey));
-      if (Number.isInteger(value) && value > 0 && value < blockCount) saved = value;
-    } catch {
-      // Storage unavailable (private mode): the server's record alone.
-    }
-    return Math.max(fromServer, saved);
+    // Nothing finished yet: the start, with the objectives. Every block done
+    // but the lesson not finished: the last one, where the student finishes it.
+    if (furthestDone === -1) return { index: 0, intro: hasIntro };
+    return { index: Math.min(furthestDone + 1, blockCount - 1), intro: false };
   })();
 
   // All hooks must be unconditional
-  // The intro is for starting a lesson, not for coming back to one.
-  const [showIntro, setShowIntro] = useState(hasIntro && resumeIndex === 0);
-  const [currentBlockIndex, setCurrentBlockIndex] = useState(resumeIndex);
+  const [showIntro, setShowIntro] = useState(resume.intro);
+  const [currentBlockIndex, setCurrentBlockIndex] = useState(resume.index);
   /** Which item of a multi-item block is on screen. */
   const [questionIndex, setQuestionIndex] = useState(0);
   /** Keyed by `stateKey(blockId, questionIndex)`: each item keeps its own answer. */
@@ -1328,15 +1339,20 @@ export function LessonPlayer({
   const [startTime] = useState(Date.now());
   const initialized = useRef(false);
 
-  // Remember the position on this device; see resumeIndex.
+  // Remember the position on this device; see `resume`. Saved again when the
+  // server's count of finished blocks catches up after a submit, so the saved
+  // position stays current rather than looking stale on the next load.
   useEffect(() => {
     if (isPreview) return;
     try {
-      localStorage.setItem(positionKey, String(currentBlockIndex));
+      localStorage.setItem(
+        positionKey,
+        JSON.stringify({ index: currentBlockIndex, intro: showIntro, done: doneCount }),
+      );
     } catch {
       // Storage unavailable: the server's record of finished blocks still applies.
     }
-  }, [isPreview, positionKey, currentBlockIndex]);
+  }, [isPreview, positionKey, currentBlockIndex, showIntro, doneCount]);
 
   useEffect(() => {
     if (!isPreview && !initialized.current) {
