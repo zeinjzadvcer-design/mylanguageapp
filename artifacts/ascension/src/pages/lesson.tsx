@@ -1275,9 +1275,24 @@ export function LessonPlayer({
 
   const hasIntro = hasObjectives(lesson);
 
+  // Where to pick up. The server records every block the student finishes
+  // (`completedBlockIds`), so a refresh, a closed tab or another device resumes
+  // at the first block not yet done instead of the start. A lesson already
+  // completed opens at the beginning, for review; a preview always does.
+  const resumeIndex = (() => {
+    const blocks = lesson.contentBlocks ?? [];
+    const done = new Set(lesson.completedBlockIds ?? []);
+    if (isPreview || lesson.isCompleted || done.size === 0) return 0;
+    const next = blocks.findIndex((b) => !done.has(b.id));
+    // Every block done but the lesson not finished: the last one, where the
+    // student finishes it.
+    return next === -1 ? Math.max(0, blocks.length - 1) : next;
+  })();
+
   // All hooks must be unconditional
-  const [showIntro, setShowIntro] = useState(hasIntro);
-  const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
+  // The intro is for starting a lesson, not for coming back to one.
+  const [showIntro, setShowIntro] = useState(hasIntro && resumeIndex === 0);
+  const [currentBlockIndex, setCurrentBlockIndex] = useState(resumeIndex);
   /** Which item of a multi-item block is on screen. */
   const [questionIndex, setQuestionIndex] = useState(0);
   /** Keyed by `stateKey(blockId, questionIndex)`: each item keeps its own answer. */

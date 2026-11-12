@@ -108,12 +108,26 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile top bar: the bottom nav has no room for the brand or the language switch */}
+      {/* Mobile top bar: the bottom nav has no room for the brand, the language
+          switch or signing out, which otherwise lives only in the sidebar. */}
       <header className="md:hidden sticky top-0 z-30 h-14 flex items-center justify-between px-4 bg-background/85 backdrop-blur-md border-b border-border">
         <Link href="/dashboard">
           <BrandLogo size="sm" />
         </Link>
-        <LanguageSwitcher />
+        <div className="flex items-center gap-1">
+          <LanguageSwitcher />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-destructive"
+            onClick={handleLogout}
+            disabled={logout.isPending}
+            aria-label={t.nav.logout}
+            title={t.nav.logout}
+          >
+            {logout.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogOut className="h-5 w-5 rtl:-scale-x-100" />}
+          </Button>
+        </div>
       </header>
 
       {/* Main Content */}
