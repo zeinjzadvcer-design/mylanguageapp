@@ -12,6 +12,7 @@ import {
   getGetLessonQueryKey,
   getGetLessonsQueryKey,
   getGetLessonProgressQueryKey,
+  useGetMe,
 } from "@workspace/api-client-react";
 import type {
   ContentBlock,
@@ -1275,18 +1276,43 @@ export function LessonPlayer({
 
   const hasIntro = hasObjectives(lesson);
 
-  // Where to pick up. The server records every block the student finishes
-  // (`completedBlockIds`), so a refresh, a closed tab or another device resumes
-  // at the first block not yet done instead of the start. A lesson already
-  // completed opens at the beginning, for review; a preview always does.
+  // Where to pick up, so a refresh, a closed tab or another device does not
+  // start the lesson again. Two sources, and the further one wins:
+  //
+  //  - The server records every block the student finishes (`completedBlockIds`).
+  //    The lesson resumes after the FURTHEST of them, not at the first gap: a
+  //    required block cannot be passed without finishing it, so a gap before
+  //    the furthest one is an optional block the student chose to skip.
+  //  - A skip records nothing on the server, so the position is also kept on
+  //    this device. Skipping and then refreshing keeps its place.
+  //
+  // A lesson already completed opens at the beginning, for review; a preview
+  // always does.
+  const { data: me } = useGetMe();
+  const blockCount = lesson.contentBlocks?.length ?? 0;
+  // Keyed by the lesson's blocks as well as its id: when an editor changes the
+  // blocks, a saved position into the old list must not be reused.
+  const blockSignature = (lesson.contentBlocks ?? []).map((b) => b.id).join(".");
+  const positionKey = `lesson-position:${me?.id ?? "anon"}:${lessonId}:${blockSignature}`;
   const resumeIndex = (() => {
-    const blocks = lesson.contentBlocks ?? [];
+    if (isPreview || lesson.isCompleted || blockCount === 0) return 0;
     const done = new Set(lesson.completedBlockIds ?? []);
-    if (isPreview || lesson.isCompleted || done.size === 0) return 0;
-    const next = blocks.findIndex((b) => !done.has(b.id));
+    const blocks = lesson.contentBlocks ?? [];
+    let furthestDone = -1;
+    blocks.forEach((b, i) => {
+      if (done.has(b.id)) furthestDone = i;
+    });
     // Every block done but the lesson not finished: the last one, where the
     // student finishes it.
-    return next === -1 ? Math.max(0, blocks.length - 1) : next;
+    const fromServer = furthestDone === -1 ? 0 : Math.min(furthestDone + 1, blockCount - 1);
+    let saved = 0;
+    try {
+      const value = Number(localStorage.getItem(positionKey));
+      if (Number.isInteger(value) && value > 0 && value < blockCount) saved = value;
+    } catch {
+      // Storage unavailable (private mode): the server's record alone.
+    }
+    return Math.max(fromServer, saved);
   })();
 
   // All hooks must be unconditional
@@ -1301,6 +1327,16 @@ export function LessonPlayer({
   const [previewFinished, setPreviewFinished] = useState(false);
   const [startTime] = useState(Date.now());
   const initialized = useRef(false);
+
+  // Remember the position on this device; see resumeIndex.
+  useEffect(() => {
+    if (isPreview) return;
+    try {
+      localStorage.setItem(positionKey, String(currentBlockIndex));
+    } catch {
+      // Storage unavailable: the server's record of finished blocks still applies.
+    }
+  }, [isPreview, positionKey, currentBlockIndex]);
 
   useEffect(() => {
     if (!isPreview && !initialized.current) {
