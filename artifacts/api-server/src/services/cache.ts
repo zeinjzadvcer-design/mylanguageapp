@@ -79,7 +79,10 @@ export const CK = {
   vocabByLesson:      (lid: number) => `v2:vocab:lesson:${lid}`,
   vocabByLevel:       (lid: number) => `v2:vocab:level:${lid}`,
   vocabAll:           () => "v2:vocab:all",
-  freeLesson:         () => "v1:free-lesson",
+  // Under the levels prefix on purpose: every lesson publish, unpublish,
+  // archive and delete clears that prefix, so the free lesson lapses at once
+  // when its lesson stops being published.
+  freeLesson:         () => "v1:levels:c:free-lesson",
 } as const;
 
 // ─── In-process fallback cache ────────────────────────────────────────────────

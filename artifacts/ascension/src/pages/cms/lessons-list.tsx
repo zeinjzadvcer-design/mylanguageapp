@@ -132,8 +132,13 @@ export default function CMSLessonsList() {
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-gray-900 truncate max-w-xs">{l.title}</span>
                         {l.isFreeLesson && (
-                          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                            Free lesson
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                              l.status === "published" ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-500"
+                            }`}
+                            title={l.status === "published" ? undefined : "Not published, so students get no free lesson until it is published again or another is chosen."}
+                          >
+                            {l.status === "published" ? "Free lesson" : "Free lesson — inactive"}
                           </span>
                         )}
                       </div>
@@ -156,7 +161,8 @@ export default function CMSLessonsList() {
                             <Pencil className="h-3.5 w-3.5" />
                           </Link>
                         )}
-                        {canEdit && l.status === "published" && (
+                        {/* Also on an unpublished free lesson, so the choice can be cleared. */}
+                        {canEdit && (l.status === "published" || l.isFreeLesson) && (
                           <button
                             title={l.isFreeLesson ? "Free lesson — click to clear" : "Make this the free lesson"}
                             aria-pressed={Boolean(l.isFreeLesson)}

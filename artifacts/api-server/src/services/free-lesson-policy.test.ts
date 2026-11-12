@@ -4,6 +4,7 @@ import {
   lessonOpenDenial,
   limitedToFreeLesson,
   stateForFreeLessonStudent,
+  studentLessonState,
   unmeteredEntitlement,
   type Entitlement,
 } from "./entitlement-policy";
@@ -123,5 +124,23 @@ describe("how lessons look to a student limited to the free lesson", () => {
     expect(stateForFreeLessonStudent("AVAILABLE", { isFree: false, started: true })).toBe("AVAILABLE");
     // Begun as the free lesson before another was chosen: still open to finish.
     expect(stateForFreeLessonStudent("LOCKED", { isFree: false, started: true })).toBe("IN_PROGRESS");
+  });
+});
+
+describe("how lessons look to every other student", () => {
+  const plain = (started: boolean) => ({ freeOnly: false, isFree: false, started });
+
+  it("follows the curriculum", () => {
+    expect(studentLessonState("LOCKED", plain(false))).toBe("LOCKED");
+    expect(studentLessonState("AVAILABLE", plain(false))).toBe("AVAILABLE");
+  });
+
+  it("keeps a lesson begun as the free lesson open after the choice is cleared", () => {
+    expect(studentLessonState("LOCKED", plain(true))).toBe("IN_PROGRESS");
+  });
+
+  it("applies the free-lesson rule only to a student it limits", () => {
+    expect(studentLessonState("AVAILABLE", { freeOnly: true, isFree: false, started: false })).toBe("LOCKED");
+    expect(studentLessonState("LOCKED", { freeOnly: true, isFree: true, started: false })).toBe("AVAILABLE");
   });
 });

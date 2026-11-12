@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, asc, and, inArray, isNull, or, type SQL } from "drizzle-orm";
+import { eq, asc, and, inArray, isNull } from "drizzle-orm";
 import {
   db,
   levelsTable,
@@ -13,49 +13,18 @@ import {
   deriveLessonStateWithOrders,
   publishedLessonFilter,
 } from "../services/learning";
-import {
-  getEntitlement,
-  lessonTrackFilter,
-  limitedToFreeLesson,
-  previousLessonInTrack,
-  stateForFreeLessonStudent,
-  type LessonState,
-} from "../services/entitlements";
-import { getFreeLessonId } from "../services/free-lesson";
+import { getEntitlement, previousLessonInTrack } from "../services/entitlements";
+import { studentLessonView } from "../services/free-lesson";
 
 const router: IRouter = Router();
 
 /**
- * Which lessons a signed-in student is shown, and how their state is read.
- *
- * `filter` is the track condition; undefined (both tracks) for staff and for a
- * visitor who is not signed in, who sees the catalogue rather than any one
- * plan's content. A free-plan student limited to the free lesson is shown it
- * whatever its track (`freeOnly`), and every other lesson reads as locked.
+ * How this visitor sees lessons in a curriculum: their plan applied when signed
+ * in (track, and the free lesson), every lesson for a visitor who is not, who
+ * sees the catalogue rather than any one plan's content.
  */
-async function lessonViewFor(
-  userId: number | undefined,
-  role: string | undefined,
-): Promise<{ filter: SQL | undefined; freeOnly: boolean; freeLessonId: number | null }> {
-  const freeLessonId = await getFreeLessonId();
-  if (!userId) return { filter: undefined, freeOnly: false, freeLessonId };
-  const entitlement = await getEntitlement(userId, role);
-  const trackFilter = lessonTrackFilter(entitlement);
-  const freeOnly = limitedToFreeLesson(entitlement, freeLessonId);
-  const filter = freeOnly && trackFilter ? or(trackFilter, eq(lessonsTable.id, freeLessonId!)) : trackFilter;
-  return { filter, freeOnly, freeLessonId };
-}
-
-/** A lesson's state as this student sees it. */
-function viewState(
-  view: { freeOnly: boolean; freeLessonId: number | null },
-  state: LessonState,
-  lessonId: number,
-  progress: { startedAt: Date | null } | undefined,
-): LessonState {
-  return view.freeOnly
-    ? stateForFreeLessonStudent(state, { isFree: lessonId === view.freeLessonId, started: Boolean(progress?.startedAt) })
-    : state;
+async function lessonViewFor(userId: number | undefined, role: string | undefined, curriculumId: number | null) {
+  return studentLessonView(userId ? await getEntitlement(userId, role) : null, curriculumId);
 }
 
 /** Resolve which curriculum to use: from query param or student's enrolled curriculum or platform default */
@@ -111,7 +80,7 @@ router.get("/levels", async (req, res): Promise<void> => {
 
   // Fetch all published lessons for the curriculum's levels
   const levelIds = levels.map((l) => l.id);
-  const view = await lessonViewFor(userId, req.session?.role);
+  const view = await lessonViewFor(userId, req.session?.role, curriculumId);
   const allLessons =
     levelIds.length > 0
       ? await db
@@ -160,8 +129,7 @@ router.get("/levels", async (req, res): Promise<void> => {
     levelLessons.forEach((lesson, idx) => {
       const prevLessonId = previousLessonInTrack(levelLessons, idx);
       const progressRow = allProgress.find((p) => p.lessonId === lesson.id);
-      const state = viewState(
-        view,
+      const state = view.state(
         deriveLessonStateWithOrders(
           lesson,
           level.order,
@@ -263,7 +231,7 @@ router.get("/levels/:levelId", async (req, res): Promise<void> => {
     : null;
   const currentLevelOrder = currentLevelRecord?.order ?? null;
 
-  const view = await lessonViewFor(userId, req.session?.role);
+  const view = await lessonViewFor(userId, req.session?.role, level.curriculumId);
   const levelLessons = await db
     .select()
     .from(lessonsTable)
@@ -289,8 +257,7 @@ router.get("/levels/:levelId", async (req, res): Promise<void> => {
   const lessonSummaries = levelLessons.map((lesson, idx) => {
     const prevLessonId = previousLessonInTrack(levelLessons, idx);
     const progressRow = allProgress.find((p) => p.lessonId === lesson.id);
-    const state = viewState(
-      view,
+    const state = view.state(
       deriveLessonStateWithOrders(
         lesson,
         level.order,
@@ -325,10 +292,7 @@ router.get("/levels/:levelId", async (req, res): Promise<void> => {
       isFreeLesson: lesson.id === view.freeLessonId,
       // Locked by the plan rather than by progression, so the screen can point
       // to the plans instead of "finish the previous lesson".
-      lockedReason:
-        view.freeOnly && state === "LOCKED" && lesson.id !== view.freeLessonId && !progressRow?.startedAt
-          ? ("free_lesson_only" as const)
-          : null,
+      lockedReason: view.lockedReason(state, lesson.id, progressRow),
     };
   });
 

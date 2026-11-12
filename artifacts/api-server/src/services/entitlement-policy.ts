@@ -161,6 +161,22 @@ export function stateForFreeLessonStudent(
   return "LOCKED";
 }
 
+/**
+ * A lesson's state as one student sees it, from its state in the curriculum.
+ *
+ * Students limited to the free lesson follow stateForFreeLessonStudent. For
+ * everyone else a lesson they have begun is never locked by the curriculum's
+ * order: the only way to begin one out of order is as the free lesson, and
+ * that work must stay reachable after an admin clears or moves the choice.
+ */
+export function studentLessonState(
+  state: LessonState,
+  lesson: { freeOnly: boolean; isFree: boolean; started: boolean },
+): LessonState {
+  if (lesson.freeOnly) return stateForFreeLessonStudent(state, lesson);
+  return lesson.started && state === "LOCKED" ? "IN_PROGRESS" : state;
+}
+
 /** Why a peer call is not startable. `null` means it is. */
 export type CallDenial = "call_quota_exhausted";
 

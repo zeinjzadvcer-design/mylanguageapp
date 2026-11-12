@@ -13,7 +13,6 @@ import {
 import { requireAuth } from "../middlewares/auth";
 import {
   getEntitlement,
-  lessonTrackFilter,
   previousLessonInTrack,
   subscriptionInForce,
 } from "../services/entitlements";
@@ -23,6 +22,7 @@ import {
   getCurriculumLevels,
   publishedLessonFilter,
 } from "../services/learning";
+import { studentLessonView } from "../services/free-lesson";
 
 const router: IRouter = Router();
 
@@ -114,6 +114,9 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
   // Get all published lessons in current level, in the student's track only:
   // the other track's lessons are not theirs to see or count.
   const entitlement = await getEntitlement(userId, req.session.role);
+  // The same view the curriculum pages use, so a student limited to the free
+  // lesson is shown it here and not offered lessons they cannot open.
+  const view = await studentLessonView(entitlement, profile.curriculumId ?? null);
   const allLessonsInLevel = currentLevel
     ? await db
         .select()
@@ -121,7 +124,7 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
         .where(
           and(
             eq(lessonsTable.levelId, currentLevel.id),
-            lessonTrackFilter(entitlement),
+            view.filter,
             publishedLessonFilter(),
           ),
         )
@@ -139,13 +142,17 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
   const lessonSummaries = allLessonsInLevel.map((lesson, idx) => {
     const prevLessonId = previousLessonInTrack(allLessonsInLevel, idx);
     const progressRow = allProgress.find((p) => p.lessonId === lesson.id);
-    const state = deriveLessonStateWithOrders(
-      lesson,
-      currentLevel?.order ?? 0,
-      currentLevelOrder,
-      completedIds,
-      prevLessonId,
-      progressRow?.status,
+    const state = view.state(
+      deriveLessonStateWithOrders(
+        lesson,
+        currentLevel?.order ?? 0,
+        currentLevelOrder,
+        completedIds,
+        prevLessonId,
+        progressRow?.status,
+      ),
+      lesson.id,
+      progressRow,
     );
     lessonStateCounts[state]++;
     // The full LessonSummary the spec promises. It used to stop at seven
@@ -167,15 +174,51 @@ router.get("/dashboard", requireAuth, async (req, res): Promise<void> => {
       isCompleted: state === "COMPLETED",
       bestScore: progressRow?.bestScore ?? null,
       xpReward: lesson.xpReward,
+      lockedReason: view.lockedReason(state, lesson.id, progressRow),
+      isFreeLesson: lesson.id === view.freeLessonId,
     };
   });
 
   const completedInLevel = allLessonsInLevel.filter((l) => completedIds.has(l.id)).length;
 
   // Next lesson: first non-completed available lesson
-  const nextLesson = lessonSummaries.find(
+  let nextLesson = lessonSummaries.find(
     (l) => l.state === "AVAILABLE" || l.state === "IN_PROGRESS",
   );
+
+  // Limited to the free lesson, and it sits in another level: that lesson is
+  // still the one to offer, since nothing in this level opens.
+  if (!nextLesson && view.freeOnly && view.freeLessonId !== null && !completedIds.has(view.freeLessonId)) {
+    const [free] = await db
+      .select({ lesson: lessonsTable, levelCode: levelsTable.code })
+      .from(lessonsTable)
+      .innerJoin(levelsTable, eq(levelsTable.id, lessonsTable.levelId))
+      .where(eq(lessonsTable.id, view.freeLessonId))
+      .limit(1);
+    if (free) {
+      const progressRow = allProgress.find((p) => p.lessonId === free.lesson.id);
+      const state = progressRow?.startedAt ? ("IN_PROGRESS" as const) : ("AVAILABLE" as const);
+      nextLesson = {
+        id: free.lesson.id,
+        levelId: free.lesson.levelId,
+        levelCode: free.levelCode,
+        title: free.lesson.title,
+        titleAr: free.lesson.titleAr,
+        description: free.lesson.description ?? null,
+        descriptionAr: free.lesson.descriptionAr ?? null,
+        order: free.lesson.order,
+        lessonType: free.lesson.lessonType,
+        estimatedMinutes: free.lesson.estimatedMinutes,
+        state,
+        isUnlocked: true,
+        isCompleted: false,
+        bestScore: progressRow?.bestScore ?? null,
+        xpReward: free.lesson.xpReward,
+        lockedReason: null,
+        isFreeLesson: true,
+      };
+    }
+  }
 
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
