@@ -1289,8 +1289,11 @@ export function LessonPlayer({
   //    required block cannot be passed without finishing it and a gap before
   //    the furthest one is an optional block the student skipped.
   //
-  // A lesson already completed opens at the beginning, for review; a preview
-  // always does.
+  // A lesson already completed opens at the beginning, for review, unless this
+  // device has a position from a visit still under way: a refresh while
+  // reviewing or redoing it keeps its place too. Finishing the lesson clears
+  // the position, so the next visit starts at the beginning. A preview always
+  // starts there.
   const { data: me } = useGetMe();
   const blockCount = lesson.contentBlocks?.length ?? 0;
   // Keyed by the lesson's blocks as well as its id: when an editor changes the
@@ -1299,7 +1302,7 @@ export function LessonPlayer({
   const positionKey = `lesson-position:${me?.id ?? "anon"}:${lessonId}:${blockSignature}`;
   const serverDoneCount = lesson.completedBlockIds?.length ?? 0;
   const resume = ((): { index: number; intro: boolean } => {
-    if (isPreview || lesson.isCompleted || blockCount === 0) return { index: 0, intro: hasIntro };
+    if (isPreview || blockCount === 0) return { index: 0, intro: hasIntro };
     try {
       const saved = JSON.parse(localStorage.getItem(positionKey) ?? "null") as
         | number
@@ -1323,6 +1326,8 @@ export function LessonPlayer({
     } catch {
       // Storage unavailable or unreadable: the server's record alone.
     }
+    // Completed: its finished blocks say nothing about where a review stands.
+    if (lesson.isCompleted) return { index: 0, intro: hasIntro };
     const done = new Set(lesson.completedBlockIds ?? []);
     let furthestDone = -1;
     (lesson.contentBlocks ?? []).forEach((b, i) => {
@@ -1345,6 +1350,8 @@ export function LessonPlayer({
   const [previewFinished, setPreviewFinished] = useState(false);
   const [startTime] = useState(Date.now());
   const initialized = useRef(false);
+  /** Set once the lesson is finished, so the position is not saved again after it is cleared. */
+  const lessonFinished = useRef(false);
   /**
    * Blocks finished in this visit. Every accepted submit is recorded on the
    * server as finished, so they count at once, without waiting for the lesson
@@ -1356,7 +1363,7 @@ export function LessonPlayer({
 
   // Remember the position on this device; see `resume`.
   useEffect(() => {
-    if (isPreview) return;
+    if (isPreview || lessonFinished.current) return;
     try {
       localStorage.setItem(
         positionKey,
@@ -1671,6 +1678,13 @@ export function LessonPlayer({
       { lessonId, data: { timeSpentSeconds } },
       {
         onSuccess: async (data) => {
+          // Finished: the next visit starts at the beginning, for review.
+          lessonFinished.current = true;
+          try {
+            localStorage.removeItem(positionKey);
+          } catch {
+            // Storage unavailable: nothing was saved either.
+          }
           // Invalidate everything that might reference this lesson's state
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() }),
