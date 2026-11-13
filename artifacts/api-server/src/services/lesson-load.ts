@@ -31,11 +31,12 @@ import { logger } from "../lib/logger";
 import { isUnmeteredRole } from "./entitlement-policy";
 import {
   isOverloaded,
-  lessonRefusal,
+  takeLocalSeat,
   type LessonRefusal,
   type LoadLimits,
   type LoadSignals,
 } from "./lesson-load-policy";
+import { takeSeatInRedis } from "./lesson-seats";
 
 /** How long after their last lesson request a student still counts as in a lesson. */
 const ACTIVE_WINDOW_MS = envInt("LESSON_ACTIVE_WINDOW_MS", 10 * 60_000);
@@ -84,19 +85,32 @@ function client() {
   return redis && isRedisAvailable() ? redis : null;
 }
 
-/** Record that this student is in a lesson. Never throws. */
-export async function noteLessonActivity(userId: number): Promise<void> {
+/**
+ * Give this student a seat in lessons, unless `max` are taken by others.
+ * `max` null means no limit, and then this only records them. Never throws:
+ * when Valkey fails the student is let in, since capacity management must not
+ * be what closes lessons.
+ */
+async function takeSeat(userId: number, max: number | null): Promise<boolean> {
   const now = Date.now();
+  const since = now - ACTIVE_WINDOW_MS;
   const r = client();
-  if (!r) {
-    localActive.set(userId, now);
-    return;
-  }
+  if (!r) return takeLocalSeat(localActive, userId, now, since, max);
   try {
-    await r.zadd(ACTIVE_KEY, now, String(userId));
+    return await takeSeatInRedis(r, ACTIVE_KEY, userId, now, since, max);
   } catch (err) {
-    logger.debug({ err }, "Could not record lesson activity");
+    logger.debug({ err }, "Could not take a lesson seat");
+    return true;
   }
+}
+
+/**
+ * Record that this student is still in a lesson, so they keep their seat.
+ * Staff are not counted: their seats would be taken from students.
+ */
+export async function noteLessonActivity(userId: number, role: string | undefined): Promise<void> {
+  if (isUnmeteredRole(role)) return;
+  await takeSeat(userId, null);
 }
 
 /** Students in lessons now. */
@@ -161,40 +175,55 @@ export async function setMaxActiveLearners(maxActiveLearners: number | null): Pr
   cachedLimit = { value: maxActiveLearners, at: Date.now() };
 }
 
-function limits(maxActiveLearners: number | null): LoadLimits {
-  return { maxActiveLearners, lagLimitMs: LAG_LIMIT_MS, dbWaitingLimit: DB_WAITING_LIMIT };
-}
+const LIMITS: LoadLimits = { lagLimitMs: LAG_LIMIT_MS, dbWaitingLimit: DB_WAITING_LIMIT };
 
 // ─── Admission ────────────────────────────────────────────────────────────────
 
 /**
- * Why this student may not open this lesson now, or null when they may.
+ * Why this student may not open this lesson now, or null when they may — and
+ * when they may, they now have a seat.
  *
- * Cheap on the common path: whether they are already in a lesson is looked up
- * only when the answer would otherwise be no.
+ * Call it once the student is known to be allowed the lesson at all, so that
+ * a locked or paid lesson is not reported as busy and takes no seat.
+ *
+ * Never turned away: staff, students already in a lesson, and students coming
+ * back to a lesson they began. `alreadyStarted` is that last fact when the
+ * caller has already read it; otherwise it is looked up, and only when the
+ * answer would be no.
  */
 export async function lessonAdmission(
   userId: number,
   role: string | undefined,
   lessonId: number,
+  alreadyStarted?: boolean,
 ): Promise<LessonRefusal | null> {
   if (isUnmeteredRole(role)) return null;
-  const [maxActiveLearners, activeLearners] = await Promise.all([
-    getMaxActiveLearners(),
-    countActiveLearners(),
-  ]);
-  const signals = loadSignals();
-  const wouldRefuse = lessonRefusal({
-    staff: false,
-    alreadyIn: false,
-    activeLearners,
-    signals,
-    limits: limits(maxActiveLearners),
-  });
-  if (!wouldRefuse) return null;
+  if (alreadyStarted) {
+    await takeSeat(userId, null);
+    return null;
+  }
 
-  // Already in a lesson, or coming back to this one: never turned away.
-  if (await isActiveLearner(userId)) return null;
+  const maxActiveLearners = await getMaxActiveLearners();
+  const signals = loadSignals();
+  let refusal: LessonRefusal | null = null;
+  if (isOverloaded(signals, LIMITS)) {
+    // Students already in a lesson carry on; nobody new starts one.
+    refusal = (await isActiveLearner(userId)) ? null : "overloaded";
+    if (!refusal) await takeSeat(userId, null);
+  } else if (!(await takeSeat(userId, maxActiveLearners))) {
+    refusal = "full";
+  }
+  if (!refusal) return null;
+
+  if (alreadyStarted === undefined && (await hasStarted(userId, lessonId))) {
+    await takeSeat(userId, null);
+    return null;
+  }
+  logger.info({ userId, lessonId, reason: refusal, maxActiveLearners, ...signals }, "Lesson turned away: busy");
+  return refusal;
+}
+
+async function hasStarted(userId: number, lessonId: number): Promise<boolean> {
   const [begun] = await db
     .select({ id: lessonProgressTable.id })
     .from(lessonProgressTable)
@@ -206,10 +235,7 @@ export async function lessonAdmission(
       ),
     )
     .limit(1);
-  if (begun) return null;
-
-  logger.info({ userId, lessonId, reason: wouldRefuse, activeLearners, maxActiveLearners, ...signals }, "Lesson turned away: busy");
-  return wouldRefuse;
+  return Boolean(begun);
 }
 
 /** For the admin screen: the limit, the count, and how the server is doing. */
@@ -222,7 +248,7 @@ export async function lessonCapacityStatus() {
   return {
     maxActiveLearners,
     activeLearners,
-    overloaded: isOverloaded(signals, limits(maxActiveLearners)),
+    overloaded: isOverloaded(signals, LIMITS),
     ...signals,
     lagLimitMs: LAG_LIMIT_MS,
     dbWaitingLimit: DB_WAITING_LIMIT,

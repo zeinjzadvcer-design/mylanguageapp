@@ -55,32 +55,36 @@ const router: IRouter = Router();
 
 /**
  * Turn the student away with "come back later" when lessons are full or the
- * server is overloaded, and otherwise count them as in a lesson. True when the
- * response has been sent. See services/lesson-load.ts.
+ * server is overloaded; otherwise they now have a seat. True when the response
+ * has been sent. Called after the lesson is known to be open to this student,
+ * so a locked or paid lesson gets its own answer and takes no seat. See
+ * services/lesson-load.ts.
  */
 async function refuseWhenBusy(
   req: import("express").Request,
   res: import("express").Response,
   lessonId: number,
+  alreadyStarted?: boolean,
 ): Promise<boolean> {
-  const userId = req.session.userId!;
-  const refusal = await lessonAdmission(userId, req.session.role, lessonId);
-  if (refusal) {
-    res.set("Retry-After", String(RETRY_AFTER_S));
-    res.status(503).json({ ...BUSY_MESSAGE, reason: refusal });
-    return true;
-  }
-  void noteLessonActivity(userId);
-  return false;
+  const refusal = await lessonAdmission(req.session.userId!, req.session.role, lessonId, alreadyStarted);
+  if (!refusal) return false;
+  res.set("Retry-After", String(RETRY_AFTER_S));
+  res.status(503).json({ ...BUSY_MESSAGE, reason: refusal });
+  return true;
 }
 
 /**
- * Written answers graded by the AI while the student waits, at most this many
- * at once. One past it is saved at once and graded in the background job
+ * Open-ended answers graded by the AI while the student waits, at most this
+ * many at once. One past it is saved at once and graded in the background job
  * queue, which has its own limit (JOB_CONCURRENCY), so a burst of answers
  * cannot pile model calls onto the API or hold every request open.
+ *
+ * Spoken answers have their own slots. They wait on the speech recogniser
+ * first, which can queue for a long time when the provider's account limit is
+ * low; sharing slots, a few of them would send every typed answer to the back.
  */
-const inlineGradingSlots = createSlots(envInt("AI_GRADING_INLINE_MAX", 4));
+const typedGradingSlots = createSlots(envInt("AI_GRADING_INLINE_MAX", 4));
+const spokenGradingSlots = createSlots(envInt("AI_GRADING_INLINE_SPOKEN_MAX", 4));
 
 /**
  * How many times one block may be answered in a lesson.
@@ -357,9 +361,6 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
 
   const userId = req.session.userId!;
 
-  // First, before any work: when lessons are full, a student arriving is told so.
-  if (await refuseWhenBusy(req, res, lessonId)) return;
-
   // Load static content from cache
   const bundle = await cached(CK.lessonContent(lessonId), TTL.LESSON_CONTENT, () =>
     loadLessonContent(lessonId),
@@ -472,6 +473,10 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
     return;
   }
 
+  // Open to them. Now, whether the site has room: a student arriving while
+  // lessons are full is told to come back; one returning to it is not.
+  if (await refuseWhenBusy(req, res, lessonId, Boolean(progressRow?.startedAt))) return;
+
   const completedBlockIds = await getCompletedBlockIds(
     userId,
     lessonId,
@@ -515,8 +520,6 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
     res.status(400).json({ error: "Invalid lesson ID" });
     return;
   }
-
-  if (await refuseWhenBusy(req, res, lessonId)) return;
 
   const [lessonRow] = await db
     .select()
@@ -612,6 +615,12 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
     res.status(403).json({ error: "This lesson is locked" });
     return;
   }
+
+  // Open in the curriculum; is there room? Before the plan gate's transaction,
+  // so its lock is never held waiting on Valkey. A lesson the plan then refuses
+  // keeps the seat for the window, which a student who just opened the lesson
+  // page already had.
+  if (await refuseWhenBusy(req, res, lessonId)) return;
 
   // ── Plan gate ───────────────────────────────────────────────────────────────
   // The paywall. Everything above decides whether the CURRICULUM lets this
@@ -797,9 +806,6 @@ router.post(
       res.status(400).json({ error: "Invalid lesson or block ID" });
       return;
     }
-    // In a lesson: keeps them counted, so they are never turned away mid-lesson.
-    void noteLessonActivity(userId);
-
     const parsed = submitBlockSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -856,6 +862,8 @@ router.post(
     }
 
     if (await refuseUnopenedLesson(res, userId, req.session.role, lessonRow)) return;
+    // Answering in a lesson keeps their seat, so they are never turned away mid-lesson.
+    void noteLessonActivity(userId, req.session.role);
 
     // Validate block belongs to lesson and is active
     const [block] = await db
@@ -1088,6 +1096,7 @@ router.post(
     // gradeLessonActivity returns null and the attempt stays pending, so the
     // lesson never stalls on the model being slow or absent.
     let verdict = null;
+    let gradingQueued = false;
     // `responseText` OR a recording: a spoken open-ended answer is transcribed
     // inside gradeLessonActivity, so audio alone is enough to grade on.
     if (
@@ -1095,7 +1104,8 @@ router.post(
       activityType === "open_ended" &&
       (responseText || mediaId !== undefined)
     ) {
-      const release = inlineGradingSlots.tryTake();
+      const slots = responseText ? typedGradingSlots : spokenGradingSlots;
+      const release = slots.tryTake();
       if (release) {
         try {
           verdict = await gradeLessonActivity(attempt.id);
@@ -1104,8 +1114,9 @@ router.post(
         }
       } else {
         // Every slot busy: answered "pending" now, graded in the background.
-        // The lesson page polls for the verdict, as it does for recordings.
+        // `gradingQueued` tells the lesson page to fetch the verdict when it lands.
         jobs.enqueue("grade_lesson_activity", { activityAttemptId: attempt.id });
+        gradingQueued = true;
       }
     }
 
@@ -1117,6 +1128,7 @@ router.post(
       score: verdict ? verdict.score : score,
       evaluationStatus: verdict ? "graded" : evaluationStatus,
     };
+    if (gradingQueued) responsePayload.gradingQueued = true;
 
     if (verdict) {
       responsePayload.feedbackAr = verdict.feedback;
