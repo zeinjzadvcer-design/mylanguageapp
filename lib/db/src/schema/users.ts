@@ -60,6 +60,8 @@ export const studentProfilesTable = pgTable("student_profiles", {
   streakDays: integer("streak_days").notNull().default(0),
   totalXp: integer("total_xp").notNull().default(0),
   placementCompleted: boolean("placement_completed").notNull().default(false),
+  /** Whether to send the daily "time for your lesson" reminder. On by default. */
+  lessonReminders: boolean("lesson_reminders").notNull().default(true),
   lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).defaultNow(),
   bio: text("bio"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
