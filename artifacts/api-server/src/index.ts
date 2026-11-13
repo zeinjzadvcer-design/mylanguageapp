@@ -10,6 +10,7 @@ import {
   stopRecordingRetentionSweeper,
 } from "./services/recording-retention";
 import { ensureBootstrapAdmin } from "./services/bootstrap-admin";
+import { startNotificationSweeper, stopNotificationSweeper } from "./services/notifications";
 import { closeJobQueue } from "./services/jobs";
 
 const rawPort = process.env["PORT"];
@@ -60,6 +61,7 @@ async function shutdown(signal: string): Promise<void> {
     stopGradingSweeper();
     stopSubscriptionSweeper();
     stopRecordingRetentionSweeper();
+    stopNotificationSweeper();
     await closeJobQueue();
     logger.info("Shutdown complete");
   } catch (err) {
@@ -94,4 +96,5 @@ app.listen(port, (err) => {
   startGradingSweeper();
   startSubscriptionSweeper();
   startRecordingRetentionSweeper();
+  startNotificationSweeper();
 });
