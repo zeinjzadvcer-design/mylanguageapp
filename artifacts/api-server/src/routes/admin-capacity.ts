@@ -11,6 +11,7 @@ import { z } from "zod";
 import { requirePermission } from "../middlewares/auth";
 import { countLiveCalls, getMaxConcurrentCalls } from "../services/practice";
 import { lessonCapacityStatus, setMaxActiveLearners } from "../services/lesson-load";
+import { capacityAdvice } from "../services/capacity-monitor";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -21,7 +22,7 @@ router.get("/admin/capacity", requirePermission("settings.manage"), async (_req,
     countLiveCalls(),
     lessonCapacityStatus(),
   ]);
-  res.json({ calls: { maxConcurrentCalls, liveCalls }, lessons });
+  res.json({ calls: { maxConcurrentCalls, liveCalls }, lessons, advice: capacityAdvice() });
 });
 
 const lessonsSchema = z.object({
