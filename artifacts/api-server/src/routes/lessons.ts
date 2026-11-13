@@ -41,7 +41,7 @@ import {
 } from "../services/entitlements";
 import { gradeLessonActivity } from "../services/grading-runner";
 import { lessonOpenDenialFor, studentLessonView } from "../services/free-lesson";
-import { lessonAdmission, noteLessonActivity } from "../services/lesson-load";
+import { lessonAdmission, noteLessonActivity, overloadRefusal } from "../services/lesson-load";
 import { BUSY_MESSAGE, RETRY_AFTER_S, createSlots } from "../services/lesson-load-policy";
 import { envInt } from "../lib/env";
 import {
@@ -66,7 +66,23 @@ async function refuseWhenBusy(
   lessonId: number,
   alreadyStarted?: boolean,
 ): Promise<boolean> {
-  const refusal = await lessonAdmission(req.session.userId!, req.session.role, lessonId, alreadyStarted);
+  return sendBusy(res, await lessonAdmission(req.session.userId!, req.session.role, lessonId, alreadyStarted));
+}
+
+/**
+ * The same, but first thing in the route and only while the server is
+ * overloaded, so a newcomer is turned away before the lesson's own database
+ * checks add to the load (services/lesson-load.ts, overloadRefusal).
+ */
+async function refuseEarlyWhenOverloaded(
+  req: import("express").Request,
+  res: import("express").Response,
+  lessonId: number,
+): Promise<boolean> {
+  return sendBusy(res, await overloadRefusal(req.session.userId!, req.session.role, lessonId));
+}
+
+function sendBusy(res: import("express").Response, refusal: string | null): boolean {
   if (!refusal) return false;
   res.set("Retry-After", String(RETRY_AFTER_S));
   res.status(503).json({ ...BUSY_MESSAGE, reason: refusal });
@@ -361,6 +377,8 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
 
   const userId = req.session.userId!;
 
+  if (await refuseEarlyWhenOverloaded(req, res, lessonId)) return;
+
   // Load static content from cache
   const bundle = await cached(CK.lessonContent(lessonId), TTL.LESSON_CONTENT, () =>
     loadLessonContent(lessonId),
@@ -520,6 +538,8 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
     res.status(400).json({ error: "Invalid lesson ID" });
     return;
   }
+
+  if (await refuseEarlyWhenOverloaded(req, res, lessonId)) return;
 
   const [lessonRow] = await db
     .select()
@@ -838,6 +858,8 @@ router.post(
       .limit(1);
 
     if (existingAttempt) {
+      // A re-sent answer is still the student in their lesson.
+      void noteLessonActivity(userId, req.session.role);
       res.json({
         attemptId: existingAttempt.id,
         blockId: existingAttempt.blockId,

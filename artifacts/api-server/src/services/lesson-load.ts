@@ -48,7 +48,7 @@ const ACTIVE_WINDOW_MS = envInt("LESSON_ACTIVE_WINDOW_MS", 10 * 60_000);
 const LAG_LIMIT_MS = envInt("LESSON_OVERLOAD_LAG_MS", 500);
 
 /** Requests waiting for a database connection at which the database is overloaded. */
-const DB_WAITING_LIMIT = envInt("LESSON_OVERLOAD_DB_WAITING", envInt("DB_POOL_MAX", 10));
+const DB_WAITING_LIMIT = envInt("LESSON_OVERLOAD_DB_WAITING", pool.options.max ?? 10);
 
 const ACTIVE_KEY = "lessons:active";
 
@@ -221,6 +221,34 @@ export async function lessonAdmission(
   }
   logger.info({ userId, lessonId, reason: refusal, maxActiveLearners, ...signals }, "Lesson turned away: busy");
   return refusal;
+}
+
+/**
+ * The early, cheap answer for while the server is overloaded: "overloaded" for
+ * a student arriving at a lesson they have not begun, before any of the
+ * lesson's own checks run.
+ *
+ * Those checks are several database queries, and while the server is
+ * overloaded the database is usually why. Turning a newcomer away first costs
+ * one Valkey lookup and one query instead. The price is that a newcomer
+ * opening a lesson that is locked to them hears "busy" rather than "locked",
+ * and only while the server is overloaded; when lessons are merely full, the
+ * full checks run first and each lesson gets its own answer.
+ *
+ * Null otherwise, including always for staff and for students in a lesson;
+ * lessonAdmission then decides as usual.
+ */
+export async function overloadRefusal(
+  userId: number,
+  role: string | undefined,
+  lessonId: number,
+): Promise<LessonRefusal | null> {
+  if (isUnmeteredRole(role)) return null;
+  const signals = loadSignals();
+  if (!isOverloaded(signals, LIMITS)) return null;
+  if ((await isActiveLearner(userId)) || (await hasStarted(userId, lessonId))) return null;
+  logger.info({ userId, lessonId, reason: "overloaded", ...signals }, "Lesson turned away: busy");
+  return "overloaded";
 }
 
 async function hasStarted(userId: number, lessonId: number): Promise<boolean> {
