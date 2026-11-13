@@ -1043,6 +1043,19 @@ export const en = {
     saveFailed: "Could not save",
     loadFailed: "Could not load capacity.",
     wholeNumber: "A whole number of at least 1, or blank",
+    suggested: (n: number) => `Suggested: ${n.toLocaleString("en")}`,
+    useSuggested: "Use",
+    basisMeasured: (min: number) => `measured from the last ${min} minutes of real use`,
+    basisEstimated: (min: number) =>
+      `estimate: server cost measured over ${min} minutes, but too few students yet to measure what one costs`,
+    noSuggestion: "No suggestion yet: it needs at least 5 minutes of real use to measure.",
+    noCallSuggestion: "No suggestion yet: it needs calls running to measure what one costs.",
+    usageTitle: "Server use, last 15 minutes",
+    cpuUse: (pct: number) => `Processor: ${pct}% busy`,
+    dbUse: (pct: number) => `Database connections: ${pct}% in use`,
+    callCost: (n: number) => `One call costs the server about as much as ${n} students in lessons.`,
+    adviceNote:
+      "Suggestions fill the server to 70% and leave the rest for bursts. Each assumes the other stays as it is now, so raising both at once can overload the server; the overload check then holds new lessons. Voice-call analysis and AI grading also depend on your AssemblyAI and Anthropic plans, which this cannot see.",
   },
 };
 
