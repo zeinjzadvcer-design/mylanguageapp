@@ -2,7 +2,15 @@ import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { useGetProfile, useUpdateProfile, ProfileUpdatePreferredLanguage } from "@workspace/api-client-react";
+import {
+  useGetProfile,
+  useUpdateProfile,
+  ProfileUpdatePreferredLanguage,
+  useGetNotificationSettings,
+  useUpdateNotificationSettings,
+} from "@workspace/api-client-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -286,6 +294,8 @@ export default function Profile() {
           </Card>
           </>}
 
+          {isLearner && <ReminderSetting />}
+
           <Card className="md:col-span-2">
             <CardContent className="p-6 flex flex-col sm:flex-row sm:items-center gap-4">
               <div className="flex-1">
@@ -298,5 +308,48 @@ export default function Profile() {
         </div>
       )}
     </div>
+  );
+}
+
+/** The daily lesson reminder, on or off. Hidden for an account with no student profile. */
+function ReminderSetting() {
+  const { t } = useI18n();
+  const n = t.notifications;
+  const { toast } = useToast();
+  const settings = useGetNotificationSettings();
+  const update = useUpdateNotificationSettings();
+
+  if (settings.data && settings.data.lessonReminders === null) return null;
+  const on = settings.data?.lessonReminders ?? true;
+
+  return (
+    <Card className="md:col-span-2">
+      <CardContent className="p-6 flex items-center gap-4">
+        <div className="flex-1 min-w-0">
+          <Label htmlFor="lesson-reminders" className="font-bold text-foreground text-base">
+            {n.remindersTitle}
+          </Label>
+          <p className="text-sm text-muted-foreground mt-1">{n.remindersBody}</p>
+        </div>
+        <Switch
+          id="lesson-reminders"
+          className="shrink-0"
+          checked={on}
+          disabled={settings.isLoading || update.isPending}
+          onCheckedChange={(value) =>
+            update.mutate(
+              { data: { lessonReminders: value } },
+              {
+                onSuccess: () => {
+                  void settings.refetch();
+                  toast({ title: value ? n.remindersOn : n.remindersOff });
+                },
+                onError: () => toast({ variant: "destructive", title: n.remindersFailed }),
+              },
+            )
+          }
+        />
+      </CardContent>
+    </Card>
   );
 }

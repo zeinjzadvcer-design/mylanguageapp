@@ -23,7 +23,7 @@ import {
   type RpcReceipt,
   type VerifyResult,
 } from "./crypto-verify-policy";
-import { activateSubscription, flagForReview } from "./subscription-activation";
+import { activateSubscription, flagForReview, notifyRejection } from "./subscription-activation";
 import { USDT_AMOUNT_HOLD_MS } from "./usdt-amount";
 
 /**
@@ -414,9 +414,18 @@ export async function displaceUnprovenClaim(
         isNull(paymentSubmissionsTable.confirmedAt),
       ),
     )
-    .returning({ id: paymentSubmissionsTable.id });
+    .returning({
+      id: paymentSubmissionsTable.id,
+      userId: paymentSubmissionsTable.userId,
+      subscriptionId: paymentSubmissionsTable.subscriptionId,
+      reviewNote: paymentSubmissionsTable.reviewNote,
+    });
 
   if (displaced.length === 0) return false;
+
+  for (const d of displaced) {
+    await notifyRejection(d.userId, d.id, d.subscriptionId, d.reviewNote ?? "");
+  }
 
   logger.warn(
     { txHash, displacedSubmissionId: displaced[0].id, subscriptionId: claimant.id },

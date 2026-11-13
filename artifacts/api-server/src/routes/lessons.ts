@@ -28,6 +28,7 @@ import {
   findNextLesson,
   publishedLessonFilter,
 } from "../services/learning";
+import { notifyEvaluationIfOpen } from "../services/notifications";
 import { assertUsableRecording, MediaValidationError } from "../services/media";
 import {
   getEntitlement,
@@ -1307,6 +1308,9 @@ router.post("/lessons/:lessonId/complete", requireAuth, async (req, res): Promis
 
   // Maybe advance to next level
   const { advanced, newLevelId } = await maybeAdvanceLevel(userId, lessonId, req.session.role);
+
+  // Passing a lesson is what can open the level test. Never throws.
+  if (passed && !advanced) await notifyEvaluationIfOpen(userId, lesson.levelId);
 
   // Find next lesson
   const nextLessonRow = await findNextLesson(lessonId);

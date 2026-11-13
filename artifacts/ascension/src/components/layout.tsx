@@ -6,6 +6,7 @@ import { Button } from "./ui/button";
 import { BrandLogo, LanguageSwitcher } from "./brand";
 import { useI18n } from "@/lib/i18n";
 import { staffPanel, usesStudentApp } from "@/lib/permissions";
+import { NotificationBell } from "./notification-bell";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { data: user, isLoading } = useGetMe();
@@ -51,6 +52,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       ]
     : [];
 
+  // Notifications are only ever sent to student accounts, so staff get no bell
+  // and no once-a-minute poll for a list that stays empty.
+  const isStudent = user.role === "student";
+
   const panel = staffPanel(user);
   if (panel) {
     navItems.push({ href: panel.href, label: t.nav[panel.nav], icon: Settings });
@@ -60,10 +65,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="min-h-[100dvh] flex flex-col bg-background pb-16 md:pb-0 md:ps-64">
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex flex-col fixed top-0 start-0 w-64 h-[100dvh] bg-card border-e border-border z-40">
-        <div className="px-6 h-[73px] flex items-center border-b border-border">
+        <div className="ps-6 pe-3 h-[73px] flex items-center justify-between gap-2 border-b border-border">
           <Link href="/dashboard">
             <BrandLogo />
           </Link>
+          {isStudent && <NotificationBell />}
         </div>
 
         <nav className="flex-1 p-4 space-y-1.5 overflow-y-auto">
@@ -115,6 +121,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <BrandLogo size="sm" />
         </Link>
         <div className="flex items-center gap-1">
+          {isStudent && <NotificationBell />}
           <LanguageSwitcher />
           <Button
             variant="ghost"

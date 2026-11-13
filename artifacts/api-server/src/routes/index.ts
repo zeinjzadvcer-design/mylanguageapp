@@ -16,6 +16,7 @@ import adminStaffRouter from "./admin-staff";
 import walletSmsRouter from "./wallet-sms";
 import languagesRouter from "./languages";
 import cmsRouter from "./cms";
+import notificationsRouter from "./notifications";
 import quizzesRouter from "./quizzes";
 import progressionRouter from "./progression";
 import mediaRouter from "./media";
@@ -50,5 +51,6 @@ router.use(adminPracticeRouter);
 router.use(conversationRouter);
 router.use(practiceRouter);
 router.use(cmsRouter);
+router.use(notificationsRouter);
 
 export default router;

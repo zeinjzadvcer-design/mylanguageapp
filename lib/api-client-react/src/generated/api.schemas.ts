@@ -185,6 +185,43 @@ export interface UpdateStaffBody {
   role: string;
 }
 
+export type NotificationKind = typeof NotificationKind[keyof typeof NotificationKind];
+
+
+export const NotificationKind = {
+  subscription_approved: 'subscription_approved',
+  subscription_rejected: 'subscription_rejected',
+  lesson_reminder: 'lesson_reminder',
+  quiz_available: 'quiz_available',
+  evaluation_available: 'evaluation_available',
+} as const;
+
+/**
+ * The facts the wording needs, such as plan names, a quiz title or a reason.
+ */
+export type NotificationData = { [key: string]: unknown };
+
+export interface Notification {
+  id: number;
+  kind: NotificationKind;
+  /** The facts the wording needs, such as plan names, a quiz title or a reason. */
+  data: NotificationData;
+  /** The app path tapping the notification opens. */
+  link: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface NotificationList {
+  items: Notification[];
+  unread: number;
+}
+
+export interface NotificationSettings {
+  /** Null when the account has no student profile. */
+  lessonReminders: boolean | null;
+}
+
 export type ReferralReportItemsItem = {
   source: string;
   count: number;
@@ -2554,6 +2591,18 @@ export interface PracticeCall {
 export interface PracticeHistoryResponse {
   calls: PracticeCall[];
 }
+
+export type ListNotificationsParams = {
+limit?: number;
+};
+
+export type GetUnreadNotificationCount200 = {
+  unread: number;
+};
+
+export type UpdateNotificationSettingsBody = {
+  lessonReminders: boolean;
+};
 
 export type GetLessonsParams = {
 levelId?: number;

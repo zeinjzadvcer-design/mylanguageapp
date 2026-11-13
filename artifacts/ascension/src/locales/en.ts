@@ -274,6 +274,44 @@ export const en = {
     listen: "Listen",
   },
 
+  notifications: {
+    title: "Notifications",
+    unread: (n: number) => `${n} unread`,
+    unreadDot: "Unread",
+    markAllRead: "Mark all as read",
+    empty: "Nothing yet. Updates about your plan, your lessons and new quizzes will appear here.",
+    loadError: "Something went wrong while loading your notifications.",
+    yourPlan: "Your plan",
+    subscriptionApproved: {
+      title: "Your subscription is active",
+      body: (plan: string, until: string | null) =>
+        until ? `${plan} is active until ${until}. Enjoy your lessons!` : `${plan} is now active. Enjoy your lessons!`,
+    },
+    subscriptionRejected: {
+      title: "Your payment was not accepted",
+      body: (plan: string, reason: string | null) =>
+        reason ? `${plan}: ${reason}` : `${plan}: open your subscription page to see what to fix.`,
+    },
+    lessonReminder: {
+      title: "Time for today's lesson",
+      body: "A few minutes a day keeps your progress going. Your next lesson is waiting.",
+      placementBody: "Take the placement test to unlock your first lesson.",
+    },
+    quizAvailable: {
+      title: "A new quiz is available",
+      body: (quiz: string) => `"${quiz}" is ready for you.`,
+    },
+    evaluationAvailable: {
+      title: "Your level test is open",
+      body: (quiz: string) => `You have finished enough lessons to take "${quiz}".`,
+    },
+    remindersTitle: "Daily lesson reminder",
+    remindersBody: "A reminder at 6 pm (Damascus time) on days you have not studied yet.",
+    remindersOn: "Daily reminders are on",
+    remindersOff: "Daily reminders are off",
+    remindersFailed: "Could not change the reminder setting",
+  },
+
   profile: {
     nameMin: "Name must be at least 2 characters",
     bioMax: "Bio must be at most 160 characters",
