@@ -20,6 +20,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { Link } from "wouter";
+import { NullableNumberField } from "@/components/nullable-number-field";
 import {
   AlertCircle,
   CheckCircle2,
@@ -40,10 +42,7 @@ import {
   testProvider,
   updateTask,
   setPolicy,
-  getPracticeSettings,
-  updatePracticeSettings,
   AiAdminError,
-  type PracticeSettings,
   type AiConfig,
   type AiProvider,
   type AiTaskSettings,
@@ -94,20 +93,13 @@ export default function AiSettings() {
   const [usage, setUsage] = useState<UsageRow[]>([]);
   const [totals, setTotals] = useState<UsageTotals | null>(null);
   const [byUser, setByUser] = useState<UsageByUser[]>([]);
-  const [practice, setPractice] = useState<PracticeSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [c, u, p] = await Promise.all([
-        getAiConfig(),
-        getAiUsage(30),
-        // Its own failure hides only its own card, not the AI configuration.
-        getPracticeSettings().catch(() => null),
-      ]);
+      const [c, u] = await Promise.all([getAiConfig(), getAiUsage(30)]);
       setConfig(c);
-      setPractice(p);
       setUsage(u.rows);
       setTotals(u.totals ?? null);
       setByUser(u.byUser ?? []);
@@ -237,34 +229,15 @@ export default function AiSettings() {
         </CardContent>
       </Card>
 
-      {/* Voice practice */}
-      {practice && (
-        <Card className="border-2">
-          <CardContent className="p-5">
-            <h2 className="font-bold">Voice practice calls</h2>
-            <p className="text-sm text-muted-foreground mb-4">
-              Calls running at once across the whole site. When the limit is reached, students
-              stay in the queue until a call ends. Calls already running are not cut off.
-            </p>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <NullableNumberField
-                id="max-concurrent-calls"
-                label="Maximum simultaneous calls — blank for no limit"
-                value={practice.maxConcurrentCalls}
-                min={1}
-                step={1}
-                isValid={(n) => Number.isInteger(n) && n >= 1}
-                disabled={busy}
-                onSave={(v) => run(() => updatePracticeSettings(v), "Call limit saved")}
-              />
-              <div>
-                <Label className="text-xs text-muted-foreground">Calls running now</Label>
-                <p className="text-2xl font-bold tabular-nums">{practice.liveCalls}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* The voice-call limit used to be set here; it now sits beside the
+          lesson limit on the Capacity page. */}
+      <p className="text-sm text-muted-foreground">
+        Limits on voice calls and on students in lessons at once are on the{" "}
+        <Link href="/admin/capacity" className="text-primary underline underline-offset-2">
+          Capacity
+        </Link>{" "}
+        page.
+      </p>
 
       {/* Providers */}
       <section className="space-y-3">
@@ -518,63 +491,6 @@ export default function AiSettings() {
 }
 
 // ─── Pieces ───────────────────────────────────────────────────────────────────
-
-/** A number an admin may leave blank to mean "no limit". */
-function NullableNumberField({
-  id,
-  label,
-  value,
-  min,
-  step,
-  isValid,
-  disabled,
-  onSave,
-}: {
-  id: string;
-  label: string;
-  value: number | null;
-  min: number;
-  step: number | string;
-  isValid: (n: number) => boolean;
-  disabled: boolean;
-  onSave: (v: number | null) => void;
-}) {
-  const [text, setText] = useState(value == null ? "" : String(value));
-
-  useEffect(() => {
-    setText(value == null ? "" : String(value));
-  }, [value]);
-
-  const parsed = text.trim() === "" ? null : Number(text);
-  const valid = parsed === null || isValid(parsed);
-
-  return (
-    <div>
-      <Label htmlFor={id} className="text-xs text-muted-foreground">
-        {label}
-      </Label>
-      <div className="flex gap-2 mt-1">
-        <Input
-          id={id}
-          type="number"
-          min={min}
-          step={step}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          className="rounded-xl"
-        />
-        <Button
-          variant="outline"
-          disabled={disabled || !valid || parsed === value}
-          onClick={() => onSave(parsed)}
-          className="rounded-xl"
-        >
-          Save
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 function LimitField({
   value,

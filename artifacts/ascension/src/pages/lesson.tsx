@@ -48,6 +48,7 @@ import {
   AlertCircle,
   Crown,
   Target,
+  Hourglass,
 } from "lucide-react";
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1176,7 +1177,7 @@ function LessonIntro({ lesson }: { lesson: LessonDetail }) {
 // ──────────────────────────────────────────────────────────────────────
 export default function Lesson({ params }: { params: { lessonId: string } }) {
   const lessonId = parseInt(params.lessonId, 10);
-  const { data: lesson, isLoading, error } = useGetLesson(lessonId);
+  const { data: lesson, isLoading, error, refetch, isFetching } = useGetLesson(lessonId);
   const { t } = useI18n();
   const ls = t.lesson;
 
@@ -1186,6 +1187,31 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
       <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-6 mt-10">
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-64 w-full rounded-2xl" />
+      </div>
+    );
+  }
+
+  // Lessons full, or the server overloaded (services/lesson-load.ts): not a
+  // failure either, and not for long. Say so, and let the student try again.
+  const busy =
+    (error as { status?: number } | null)?.status === 503 &&
+    (error as { data?: { code?: string } } | null)?.data?.code === "LESSONS_BUSY";
+  if (busy) {
+    return (
+      <div className="p-8 text-center mt-20 max-w-md mx-auto">
+        <div className="h-16 w-16 bg-lavender rounded-full flex items-center justify-center mx-auto mb-6">
+          <Hourglass className="h-8 w-8 text-primary" />
+        </div>
+        <h2 className="text-xl font-bold mb-3">{ls.busyTitle}</h2>
+        <p className="text-muted-foreground mb-6 leading-relaxed">{ls.busyBody}</p>
+        <div className="flex gap-3 justify-center">
+          <Button onClick={() => void refetch()} disabled={isFetching}>
+            {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : ls.tryAgain}
+          </Button>
+          <Link href="/learn">
+            <Button variant="outline">{t.level.backToCurriculum}</Button>
+          </Link>
+        </div>
       </div>
     );
   }
@@ -1543,6 +1569,27 @@ export function LessonPlayer({
               setBlockField(key, {
                 awaitingVerdict: false,
                 ...(verdict ? { speechVerdict: verdict } : {}),
+              });
+            });
+          }
+
+          // A typed answer is graded while the student waits, unless the AI is
+          // busy with others: then it is graded in the background (see
+          // AI_GRADING_INLINE_MAX on the server) and its verdict fetched here
+          // when it lands, replacing "answer received" with the feedback. A
+          // spoken one is followed above.
+          if (result.evaluationStatus === "pending" && block.type === "open_ended" && payload.mediaId === undefined) {
+            void pollAttemptVerdict(lessonId, result.attemptId).then((verdict) => {
+              if (!verdict || verdict.evaluationStatus === "pending") return;
+              setBlockField(key, {
+                result: {
+                  ...result,
+                  evaluationStatus: verdict.evaluationStatus,
+                  correct: verdict.correct,
+                  score: verdict.score,
+                  feedback: verdict.feedback,
+                  feedbackAr: verdict.feedbackAr,
+                },
               });
             });
           }

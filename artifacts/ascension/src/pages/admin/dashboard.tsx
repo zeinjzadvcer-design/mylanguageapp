@@ -117,6 +117,7 @@ export default function AdminDashboard() {
           { href: "/admin/students", title: ad.studentsTitle, body: ad.studentsBody, permission: "students.manage" },
           { href: "/admin/lessons", title: ad.lessonsTitle, body: ad.lessonsBody, permission: "content.publish" },
           { href: "/admin/payments", title: ad.paymentsTitle, body: ad.paymentsBody, permission: "payments.review" },
+          { href: "/admin/capacity", title: ad.capacityTitle, body: ad.capacityBody, permission: "settings.manage" },
           { href: "/admin/ai", title: ad.aiTitle, body: ad.aiBody, permission: "settings.manage" },
           { href: "/admin/staff", title: ad.staffTitle, body: ad.staffBody, permission: "staff.manage" },
         ] as const).filter(({ permission }) => can(permission)).map(({ href, title, body }) => (

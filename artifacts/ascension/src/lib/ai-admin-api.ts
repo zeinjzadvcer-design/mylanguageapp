@@ -180,6 +180,33 @@ export const getPracticeSettings = () =>
 export const updatePracticeSettings = (maxConcurrentCalls: number | null) =>
   request<unknown>("PATCH", "/admin/practice/settings", { maxConcurrentCalls });
 
+// ─── Capacity ─────────────────────────────────────────────────────────────────
+
+export interface LessonCapacity {
+  /** Students who may be in lessons at once; null means no limit. */
+  maxActiveLearners: number | null;
+  /** Students who opened or answered a lesson in the last ten minutes. */
+  activeLearners: number;
+  /** Whether the server looks overloaded right now. New lessons wait while it does. */
+  overloaded: boolean;
+  /** How far the server is falling behind (99th percentile, ms), and its limit. */
+  loopLagMs: number;
+  lagLimitMs: number;
+  /** Requests waiting for a database connection, and the limit. */
+  dbWaiting: number;
+  dbWaitingLimit: number;
+}
+
+export interface Capacity {
+  calls: PracticeSettings;
+  lessons: LessonCapacity;
+}
+
+export const getCapacity = () => request<Capacity>("GET", "/admin/capacity");
+
+export const updateLessonCapacity = (maxActiveLearners: number | null) =>
+  request<LessonCapacity>("PATCH", "/admin/capacity/lessons", { maxActiveLearners });
+
 export const getAiConfig = () => request<AiConfig>("GET", "/admin/ai/config");
 
 export const getAiUsage = (days = 30) =>

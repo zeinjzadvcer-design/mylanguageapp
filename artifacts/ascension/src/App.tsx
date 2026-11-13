@@ -28,6 +28,7 @@ import AdminDashboard from '@/pages/admin/dashboard';
 import AdminStudents from '@/pages/admin/students';
 import AdminLessons from '@/pages/admin/lessons';
 import AdminAiSettings from '@/pages/admin/ai-settings';
+import AdminCapacity from '@/pages/admin/capacity';
 import AdminPayments from '@/pages/admin/payments';
 import AdminStaff from '@/pages/admin/staff';
 
@@ -65,6 +66,9 @@ const queryClient = new QueryClient({
     queries: {
       retry: (failureCount, error) => {
         const status = (error as { status?: number } | null)?.status;
+        // Lessons full or the server overloaded: retrying at once adds to the
+        // load it is refusing. The lesson page offers "try again" instead.
+        if ((error as { data?: { code?: string } } | null)?.data?.code === "LESSONS_BUSY") return false;
         if (status != null && status >= 400 && status < 500) {
           return status === 408 || status === 429 ? failureCount < 2 : false;
         }
@@ -118,6 +122,7 @@ function Router() {
         <ProtectedRoute path="/admin/students" component={AdminStudents} permission="students.manage" />
         <ProtectedRoute path="/admin/lessons" component={AdminLessons} permission="content.publish" />
         <ProtectedRoute path="/admin/ai" component={AdminAiSettings} permission="settings.manage" />
+        <ProtectedRoute path="/admin/capacity" component={AdminCapacity} permission="settings.manage" />
         <ProtectedRoute path="/admin/payments" component={AdminPayments} permission="payments.review" />
         <ProtectedRoute path="/admin/staff" component={AdminStaff} permission="staff.manage" />
 
