@@ -12,6 +12,7 @@ import {
 import { ensureBootstrapAdmin } from "./services/bootstrap-admin";
 import { startNotificationSweeper, stopNotificationSweeper } from "./services/notifications";
 import { closeJobQueue } from "./services/jobs";
+import { startCapacityMonitor } from "./services/capacity-monitor";
 
 const rawPort = process.env["PORT"];
 
@@ -94,6 +95,7 @@ app.listen(port, (err) => {
   // grading, and doing that while the process is still coming up would compete
   // with the requests it is meant to be ready for.
   startGradingSweeper();
+  startCapacityMonitor();
   startSubscriptionSweeper();
   startRecordingRetentionSweeper();
   startNotificationSweeper();

@@ -24,6 +24,7 @@ import { redis } from "./services/redis";
 import { createRedisSessionStore } from "./services/session-store";
 // Side-effect import: registers the handlers the background queue dispatches to.
 import "./services/job-handlers";
+import { countRequest } from "./services/capacity-monitor";
 
 const app: Express = express();
 
@@ -42,6 +43,10 @@ app.use(
 
 // ── Compression ────────────────────────────────────────────────────────────────
 app.use(compression());
+
+// ── Capacity measurement ──────────────────────────────────────────────────────
+// Counts requests for the suggested limits on the admin Capacity page.
+app.use(countRequest);
 
 // ── Request logging ───────────────────────────────────────────────────────────
 app.use(
