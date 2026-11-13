@@ -22,6 +22,7 @@ import progressionRouter from "./progression";
 import mediaRouter from "./media";
 import adminAiRouter from "./admin-ai";
 import adminPracticeRouter from "./admin-practice";
+import adminCapacityRouter from "./admin-capacity";
 import conversationRouter from "./conversation";
 import practiceRouter from "./practice";
 
@@ -48,6 +49,7 @@ router.use(progressionRouter);
 router.use(mediaRouter);
 router.use(adminAiRouter);
 router.use(adminPracticeRouter);
+router.use(adminCapacityRouter);
 router.use(conversationRouter);
 router.use(practiceRouter);
 router.use(cmsRouter);

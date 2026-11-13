@@ -33,6 +33,7 @@ import { logger } from "../lib/logger";
 export type JobName =
   | "grade_quiz_attempt"
   | "assess_speaking_activity"
+  | "grade_lesson_activity"
   | "analyse_peer_call"
   | "send_notification"
   | "process_audio";
@@ -54,6 +55,13 @@ export interface JobPayload {
    * must not hold a lesson open.
    */
   assess_speaking_activity: { activityAttemptId: number };
+  /**
+   * Grade one written (or spoken open-ended) lesson answer with the AI. Usually
+   * done while the student waits; queued here instead when the inline slots
+   * are all busy (AI_GRADING_INLINE_MAX, routes/lessons.ts), so a burst of
+   * answers waits its turn rather than piling model calls onto the API.
+   */
+  grade_lesson_activity: { activityAttemptId: number };
   /**
    * Transcribe and analyse one peer-call recording. Off the request for the
    * same reason, only more so: diarized ASR over a call of up to thirty minutes

@@ -41,6 +41,9 @@ import {
 } from "../services/entitlements";
 import { gradeLessonActivity } from "../services/grading-runner";
 import { lessonOpenDenialFor, studentLessonView } from "../services/free-lesson";
+import { lessonAdmission, noteLessonActivity } from "../services/lesson-load";
+import { BUSY_MESSAGE, RETRY_AFTER_S, createSlots } from "../services/lesson-load-policy";
+import { envInt } from "../lib/env";
 import {
   toStudentContentBlocks,
   isRecordingBlock,
@@ -49,6 +52,35 @@ import {
 import { jobs } from "../services/jobs";
 
 const router: IRouter = Router();
+
+/**
+ * Turn the student away with "come back later" when lessons are full or the
+ * server is overloaded, and otherwise count them as in a lesson. True when the
+ * response has been sent. See services/lesson-load.ts.
+ */
+async function refuseWhenBusy(
+  req: import("express").Request,
+  res: import("express").Response,
+  lessonId: number,
+): Promise<boolean> {
+  const userId = req.session.userId!;
+  const refusal = await lessonAdmission(userId, req.session.role, lessonId);
+  if (refusal) {
+    res.set("Retry-After", String(RETRY_AFTER_S));
+    res.status(503).json({ ...BUSY_MESSAGE, reason: refusal });
+    return true;
+  }
+  void noteLessonActivity(userId);
+  return false;
+}
+
+/**
+ * Written answers graded by the AI while the student waits, at most this many
+ * at once. One past it is saved at once and graded in the background job
+ * queue, which has its own limit (JOB_CONCURRENCY), so a burst of answers
+ * cannot pile model calls onto the API or hold every request open.
+ */
+const inlineGradingSlots = createSlots(envInt("AI_GRADING_INLINE_MAX", 4));
 
 /**
  * How many times one block may be answered in a lesson.
@@ -325,6 +357,9 @@ router.get("/lessons/:lessonId", requireAuth, async (req, res): Promise<void> =>
 
   const userId = req.session.userId!;
 
+  // First, before any work: when lessons are full, a student arriving is told so.
+  if (await refuseWhenBusy(req, res, lessonId)) return;
+
   // Load static content from cache
   const bundle = await cached(CK.lessonContent(lessonId), TTL.LESSON_CONTENT, () =>
     loadLessonContent(lessonId),
@@ -480,6 +515,8 @@ router.post("/lessons/:lessonId/start", requireAuth, async (req, res): Promise<v
     res.status(400).json({ error: "Invalid lesson ID" });
     return;
   }
+
+  if (await refuseWhenBusy(req, res, lessonId)) return;
 
   const [lessonRow] = await db
     .select()
@@ -760,6 +797,8 @@ router.post(
       res.status(400).json({ error: "Invalid lesson or block ID" });
       return;
     }
+    // In a lesson: keeps them counted, so they are never turned away mid-lesson.
+    void noteLessonActivity(userId);
 
     const parsed = submitBlockSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1056,7 +1095,18 @@ router.post(
       activityType === "open_ended" &&
       (responseText || mediaId !== undefined)
     ) {
-      verdict = await gradeLessonActivity(attempt.id);
+      const release = inlineGradingSlots.tryTake();
+      if (release) {
+        try {
+          verdict = await gradeLessonActivity(attempt.id);
+        } finally {
+          release();
+        }
+      } else {
+        // Every slot busy: answered "pending" now, graded in the background.
+        // The lesson page polls for the verdict, as it does for recordings.
+        jobs.enqueue("grade_lesson_activity", { activityAttemptId: attempt.id });
+      }
     }
 
     const responsePayload: Record<string, unknown> = {

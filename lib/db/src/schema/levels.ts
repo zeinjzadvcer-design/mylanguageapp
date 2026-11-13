@@ -120,6 +120,26 @@ export const lessonsTable = pgTable("lessons", {
 export type Lesson = typeof lessonsTable.$inferSelect;
 
 /**
+ * Lesson capacity, set by an administrator. One row.
+ *
+ * In the database rather than the environment, like the voice-call limit, so
+ * changing it needs no deploy. See services/lesson-load.ts.
+ */
+export const lessonSettingsTable = pgTable("lesson_settings", {
+  id: integer("id").primaryKey().default(1),
+  /**
+   * Students who may be in lessons at once across the site; null for no limit.
+   * Past it, a student opening a lesson they have not started is asked to come
+   * back later. Students already in a lesson are never turned away.
+   */
+  maxActiveLearners: integer("max_active_learners"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+/**
  * Content blocks are the building blocks of a lesson.
  * Block types are stored as plain text so new block types can be added
  * by inserting rows — no schema change needed.
