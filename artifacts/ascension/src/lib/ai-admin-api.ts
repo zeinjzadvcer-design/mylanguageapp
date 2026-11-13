@@ -197,9 +197,30 @@ export interface LessonCapacity {
   dbWaitingLimit: number;
 }
 
+export interface Suggestion {
+  value: number | null;
+  /** measured: from real use · estimated: server cost measured, student cost assumed · insufficient: too little use yet */
+  basis: "measured" | "estimated" | "insufficient";
+}
+
+/** Suggested limits from the server's own use over the last 15 minutes. */
+export interface CapacityAdvice {
+  lessons: Suggestion;
+  calls: Suggestion;
+  measuredMinutes: number;
+  /** 0–1 */
+  cpuShare: number;
+  /** 0–1 */
+  dbShare: number;
+  capacityRps: number | null;
+  /** What one call costs, in students in lessons. */
+  callInLearners: number | null;
+}
+
 export interface Capacity {
   calls: PracticeSettings;
   lessons: LessonCapacity;
+  advice: CapacityAdvice;
 }
 
 export const getCapacity = () => request<Capacity>("GET", "/admin/capacity");
