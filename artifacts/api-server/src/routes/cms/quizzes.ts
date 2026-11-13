@@ -15,6 +15,7 @@ import { db, quizzesTable, contentBlocksTable } from "@workspace/db";
 import { requirePermission } from "../../middlewares/auth";
 import { hasPermission } from "../../services/access-policy";
 import { audit } from "../../services/cms-audit";
+import { notifyQuizPublished } from "../../services/notifications";
 
 const router: IRouter = Router();
 
@@ -525,6 +526,8 @@ function transition(
     }
 
     await audit(req.session.userId!, path, "quiz", id, quiz.status, next, {});
+    // Announced to the students who can now take it. Never throws.
+    if (next === "published") await notifyQuizPublished(id);
     res.json({ id: updated.id, status: updated.status });
   });
 }
