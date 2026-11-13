@@ -917,6 +917,8 @@ export interface LessonActivityResult {
      */
   dimensions?: LessonActivityResultDimensions;
   evaluationStatus: LessonActivityResultEvaluationStatus;
+  /** True when an open-ended answer could not be graded while the student waited (the AI was busy with others) and was queued for grading in the background. Its verdict is then read from GET /lessons/{lessonId}/attempts/{attemptId} once it lands. */
+  gradingQueued?: boolean;
 }
 
 export interface ExerciseSubmission {
