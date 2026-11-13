@@ -1174,6 +1174,18 @@ function LessonIntro({ lesson }: { lesson: LessonDetail }) {
 
 // ──────────────────────────────────────────────────────────────────────
 // Main Lesson Component
+/**
+ * How long to keep checking for a queued open-ended verdict: about two and a
+ * half minutes, checked every second or two at first, then every five.
+ */
+const QUEUED_GRADING_POLL_MS = [...Array(10).fill(1000), ...Array(10).fill(2000), ...Array(24).fill(5000)];
+
+/** Lessons full or the server overloaded (services/lesson-load.ts on the server). */
+function isLessonsBusy(error: unknown): boolean {
+  const e = error as { status?: number; data?: { code?: string } } | null;
+  return e?.status === 503 && e.data?.code === "LESSONS_BUSY";
+}
+
 // ──────────────────────────────────────────────────────────────────────
 export default function Lesson({ params }: { params: { lessonId: string } }) {
   const lessonId = parseInt(params.lessonId, 10);
@@ -1193,10 +1205,7 @@ export default function Lesson({ params }: { params: { lessonId: string } }) {
 
   // Lessons full, or the server overloaded (services/lesson-load.ts): not a
   // failure either, and not for long. Say so, and let the student try again.
-  const busy =
-    (error as { status?: number } | null)?.status === 503 &&
-    (error as { data?: { code?: string } } | null)?.data?.code === "LESSONS_BUSY";
-  if (busy) {
+  if (isLessonsBusy(error)) {
     return (
       <div className="p-8 text-center mt-20 max-w-md mx-auto">
         <div className="h-16 w-16 bg-lavender rounded-full flex items-center justify-center mx-auto mb-6">
@@ -1563,7 +1572,7 @@ export function LessonPlayer({
           // A recording is assessed in the background, so the submit response
           // can only say "pending". Without this the student would record,
           // upload, and never find out how they did.
-          if (result.evaluationStatus === "pending" && payload.mediaId !== undefined) {
+          if (result.evaluationStatus === "pending" && payload.mediaId !== undefined && block.type !== "open_ended") {
             setBlockField(key, { awaitingVerdict: true });
             void pollAttemptVerdict(lessonId, result.attemptId).then((verdict) => {
               setBlockField(key, {
@@ -1573,13 +1582,13 @@ export function LessonPlayer({
             });
           }
 
-          // A typed answer is graded while the student waits, unless the AI is
-          // busy with others: then it is graded in the background (see
-          // AI_GRADING_INLINE_MAX on the server) and its verdict fetched here
-          // when it lands, replacing "answer received" with the feedback. A
-          // spoken one is followed above.
-          if (result.evaluationStatus === "pending" && block.type === "open_ended" && payload.mediaId === undefined) {
-            void pollAttemptVerdict(lessonId, result.attemptId).then((verdict) => {
+          // An open-ended answer, typed or spoken, is graded while the student
+          // waits, unless the AI is busy with others: then the server queues it
+          // (`gradingQueued`) and its verdict is fetched here when it lands,
+          // replacing "answer received" with the feedback. Waits longer than
+          // for a recording, since the queue is busiest exactly when this happens.
+          if (result.evaluationStatus === "pending" && result.gradingQueued) {
+            void pollAttemptVerdict(lessonId, result.attemptId, { delays: QUEUED_GRADING_POLL_MS }).then((verdict) => {
               if (!verdict || verdict.evaluationStatus === "pending") return;
               setBlockField(key, {
                 result: {
@@ -2241,7 +2250,7 @@ export function LessonPlayer({
       >
         {startLesson.isError && (
           <div className="max-w-2xl mx-auto w-full flex items-center justify-between gap-3 mb-3 text-sm text-destructive">
-            <span>{ls.startFailed}</span>
+            <span>{isLessonsBusy(startLesson.error) ? ls.busyBody : ls.startFailed}</span>
             <Button variant="outline" size="sm" onClick={() => startLesson.mutate({ lessonId })}>
               {t.common.retry}
             </Button>

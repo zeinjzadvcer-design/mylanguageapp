@@ -56,7 +56,7 @@ export async function getAttemptVerdict(
 export async function pollAttemptVerdict(
   lessonId: number,
   attemptId: number,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; delays?: number[] } = {},
 ): Promise<AttemptVerdict | null> {
   /**
    * What matters is the worst wait after the verdict is ready, not the delays.
@@ -76,7 +76,7 @@ export async function pollAttemptVerdict(
    * assessment is actually running. Each is a cheap read, and sessions no
    * longer touch PostgreSQL, so the polling itself is close to free.
    */
-  const delays = [700, ...Array(12).fill(1000), 2000, 3000, 4000, 5000];
+  const delays = opts.delays ?? [700, ...Array(12).fill(1000), 2000, 3000, 4000, 5000];
 
   for (const delay of delays) {
     await new Promise((resolve) => setTimeout(resolve, delay));
