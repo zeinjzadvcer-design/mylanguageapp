@@ -62,8 +62,11 @@ function createClient(): Redis | null {
     maxRetriesPerRequest: 0, // fail immediately; retryStrategy handles reconnects
   });
 
+  // Available on "ready", not "connect": between the two the socket is open
+  // but ioredis is still checking the server, and with no offline queue every
+  // command sent in that gap fails with "Stream isn't writeable". Callers
+  // would take that as Redis being down, on every reconnect.
   client.on("connect", () => {
-    _available = true;
     logger.info("Redis connected");
   });
 
