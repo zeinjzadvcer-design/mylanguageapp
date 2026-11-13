@@ -1050,12 +1050,13 @@ export const en = {
       `estimate: server cost measured over ${min} minutes, but too few students yet to measure what one costs`,
     noSuggestion: "No suggestion yet: it needs at least 5 minutes of real use to measure.",
     noCallSuggestion: "No suggestion yet: it needs calls running to measure what one costs.",
+    pastTarget: "The server is already past what it should take (70% busy). Lower this limit, or add resources.",
     usageTitle: "Server use, last 15 minutes",
     cpuUse: (pct: number) => `Processor: ${pct}% busy`,
     dbUse: (pct: number) => `Database connections: ${pct}% in use`,
     callCost: (n: number) => `One call costs the server about as much as ${n} students in lessons.`,
     adviceNote:
-      "Suggestions fill the server to 70% and leave the rest for bursts. Each assumes the other stays as it is now, so raising both at once can overload the server; the overload check then holds new lessons. Voice-call analysis and AI grading also depend on your AssemblyAI and Anthropic plans, which this cannot see.",
+      "Suggestions fill the server to 70% and leave the rest for bursts. Each assumes the other stays as it is now, so raising both at once can overload the server; the overload check then holds new lessons. It cannot see the database server itself, shared by every instance: watch its memory and CPU in the hosting dashboard. Voice-call analysis and AI grading also depend on your AssemblyAI and Anthropic plans, which this cannot see either.",
   },
 };
 

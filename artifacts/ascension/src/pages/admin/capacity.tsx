@@ -260,8 +260,12 @@ function SuggestionLine({
 }) {
   const { t } = useI18n();
   const c = t.capacity;
-  if (suggestion.value === null || suggestion.value < 1) {
+  if (suggestion.value === null) {
     return <p className="text-xs text-muted-foreground">{noSuggestion}</p>;
+  }
+  // Measured, and no room left: the server is already past the target.
+  if (suggestion.value < 1) {
+    return <p className="text-xs text-destructive">{c.pastTarget}</p>;
   }
   const value = suggestion.value;
   return (
