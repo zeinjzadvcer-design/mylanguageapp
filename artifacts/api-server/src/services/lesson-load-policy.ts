@@ -1,8 +1,6 @@
 /**
- * Whether a student may open a lesson right now, given how busy the site is.
- *
- * No database or Valkey here, so every rule can be tested directly. The
- * numbers come from lesson-load.ts.
+ * The rules behind lesson capacity, kept free of the database and Valkey so
+ * each can be tested directly. lesson-load.ts applies them.
  */
 
 export type LessonRefusal = "full" | "overloaded";
@@ -15,8 +13,6 @@ export interface LoadSignals {
 }
 
 export interface LoadLimits {
-  /** Students in lessons at once; null for no limit. Set by an administrator. */
-  maxActiveLearners: number | null;
   /** Event-loop delay past which the server counts as overloaded; 0 turns it off. */
   lagLimitMs: number;
   /** Requests waiting for a connection at which the database counts as overloaded; 0 turns it off. */
@@ -32,24 +28,29 @@ export function isOverloaded(signals: LoadSignals, limits: LoadLimits): boolean 
 }
 
 /**
- * Why this student may not open a lesson now, or null when they may.
+ * Take a seat in lessons, or be refused one, in a single step.
  *
- * Only ever refuses someone arriving: a student already in a lesson (`alreadyIn`)
- * and staff are always let through, so nobody is cut off mid-lesson and content
- * can always be checked.
+ * `seats` maps each student in a lesson to when they were last seen. Seats not
+ * used since `since` are freed first. A student who already has a seat keeps
+ * it (and it is refreshed); anyone else gets one only while fewer than `max`
+ * are taken. `max` null means no limit.
+ *
+ * Deciding and taking together is the point: checked and taken separately, a
+ * class opening lessons in the same second would all see the last free seat
+ * and all take it. The Valkey version (lesson-seats.ts) does the same steps in
+ * one script for the same reason.
  */
-export function lessonRefusal(args: {
-  staff: boolean;
-  alreadyIn: boolean;
-  activeLearners: number;
-  signals: LoadSignals;
-  limits: LoadLimits;
-}): LessonRefusal | null {
-  if (args.staff || args.alreadyIn) return null;
-  const { maxActiveLearners } = args.limits;
-  if (maxActiveLearners !== null && args.activeLearners >= maxActiveLearners) return "full";
-  if (isOverloaded(args.signals, args.limits)) return "overloaded";
-  return null;
+export function takeLocalSeat(
+  seats: Map<number, number>,
+  userId: number,
+  now: number,
+  since: number,
+  max: number | null,
+): boolean {
+  for (const [id, at] of seats) if (at < since) seats.delete(id);
+  if (max !== null && !seats.has(userId) && seats.size >= max) return false;
+  seats.set(userId, now);
+  return true;
 }
 
 /** What the student is told, Arabic first like the rest of the student API. */
