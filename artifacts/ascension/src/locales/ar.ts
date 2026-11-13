@@ -270,6 +270,44 @@ export const ar: Messages = {
     listen: "استمع",
   },
 
+  notifications: {
+    title: "الإشعارات",
+    unread: (n) => `${n} غير مقروءة`,
+    unreadDot: "غير مقروء",
+    markAllRead: "تحديد الكل كمقروء",
+    empty: "لا شيء بعد. ستظهر هنا التحديثات عن اشتراكك ودروسك والاختبارات الجديدة.",
+    loadError: "حدث خطأ أثناء تحميل الإشعارات.",
+    yourPlan: "خطتك",
+    subscriptionApproved: {
+      title: "تم تفعيل اشتراكك",
+      body: (plan, until) =>
+        until ? `${plan} مفعّلة حتى ${until}. استمتع بدروسك!` : `${plan} مفعّلة الآن. استمتع بدروسك!`,
+    },
+    subscriptionRejected: {
+      title: "لم يتم قبول الدفعة",
+      body: (plan, reason) =>
+        reason ? `${plan}: ${reason}` : `${plan}: افتح صفحة الاشتراك لمعرفة ما يجب تصحيحه.`,
+    },
+    lessonReminder: {
+      title: "حان وقت درس اليوم",
+      body: "دقائق قليلة كل يوم تحافظ على تقدمك. درسك التالي بانتظارك.",
+      placementBody: "قدّم اختبار تحديد المستوى لفتح درسك الأول.",
+    },
+    quizAvailable: {
+      title: "اختبار جديد متاح",
+      body: (quiz) => `«${quiz}» جاهز لك.`,
+    },
+    evaluationAvailable: {
+      title: "اختبار المستوى متاح لك",
+      body: (quiz) => `أنهيت ما يكفي من الدروس لتقديم «${quiz}».`,
+    },
+    remindersTitle: "تذكير يومي بالدروس",
+    remindersBody: "تذكير في السادسة مساءً (بتوقيت دمشق) في الأيام التي لم تدرس فيها بعد.",
+    remindersOn: "تم تفعيل التذكير اليومي",
+    remindersOff: "تم إيقاف التذكير اليومي",
+    remindersFailed: "تعذّر تغيير إعداد التذكير",
+  },
+
   profile: {
     nameMin: "الاسم يجب أن يكون حرفين على الأقل",
     bioMax: "النبذة يجب ألا تتجاوز 160 حرف",
