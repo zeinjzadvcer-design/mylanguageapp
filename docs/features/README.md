@@ -28,6 +28,7 @@ This folder has one file per feature: what it does, how it works, and a plain-En
 | Multi-skill placement | [placement.md](placement.md) | New | Listening, speaking and pronunciation are still not assessed; no CMS screen for questions |
 | Student-to-student voice practice | [voice-practice.md](voice-practice.md) | New | No TURN relay, so roughly 10–20% of calls will not connect — the UI says so rather than hanging |
 | Staff accounts & permissions | [staff-accounts.md](staff-accounts.md) | New | One role per account; roles are defined in code, so a change takes a deploy |
+| Student notifications | [notifications.md](notifications.md) | New | In-app only, so nothing reaches a student while the app is closed |
 | Payments & plan access | [payments.md](payments.md) | New | Migrations never run against a database; sanctions screening on crypto senders is recorded but not checked |
 
 ## What this tells you overall
