@@ -231,6 +231,12 @@ services:
       WALLET_SMS_AUTO_MAX_PER_HOUR: ${WALLET_SMS_AUTO_MAX_PER_HOUR:-30}
       SPTODAY_CITY: ${SPTODAY_CITY:-damascus}
       SYP_RATE_REFRESH_MS: ${SYP_RATE_REFRESH_MS:-43200000}
+
+      # Student notifications. The daily lesson reminder goes out from this
+      # local hour, in this zone. See docs/features/notifications.md.
+      REMINDER_HOUR: ${REMINDER_HOUR:-18}
+      REMINDER_TIMEZONE: ${REMINDER_TIMEZONE:-Asia/Damascus}
+      NOTIFICATION_SWEEP_INTERVAL_MS: ${NOTIFICATION_SWEEP_INTERVAL_MS:-300000}
     ports:
       - '8080:8080'
     depends_on:
