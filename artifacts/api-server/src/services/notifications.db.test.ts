@@ -134,13 +134,18 @@ describe.skipIf(!enabled)("notifications against a database", async () => {
     await moveLevel(faller, l3.id, l1.id);
     await n.notifyQuizzesAfterLevelChanges(since);
 
-    // Level 2 came into the climber's list; level 1 was already in it.
-    expect(await kinds(climber, "quiz_available")).toEqual([quizDedupeKey(atL2)]);
+    // Level 2 came into the climber's list; level 1 was already in it. Asserted
+    // on this test's own quizzes only: other published quizzes in the database
+    // at levels 2-3 are rightly announced too.
+    const atL1 = quizIds[1];
+    const climberKeys = await kinds(climber, "quiz_available");
+    expect(climberKeys).toContain(quizDedupeKey(atL2));
+    expect(climberKeys).not.toContain(quizDedupeKey(atL1));
     expect(await kinds(faller, "quiz_available")).toHaveLength(0);
 
     // Run again: nothing repeats.
     await n.notifyQuizzesAfterLevelChanges(since);
-    expect(await kinds(climber, "quiz_available")).toHaveLength(1);
+    expect(await kinds(climber, "quiz_available")).toHaveLength(climberKeys.length);
     void l2;
   });
 
