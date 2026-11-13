@@ -31,6 +31,8 @@ import {
 import { logger } from "../lib/logger";
 import { addBillingCycle } from "./entitlement-policy";
 import { skipLevelWithoutLessons } from "./learning";
+import { notify } from "./notifications";
+import { paymentDedupeKey } from "./notification-policy";
 
 // Re-exported: callers of the activation service should not have to know the
 // date arithmetic lives in the db-free policy module.
@@ -69,6 +71,9 @@ export async function activateSubscription(
   reviewNote?: string,
 ): Promise<ActivationOutcome> {
   let activatedUserId: number | null = null;
+  // What the student is told, captured inside the transaction and sent after
+  // it commits, so a rolled-back approval never announces itself.
+  let approved: { userId: number; planName: string; planNameAr: string; expiresAt: Date } | null = null;
 
   const result = await db.transaction(async (tx): Promise<ActivationOutcome> => {
     // FOR UPDATE: two admins clicking approve on the same row, or an admin
@@ -201,11 +206,28 @@ export async function activateSubscription(
     );
 
     activatedUserId = subscription.userId;
+    approved = {
+      userId: subscription.userId,
+      planName: subscription.planName,
+      planNameAr: subscription.planNameAr,
+      expiresAt,
+    };
     return { ok: true, subscriptionId: subscription.id, alreadyActive: false };
   });
 
   // After the commit, and never allowed to fail it: the student has paid, and
   // where they sit in the curriculum can be corrected later.
+  if (approved !== null) {
+    const a: { userId: number; planName: string; planNameAr: string; expiresAt: Date } = approved;
+    await notify({
+      userId: a.userId,
+      kind: "subscription_approved",
+      data: { planName: a.planName, planNameAr: a.planNameAr, expiresAt: a.expiresAt.toISOString() },
+      link: "/subscription",
+      dedupeKey: paymentDedupeKey(submissionId, "approved"),
+    });
+  }
+
   if (activatedUserId !== null) {
     await skipLevelWithoutLessons(activatedUserId).catch((err) => {
       logger.error({ err, userId: activatedUserId }, "Could not skip an empty level after activation");
@@ -228,7 +250,9 @@ export async function rejectSubmission(
   reviewerId: number,
   reviewNote: string,
 ): Promise<ActivationOutcome> {
-  return db.transaction(async (tx) => {
+  let rejectedUserId: number | null = null;
+
+  const result = await db.transaction(async (tx): Promise<ActivationOutcome> => {
     const [submission] = await tx
       .select()
       .from(paymentSubmissionsTable)
@@ -257,7 +281,38 @@ export async function rejectSubmission(
 
     logger.info({ submissionId, reviewerId }, "Payment submission rejected");
 
+    rejectedUserId = submission.userId;
     return { ok: true, subscriptionId: submission.subscriptionId, alreadyActive: false };
+  });
+
+  if (rejectedUserId !== null) await notifyRejection(rejectedUserId, submissionId, result.ok ? result.subscriptionId : null, reviewNote);
+  return result;
+}
+
+/**
+ * Tell a student their payment was not accepted, with the reason they were
+ * given, so they can fix it from the subscription page.
+ */
+export async function notifyRejection(
+  userId: number,
+  submissionId: number,
+  subscriptionId: number | null,
+  reason: string,
+): Promise<void> {
+  const [subscription] = subscriptionId
+    ? await db
+        .select({ planName: studentSubscriptionsTable.planName, planNameAr: studentSubscriptionsTable.planNameAr })
+        .from(studentSubscriptionsTable)
+        .where(eq(studentSubscriptionsTable.id, subscriptionId))
+        .limit(1)
+        .catch(() => [])
+    : [];
+  await notify({
+    userId,
+    kind: "subscription_rejected",
+    data: { planName: subscription?.planName ?? null, planNameAr: subscription?.planNameAr ?? null, reason },
+    link: "/subscription",
+    dedupeKey: paymentDedupeKey(submissionId, "rejected"),
   });
 }
 
