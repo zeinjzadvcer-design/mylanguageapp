@@ -3,7 +3,7 @@
  * Capacity page (capacity-advice.ts does the arithmetic).
  *
  * Kept in 15-second buckets over the last 15 minutes: requests served (and how
- * many were for voice calls), how busy the CPU thread was, how many database
+ * many were for voice calls), how busy the processor was, how many database
  * connections were in use, and how many students were in lessons and calls
  * were live. Each instance measures itself; the student and call counts are
  * site-wide, which is what makes the suggestion come out site-wide too when
@@ -25,7 +25,12 @@ const DB_SAMPLE_MS = 1_000;
 
 /** Share of the CPU and database connections the suggestions plan to fill. */
 const TARGET = envInt("CAPACITY_TARGET_PERCENT", 70) / 100;
-const DB_POOL_MAX = envInt("DB_POOL_MAX", 10);
+/**
+ * Processor cores this instance has. Not read from the machine: in a container
+ * that reports the host's cores, not the share the instance is given. 1 for
+ * DigitalOcean's professional-xs; set it when the instance has more.
+ */
+const CPU_CORES = Math.max(1, envInt("CAPACITY_CPU_CORES", 1));
 /**
  * Requests per second for one student in a lesson, used until there are
  * enough students to measure it. The load test's students, who answered
@@ -59,6 +64,7 @@ const closed: Bucket[] = [];
 let current = emptyBucket();
 let bucketStartedAt = Date.now();
 let lastElu: EventLoopUtilization | null = null;
+let lastCpu: NodeJS.CpuUsage | null = null;
 let started = false;
 
 /** Counts each API request. Cheap: two increments. */
@@ -75,8 +81,16 @@ async function closeBucket(): Promise<void> {
   const elu = performance.eventLoopUtilization();
   const bucket = current;
   bucket.wallMs = now - bucketStartedAt;
-  bucket.busyMs = lastElu ? performance.eventLoopUtilization(elu, lastElu).active : 0;
+  // Busy time is the larger of two measures, as either can run out first:
+  // the main thread (the event loop, where requests are handled) and the
+  // processor as a whole, which also does work off the main thread — gzip for
+  // every response, password hashing at sign-in — that the event loop never sees.
+  const cpu = process.cpuUsage();
+  const loopMs = lastElu ? performance.eventLoopUtilization(elu, lastElu).active : 0;
+  const cpuMs = lastCpu ? (cpu.user - lastCpu.user + cpu.system - lastCpu.system) / 1000 / CPU_CORES : 0;
+  bucket.busyMs = Math.max(loopMs, cpuMs);
   lastElu = elu;
+  lastCpu = cpu;
   current = emptyBucket();
   bucketStartedAt = now;
   closed.push(bucket);
@@ -99,6 +113,7 @@ export function startCapacityMonitor(): void {
   started = true;
   bucketStartedAt = Date.now();
   lastElu = performance.eventLoopUtilization();
+  lastCpu = process.cpuUsage();
   setInterval(() => {
     current.dbInUseSum += pool.totalCount - pool.idleCount;
     current.dbSamples++;
@@ -144,7 +159,7 @@ function totals(): UsageTotals {
 export function capacityAdvice(): CapacityAdvice {
   return adviseCapacity(totals(), {
     target: TARGET,
-    dbPoolMax: DB_POOL_MAX,
+    dbPoolMax: pool.options.max ?? 10,
     assumedLearnerRps: ASSUMED_LEARNER_RPS,
   });
 }

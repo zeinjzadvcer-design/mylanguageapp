@@ -7,9 +7,11 @@
  *
  * THE IDEA
  * ────────
- * The server has two things that run out: the CPU (Node does its work on one
- * thread, so one core however many the machine has) and its database
- * connections. Over the last few minutes we know how many requests it served
+ * The server has two things that run out: the processor (Node handles
+ * requests on one thread, and does some work, like gzip, on others) and its
+ * database connections. Not seen here: the database server's own memory and
+ * CPU, shared by every instance, which the admin page says to watch in the
+ * hosting dashboard. Over the last few minutes we know how many requests it served
  * and how much of each it used, so we know the cost of one request. We also
  * know how many requests one student in a lesson, and one live call, makes per
  * second. Together: how many students (or calls) fill the server to the target
@@ -27,7 +29,7 @@ export interface UsageTotals {
   requests: number;
   /** Of those, requests for voice calls (/api/practice/...). */
   callRequests: number;
-  /** Time the CPU thread was busy in the window, in seconds. */
+  /** Time the processor was busy in the window, in seconds (capacity-monitor.ts). */
   busyS: number;
   /** Database connections in use, averaged over the window. */
   dbInUseAvg: number;
