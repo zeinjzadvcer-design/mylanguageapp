@@ -23,6 +23,16 @@ redis.call('ZADD', KEYS[1], ARGV[2], ARGV[3])
 return 1
 `;
 
+/**
+ * Registered once per client, so each call sends the script's hash (EVALSHA)
+ * rather than its source; ioredis falls back to the source when Valkey has
+ * lost its script cache, after a restart for example.
+ */
+const registered = new WeakSet<Redis>();
+type WithSeatCommand = Redis & {
+  takeLessonSeat(key: string, since: number, now: number, userId: string, max: number): Promise<number>;
+};
+
 export async function takeSeatInRedis(
   r: Redis,
   key: string,
@@ -31,6 +41,10 @@ export async function takeSeatInRedis(
   since: number,
   max: number | null,
 ): Promise<boolean> {
-  const taken = await r.eval(TAKE_SEAT, 1, key, since, now, String(userId), max ?? -1);
+  if (!registered.has(r)) {
+    r.defineCommand("takeLessonSeat", { numberOfKeys: 1, lua: TAKE_SEAT });
+    registered.add(r);
+  }
+  const taken = await (r as WithSeatCommand).takeLessonSeat(key, since, now, String(userId), max ?? -1);
   return taken === 1;
 }
