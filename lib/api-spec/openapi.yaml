@@ -159,6 +159,143 @@ paths:
 
   # ─── Profile ────────────────────────────────────────────────────────────────
 
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: The signed-in user's notifications, newest first
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: number
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationList"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /notifications/unread-count:
+    get:
+      operationId: getUnreadNotificationCount
+      tags: [notifications]
+      summary: How many notifications are unread, for the badge
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [unread]
+                properties:
+                  unread:
+                    type: number
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      tags: [notifications]
+      summary: Mark every notification read
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /notifications/{id}/read:
+    post:
+      operationId: markNotificationRead
+      tags: [notifications]
+      summary: Mark one notification read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: No such notification for this user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /notifications/settings:
+    get:
+      operationId: getNotificationSettings
+      tags: [notifications]
+      summary: Whether daily lesson reminders are on
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateNotificationSettings
+      tags: [notifications]
+      summary: Turn daily lesson reminders on or off
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lessonReminders]
+              properties:
+                lessonReminders:
+                  type: boolean
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+        "404":
+          description: The account has no student profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /profile:
     get:
       operationId: getProfile
@@ -2997,6 +3134,51 @@ components:
       properties:
         role:
           type: string
+
+    Notification:
+      type: object
+      required: [id, kind, data, link, readAt, createdAt]
+      properties:
+        id:
+          type: number
+        kind:
+          type: string
+          enum: [subscription_approved, subscription_rejected, lesson_reminder, quiz_available, evaluation_available]
+        data:
+          type: object
+          additionalProperties: true
+          description: The facts the wording needs, such as plan names, a quiz title or a reason.
+        link:
+          type: string
+          nullable: true
+          description: The app path tapping the notification opens.
+        readAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    NotificationList:
+      type: object
+      required: [items, unread]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Notification"
+        unread:
+          type: number
+
+    NotificationSettings:
+      type: object
+      required: [lessonReminders]
+      properties:
+        lessonReminders:
+          type: boolean
+          nullable: true
+          description: Null when the account has no student profile.
 
     ReferralReport:
       type: object
