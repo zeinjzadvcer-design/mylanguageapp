@@ -1387,6 +1387,13 @@ export function LessonPlayer({
   const initialized = useRef(false);
   /** Set once the lesson is finished, so the position is not saved again after it is cleared. */
   const lessonFinished = useRef(false);
+  // Waiting for a verdict stops when the student leaves the lesson.
+  const pollAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    pollAbort.current = controller;
+    return () => controller.abort();
+  }, []);
   /**
    * Blocks finished in this visit. Every accepted submit is recorded on the
    * server as finished, so they count at once, without waiting for the lesson
@@ -1574,7 +1581,7 @@ export function LessonPlayer({
           // upload, and never find out how they did.
           if (result.evaluationStatus === "pending" && payload.mediaId !== undefined && block.type !== "open_ended") {
             setBlockField(key, { awaitingVerdict: true });
-            void pollAttemptVerdict(lessonId, result.attemptId).then((verdict) => {
+            void pollAttemptVerdict(lessonId, result.attemptId, { signal: pollAbort.current?.signal }).then((verdict) => {
               setBlockField(key, {
                 awaitingVerdict: false,
                 ...(verdict ? { speechVerdict: verdict } : {}),
@@ -1588,7 +1595,10 @@ export function LessonPlayer({
           // replacing "answer received" with the feedback. Waits longer than
           // for a recording, since the queue is busiest exactly when this happens.
           if (result.evaluationStatus === "pending" && result.gradingQueued) {
-            void pollAttemptVerdict(lessonId, result.attemptId, { delays: QUEUED_GRADING_POLL_MS }).then((verdict) => {
+            void pollAttemptVerdict(lessonId, result.attemptId, {
+              delays: QUEUED_GRADING_POLL_MS,
+              signal: pollAbort.current?.signal,
+            }).then((verdict) => {
               if (!verdict || verdict.evaluationStatus === "pending") return;
               setBlockField(key, {
                 result: {
