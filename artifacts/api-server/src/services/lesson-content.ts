@@ -21,6 +21,33 @@ export function emptyToNull(value: string | null | undefined): string | null {
   return value.trim() === "" ? null : value;
 }
 
+/** An answer option with something to show, in either language. */
+export function isFilledOption(option: { text?: string | null; textAr?: string | null }): boolean {
+  return !!emptyToNull(option.text) || !!emptyToNull(option.textAr);
+}
+
+/** How an open-ended block is answered and marked, set by its author. */
+export interface OpenEndedSettings {
+  /** Off: the answer is kept without being marked, and no AI is called. */
+  aiEvaluation: boolean;
+  /** The one way students answer this block. */
+  answerMode: "text" | "voice";
+}
+
+/**
+ * The open-ended settings on a block's `config`.
+ *
+ * Blocks written before these existed were marked by AI and offered writing
+ * first, so those are the defaults: no existing lesson changes behaviour.
+ */
+export function openEndedSettings(config: unknown): OpenEndedSettings {
+  const c = (config ?? {}) as { aiEvaluation?: unknown; answerMode?: unknown };
+  return {
+    aiEvaluation: c.aiEvaluation !== false,
+    answerMode: c.answerMode === "voice" ? "voice" : "text",
+  };
+}
+
 /**
  * True for blocks whose answer is a recording.
  *
@@ -87,9 +114,11 @@ export function toStudentContentBlocks(
     // Callers pass exercises already ordered; filter preserves that order.
     const blockExercises = exercises.filter((e) => e.contentBlockId === block.id);
     const exercise = blockExercises[0] ?? null;
+    // The editor offers four option rows, and a question written with fewer
+    // left the rest saved empty, which students saw as blank answers to pick.
     const optionsFor = (exerciseId: number) =>
       allOptions
-        .filter((o) => o.exerciseId === exerciseId)
+        .filter((o) => o.exerciseId === exerciseId && isFilledOption(o))
         .map((o) => ({ id: o.optionId, text: o.text, textAr: o.textAr ?? null }));
     const options = exercise ? optionsFor(exercise.id) : null;
 
@@ -105,6 +134,9 @@ export function toStudentContentBlocks(
       estimatedMinutes: block.estimatedMinutes ?? null,
       config: block.config ?? null,
       groupId: groupIdOf(block.config),
+      // Resolved here so the lesson page never applies the defaults itself:
+      // this is the one place that decides how an open-ended block is answered.
+      openEnded: block.type === "open_ended" ? openEndedSettings(block.config) : null,
       content: block.content ?? null,
       contentAr: block.contentAr ?? null,
       audioNote: block.audioNote ?? null,

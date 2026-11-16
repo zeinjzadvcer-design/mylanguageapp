@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type { ContentBlock, Exercise, ExerciseOption } from "@workspace/db";
-import { groupIdOf, isRecordingBlock, readingText, toStudentContentBlocks } from "./lesson-content";
+import {
+  groupIdOf,
+  isFilledOption,
+  isRecordingBlock,
+  openEndedSettings,
+  readingText,
+  toStudentContentBlocks,
+} from "./lesson-content";
 
 function block(overrides: Partial<ContentBlock>): ContentBlock {
   return {
@@ -148,5 +155,65 @@ describe("readingText — list markers are not words to read", () => {
   it("is null when there is no passage", () => {
     expect(readingText("")).toBeNull();
     expect(readingText(null)).toBeNull();
+  });
+});
+
+describe("answer options a student is shown", () => {
+  it("leaves out the blank rows of a question written with fewer than four", () => {
+    const options: ExerciseOption[] = [
+      { id: 1, exerciseId: 100, optionId: "a", text: "Yes", textAr: null },
+      { id: 2, exerciseId: 100, optionId: "b", text: "No", textAr: null },
+      { id: 3, exerciseId: 100, optionId: "c", text: "", textAr: null },
+      { id: 4, exerciseId: 100, optionId: "d", text: "   ", textAr: "" },
+    ];
+    const [b] = toStudentContentBlocks(
+      [block({ type: "mcq" })],
+      [exercise({ exerciseType: "mcq", question: "Pick", correctOptionId: "a" })],
+      options,
+      [],
+    );
+    expect(b.options?.map((o) => o.id)).toEqual(["a", "b"]);
+    expect(b.questions[0]?.options.map((o) => o.id)).toEqual(["a", "b"]);
+  });
+
+  it("keeps an option written only in Arabic", () => {
+    expect(isFilledOption({ text: "", textAr: "نعم" })).toBe(true);
+    expect(isFilledOption({ text: null, textAr: " " })).toBe(false);
+  });
+});
+
+describe("openEndedSettings", () => {
+  it("keeps blocks written before the settings marked by AI and answered in writing", () => {
+    expect(openEndedSettings(null)).toEqual({ aiEvaluation: true, answerMode: "text" });
+    expect(openEndedSettings({ groupId: "g1" })).toEqual({ aiEvaluation: true, answerMode: "text" });
+  });
+
+  it("reads what the author set", () => {
+    expect(openEndedSettings({ aiEvaluation: false, answerMode: "voice" })).toEqual({
+      aiEvaluation: false,
+      answerMode: "voice",
+    });
+  });
+
+  it("falls back to writing for an unknown answer method", () => {
+    expect(openEndedSettings({ answerMode: "video" }).answerMode).toBe("text");
+  });
+});
+
+describe("open-ended settings sent with the lesson", () => {
+  it("are resolved on open-ended blocks, so the lesson page applies no defaults of its own", () => {
+    const [plain, voice, other] = toStudentContentBlocks(
+      [
+        block({ id: 1, type: "open_ended", config: null }),
+        block({ id: 2, type: "open_ended", config: { answerMode: "voice", aiEvaluation: false } }),
+        block({ id: 3, type: "text" }),
+      ],
+      [],
+      [],
+      [],
+    );
+    expect(plain.openEnded).toEqual({ aiEvaluation: true, answerMode: "text" });
+    expect(voice.openEnded).toEqual({ aiEvaluation: false, answerMode: "voice" });
+    expect(other.openEnded).toBeNull();
   });
 });
