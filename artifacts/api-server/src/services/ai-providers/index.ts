@@ -28,6 +28,8 @@ export {
   type ChatMessage,
   type ChatUsage,
   type ChatResult,
+  type ConnectionTest,
+  type ModelInfo,
 } from "./openai-compatible";
 
 /** True for Anthropic's own API. Gateways that re-expose Claude in OpenAI shape are not this. */
@@ -55,12 +57,25 @@ const MAX_ATTEMPTS = parseInt(process.env.AI_MAX_ATTEMPTS ?? "3", 10);
  * A 400 or a bad key is returned immediately, because asking again would spend
  * the quota on the same failure.
  */
-async function withRetry<T>(run: () => Promise<T>): Promise<T> {
+async function withRetry<T>(
+  run: (timeoutMs: number | undefined) => Promise<T>,
+  /**
+   * The most the whole call, retries included, may take. Without one, three
+   * timed-out attempts held a student's request for about ninety seconds, and
+   * the hosting gateway gave up first: the student saw the platform's own 504
+   * page instead of the app saying the tutor was unavailable.
+   */
+  deadlineMs?: number,
+): Promise<T> {
+  const deadline = deadlineMs === undefined ? null : Date.now() + deadlineMs;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const remaining = deadline === null ? undefined : deadline - Date.now();
+    // Not enough left for a request to have any chance of an answer.
+    if (remaining !== undefined && remaining < MIN_ATTEMPT_MS) break;
     try {
-      return await run();
+      return await run(remaining);
     } catch (err) {
       lastError = err;
       const retryable = err instanceof openai.AIProviderError && err.retryable;
@@ -70,19 +85,50 @@ async function withRetry<T>(run: () => Promise<T>): Promise<T> {
     }
   }
 
-  throw lastError;
+  throw lastError ?? new openai.AIProviderError("AI request ran out of time", 0, true);
 }
+
+/** Below this, starting another attempt inside a deadline is pointless. */
+const MIN_ATTEMPT_MS = 2_000;
 
 export function chat(
   config: ResolvedTaskConfig,
   messages: openai.ChatMessage[],
-  opts: { jsonMode?: boolean } = {},
+  /** `deadlineMs` bounds the whole call, retries included. */
+  opts: { jsonMode?: boolean; deadlineMs?: number } = {},
 ): Promise<openai.ChatResult> {
-  return withRetry(() =>
-    isAnthropic(config.baseUrl)
-      ? anthropic.chat(config, messages, opts)
-      : openai.chat(config, messages, opts),
+  const { deadlineMs, ...rest } = opts;
+  return withRetry(
+    (timeoutMs) =>
+      isAnthropic(config.baseUrl)
+        ? anthropic.chat(config, messages, { ...rest, timeoutMs })
+        : openai.chat(config, messages, { ...rest, timeoutMs }),
+    deadlineMs,
   );
+}
+
+/**
+ * The admin panel's Test button: one tiny call, routed like every other call.
+ * Not retried, so a bad key or model is reported at once.
+ */
+export function testConnection(
+  baseUrl: string,
+  apiKey: string,
+  modelId: string,
+): Promise<openai.ConnectionTest> {
+  return openai.testConnection(
+    baseUrl,
+    apiKey,
+    modelId,
+    isAnthropic(baseUrl) ? anthropic.chat : openai.chat,
+  );
+}
+
+/** The admin panel's model picker, asked in the provider's own protocol. */
+export function listModels(baseUrl: string, apiKey: string): Promise<openai.ModelInfo[]> {
+  return isAnthropic(baseUrl)
+    ? anthropic.listModels(baseUrl, apiKey)
+    : openai.listModels(baseUrl, apiKey);
 }
 
 export function chatJson<T>(
