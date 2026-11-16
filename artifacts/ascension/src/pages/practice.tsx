@@ -496,17 +496,24 @@ export default function Practice() {
 
   // A call the server has ended is over here too, whatever the peer connection
   // still thinks.
+  //
+  // Keyed on the status and start time, not the session object: the poll
+  // replaces that object every second, and restarting the one-second timer on
+  // each poll meant it rarely got to tick, so the clock sat still and then
+  // jumped two or three seconds at once.
+  const sessionActive = session?.status === "active";
+  const sessionStartedAt = session?.startedAt ?? null;
   useEffect(() => {
-    if (!session || session.status !== "active") {
+    if (!sessionActive) {
       setElapsed(0);
       return;
     }
-    const started = session.startedAt ? new Date(session.startedAt).getTime() : Date.now();
-    const id = window.setInterval(() => {
-      setElapsed(Math.max(0, Math.round((Date.now() - started) / 1000)));
-    }, 1000);
+    const started = sessionStartedAt ? new Date(sessionStartedAt).getTime() : Date.now();
+    const update = () => setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
+    update();
+    const id = window.setInterval(update, 1000);
     return () => window.clearInterval(id);
-  }, [session]);
+  }, [sessionActive, sessionStartedAt]);
 
   // Telling the server the connection could not be established is what turns a
   // failed call into a finished one, rather than a ghost that blocks the next.
@@ -686,6 +693,7 @@ export default function Practice() {
           phase={call.phase}
           muted={call.muted}
           turnAvailable={call.turnAvailable}
+          echoCancellationOff={call.audioProcessing?.echoCancellation === false}
           elapsed={elapsed}
           secondsRemaining={session.secondsRemaining}
           onToggleMute={call.toggleMute}
@@ -1265,6 +1273,7 @@ function CallCard({
   phase,
   muted,
   turnAvailable,
+  echoCancellationOff,
   elapsed,
   secondsRemaining,
   onToggleMute,
@@ -1278,6 +1287,8 @@ function CallCard({
   phase: string;
   muted: boolean;
   turnAvailable: boolean;
+  /** This device sends what its speaker plays back into the call. */
+  echoCancellationOff: boolean;
   elapsed: number;
   secondsRemaining: number | null;
   onToggleMute: () => void;
@@ -1308,6 +1319,12 @@ function CallCard({
         </div>
 
         <CallPhaseNotice phase={phase} turnAvailable={turnAvailable} />
+
+        {/* Without echo cancellation the other student hears themselves back
+            through this device's speaker. Headphones stop it; nothing else here can. */}
+        {echoCancellationOff && phase === "connected" && (
+          <p className="text-xs text-center text-amber-700">{cl.useHeadphones}</p>
+        )}
 
         <div className="flex flex-wrap gap-3 justify-center">
           <Button
