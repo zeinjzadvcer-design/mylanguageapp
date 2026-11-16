@@ -5,12 +5,16 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Search, Volume2, BookMarked } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { useSpeech } from "@/hooks/use-speech";
 
 export default function Vocabulary() {
   const { data: vocabulary, isLoading, error } = useGetVocabulary();
   const [searchTerm, setSearchTerm] = useState("");
   const { t } = useI18n();
   const v = t.vocabulary;
+  // The browser's own voice, as the tutor uses: every word can be heard without
+  // anyone uploading a recording for it.
+  const speech = useSpeech();
 
   if (isLoading) {
     return (
@@ -69,7 +73,14 @@ export default function Vocabulary() {
           filteredVocabulary.map((vocab) => (
             <Card key={vocab.id} className="overflow-hidden border-2 border-border hover:border-primary/30 transition-colors">
               <CardContent className="p-0 flex flex-col sm:flex-row items-stretch">
-                <button aria-label={v.listen} className="w-full sm:w-16 h-12 sm:h-auto bg-primary/5 flex items-center justify-center border-b sm:border-b-0 sm:border-s border-border hover:bg-primary/10 transition-colors shrink-0">
+                <button
+                  type="button"
+                  aria-label={v.listen}
+                  title={v.listen}
+                  disabled={!speech.available}
+                  onClick={() => speech.replay(vocab.word)}
+                  className="w-full sm:w-16 h-12 sm:h-auto bg-primary/5 flex items-center justify-center border-b sm:border-b-0 sm:border-s border-border hover:bg-primary/10 transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
                   <Volume2 className="h-6 w-6 text-primary" />
                 </button>
                 <div className="p-5 flex-1 w-full">
