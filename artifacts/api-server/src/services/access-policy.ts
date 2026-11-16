@@ -50,6 +50,8 @@ export const PERMISSIONS = [
   "settings.manage",
   /** Create staff accounts and change what they can do. */
   "staff.manage",
+  /** Send an announcement to students. */
+  "announcements.send",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -176,6 +178,63 @@ export function permissionsOf(role: string | undefined): readonly Permission[] {
 
 export function hasPermission(role: string | undefined, permission: Permission): boolean {
   return permissionsOf(role).includes(permission);
+}
+
+export interface LessonChangeDenial {
+  code: "LESSON_PUBLISHED" | "LESSON_IN_REVIEW" | "NOT_LESSON_AUTHOR";
+  error: string;
+  errorAr: string;
+}
+
+/** Why an editor cannot change a lesson that has left draft, by status. */
+const LOCKED_STATUS: Record<string, LessonChangeDenial> = {
+  published: {
+    code: "LESSON_PUBLISHED",
+    error: "This lesson is published, so only an admin can change it.",
+    errorAr: "هذا الدرس منشور، لذا يستطيع المدير فقط تعديله.",
+  },
+  archived: {
+    code: "LESSON_PUBLISHED",
+    error: "This lesson is archived, so only an admin can change it.",
+    errorAr: "هذا الدرس مؤرشف، لذا يستطيع المدير فقط تعديله.",
+  },
+  in_review: {
+    code: "LESSON_IN_REVIEW",
+    error: "This lesson is in review. It can be changed again once it is returned to draft.",
+    errorAr: "هذا الدرس قيد المراجعة، ويمكن تعديله بعد إعادته إلى مسودة.",
+  },
+  approved: {
+    code: "LESSON_IN_REVIEW",
+    error: "This lesson has been approved, so only an admin can change it.",
+    errorAr: "هذا الدرس معتمد، لذا يستطيع المدير فقط تعديله.",
+  },
+};
+
+/**
+ * Why this caller may not change this lesson, or null when they may.
+ *
+ * Whoever may publish (an admin) may change any lesson. A lesson editor may
+ * change only lessons they created, and only while they are drafts: once
+ * submitted, what the reviewer read is what gets approved and published, and
+ * one editor cannot rewrite another's work. Reading is not restricted here;
+ * this is only about changes. A lesson with no recorded author predates
+ * authorship and is left to admins.
+ */
+export function lessonChangeDenial(
+  caller: { role: string | undefined; userId: number | undefined },
+  lesson: { status: string; createdBy: number | null },
+): LessonChangeDenial | null {
+  if (hasPermission(caller.role, "content.publish")) return null;
+  const locked = LOCKED_STATUS[lesson.status];
+  if (locked) return { ...locked };
+  if (lesson.createdBy === null || lesson.createdBy !== caller.userId) {
+    return {
+      code: "NOT_LESSON_AUTHOR",
+      error: "You can only change lessons you created.",
+      errorAr: "يمكنك تعديل الدروس التي أنشأتها فقط.",
+    };
+  }
+  return null;
 }
 
 export function isAssignableRole(role: string): role is UserRole {

@@ -7,6 +7,7 @@ import {
   hasPermission,
   isAssignableRole,
   isManageableRole,
+  lessonChangeDenial,
   permissionsOf,
   type Permission,
 } from "./access-policy";
@@ -126,5 +127,47 @@ describe("handing out roles", () => {
   it("refuses names that are not roles", () => {
     expect(isAssignableRole("constructor")).toBe(false);
     expect(isAssignableRole("")).toBe(false);
+  });
+});
+
+describe("who may change a lesson", () => {
+  const editor = { role: "content_manager", userId: 7 };
+  const admin = { role: "admin", userId: 1 };
+
+  it("lets an editor change their own draft", () => {
+    expect(lessonChangeDenial(editor, { status: "draft", createdBy: 7 })).toBeNull();
+  });
+
+  it("refuses an editor their own lesson once it is submitted, so what is approved is what was reviewed", () => {
+    expect(lessonChangeDenial(editor, { status: "in_review", createdBy: 7 })?.code).toBe("LESSON_IN_REVIEW");
+    expect(lessonChangeDenial(editor, { status: "approved", createdBy: 7 })?.code).toBe("LESSON_IN_REVIEW");
+  });
+
+  it("names the lesson's real status in both languages", () => {
+    const archived = lessonChangeDenial(editor, { status: "archived", createdBy: 7 });
+    expect(archived?.error).toMatch(/archived/);
+    expect(archived?.errorAr).toMatch(/مؤرشف/);
+  });
+
+  it("refuses an editor another editor's lesson", () => {
+    expect(lessonChangeDenial(editor, { status: "draft", createdBy: 8 })?.code).toBe("NOT_LESSON_AUTHOR");
+  });
+
+  it("refuses an editor a lesson with no recorded author", () => {
+    expect(lessonChangeDenial(editor, { status: "draft", createdBy: null })?.code).toBe("NOT_LESSON_AUTHOR");
+  });
+
+  it("refuses an editor their own lesson once it is published or archived", () => {
+    expect(lessonChangeDenial(editor, { status: "published", createdBy: 7 })?.code).toBe("LESSON_PUBLISHED");
+    expect(lessonChangeDenial(editor, { status: "archived", createdBy: 7 })?.code).toBe("LESSON_PUBLISHED");
+  });
+
+  it("lets an admin change any lesson", () => {
+    expect(lessonChangeDenial(admin, { status: "published", createdBy: 7 })).toBeNull();
+    expect(lessonChangeDenial(admin, { status: "draft", createdBy: null })).toBeNull();
+  });
+
+  it("leaves the role itself to requirePermission, which every CMS route runs first", () => {
+    expect(lessonChangeDenial({ role: "student", userId: 7 }, { status: "draft", createdBy: 7 })).toBeNull();
   });
 });
