@@ -38,7 +38,7 @@ import {
   listModels,
   testConnection,
   AIProviderError,
-} from "../services/ai-providers/openai-compatible";
+} from "../services/ai-providers";
 import { logger } from "../lib/logger";
 import {
   DEFAULT_TASK_PROMPTS,
@@ -59,9 +59,11 @@ function handleError(err: unknown, res: import("express").Response): void {
     return;
   }
   if (err instanceof AIProviderError) {
-    // 502: we reached (or failed to reach) an upstream, and it is upstream's
-    // answer being reported — not a fault in this request.
-    res.status(502).json({
+    // 424: we reached (or failed to reach) the provider, and it is the
+    // provider's answer being reported — not a fault in this request. Not 502:
+    // the hosting platform swaps an app's 502 for its own error page, which
+    // hid the provider's reason (a refused key, say) from the administrator.
+    res.status(424).json({
       error: err.message,
       code: "PROVIDER_ERROR",
       providerStatus: err.status,
