@@ -21,7 +21,7 @@ import {
   contentBlocksTable, exercisesTable, exerciseOptionsTable, vocabularyTable,
 } from "@workspace/db";
 import { requirePermission } from "../../middlewares/auth";
-import { hasPermission } from "../../services/access-policy";
+import { canChangeLesson, refuseLessonChange, refuseLoadedLessonChange } from "./lesson-guard";
 import { audit } from "../../services/cms-audit";
 import { invalidate, invalidatePrefix, CK } from "../../services/cache";
 import { toStudentContentBlocks } from "../../services/lesson-content";
@@ -69,12 +69,12 @@ router.get("/cms/lessons", requirePermission("content.view"), async (req, res): 
       order: number; xp_reward: number; passing_score: number;
       is_published: boolean; difficulty: string | null; tags: string[] | null;
       created_at: Date; updated_at: Date; level_code: string; curriculum_id: number;
-      is_free_lesson: boolean;
+      is_free_lesson: boolean; created_by: number | null;
     }>(
       `SELECT l.id, l.level_id, l.title, l.title_ar, l.status, l.lesson_type,
               l.estimated_minutes, l.order, l.xp_reward, l.passing_score,
               l.is_published, l.difficulty, l.tags, l.created_at, l.updated_at,
-              l.is_free_lesson,
+              l.is_free_lesson, l.created_by,
               lv.code AS level_code, lv.curriculum_id
        FROM lessons l ${joinClause}
        ${where}
@@ -95,6 +95,8 @@ router.get("/cms/lessons", requirePermission("content.view"), async (req, res): 
       difficulty: l.difficulty, tags: l.tags,
       createdAt: l.created_at, updatedAt: l.updated_at,
       isFreeLesson: l.is_free_lesson,
+      // Whether this caller may change it: their own unpublished lesson, or any as an admin.
+      canEdit: canChangeLesson(req, { status: l.status, createdBy: l.created_by }),
     })),
     total: parseInt(countResult.rows[0].count, 10),
     page, limit,
@@ -179,6 +181,7 @@ router.get("/cms/lessons/:id", requirePermission("content.view"), async (req, re
     objectives: lesson.objectives, objectivesAr: lesson.objectivesAr,
     teacherNotes: lesson.teacherNotes,
     createdAt: lesson.createdAt, updatedAt: lesson.updatedAt,
+    canEdit: canChangeLesson(req, lesson),
   });
 });
 
@@ -294,12 +297,7 @@ router.patch("/cms/lessons/:id", requirePermission("content.edit"), async (req, 
   const [existing] = await db.select().from(lessonsTable).where(eq(lessonsTable.id, id)).limit(1);
   if (!existing || existing.softDeletedAt) { res.status(404).json({ error: "Lesson not found" }); return; }
 
-  // content_manager cannot edit published/archived lessons — they must be unpublished by admin first
-  if (!hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(existing.status)) {
-    res.status(403).json({
-      error: `Cannot edit a ${existing.status} lesson. Ask an admin to unpublish it first.`,
-    }); return;
-  }
+  if (refuseLoadedLessonChange(req, res, existing)) return;
 
   // Published lessons get a content version bump (admin bypass)
   const bumpVersion = existing.status === "published";
@@ -353,9 +351,12 @@ async function transitionLesson(
   res.json({ id, status: newStatus });
 }
 
-/** Content manager submits lesson for review */
-router.post("/cms/lessons/:id/submit", requirePermission("content.edit"), (req, res) =>
-  transitionLesson(req, res, ["draft"], "in_review"));
+/** Content manager submits lesson for review — only a lesson they may change */
+router.post("/cms/lessons/:id/submit", requirePermission("content.edit"), async (req, res) => {
+  const id = parseInt(req.params.id as string, 10);
+  if (!isNaN(id) && (await refuseLessonChange(req, res, id))) return;
+  await transitionLesson(req, res, ["draft"], "in_review");
+});
 
 /** Reviewer or admin approves — inserts a lesson_reviews record so the history is complete */
 router.post("/cms/lessons/:id/approve", requirePermission("content.review"), async (req, res): Promise<void> => {
@@ -484,10 +485,7 @@ router.delete("/cms/lessons/:id", requirePermission("content.edit"), async (req,
   const [lesson] = await db.select().from(lessonsTable).where(eq(lessonsTable.id, id)).limit(1);
   if (!lesson || lesson.softDeletedAt) { res.status(404).json({ error: "Lesson not found" }); return; }
 
-  // content_manager may only delete non-published lessons
-  if (!hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(lesson.status)) {
-    res.status(403).json({ error: `Cannot delete a ${lesson.status} lesson. Ask an admin.` }); return;
-  }
+  if (refuseLoadedLessonChange(req, res, lesson)) return;
 
   await db.update(lessonsTable).set({ softDeletedAt: new Date(), isPublished: false, status: "archived" }).where(eq(lessonsTable.id, id));
   await audit(req.session.userId!, "delete", "lesson", id, lesson.status, "archived");
