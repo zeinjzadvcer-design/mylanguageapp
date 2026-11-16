@@ -53,7 +53,8 @@ export interface PlacementAnalysis {
 export async function analysePlacement(
   outcome: PlacementOutcome,
   availableLevelCodes: string[],
-  ctx: { userId: number; subscriptionPlan: string | null },
+  /** `quotaExempt` as for the grader: placement is taken once, on whatever plan. */
+  ctx: { userId: number; subscriptionPlan: string | null; quotaExempt?: boolean },
 ): Promise<PlacementAnalysis | null> {
   let config;
   try {
@@ -63,12 +64,14 @@ export async function analysePlacement(
   }
 
   try {
-    await checkAndIncrement({
-      userId: ctx.userId,
-      subscriptionPlan: ctx.subscriptionPlan,
-      task: TASK,
-      feature: "open_answer_evaluation",
-    });
+    if (!ctx.quotaExempt) {
+      await checkAndIncrement({
+        userId: ctx.userId,
+        subscriptionPlan: ctx.subscriptionPlan,
+        task: TASK,
+        feature: "open_answer_evaluation",
+      });
+    }
   } catch {
     return null;
   }

@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { resolvePlanCode } from "../services/ai-quota";
 import { eq, asc } from "drizzle-orm";
 import { and } from "drizzle-orm";
@@ -19,6 +19,9 @@ import {
 } from "../services/scoring/placement";
 import { analysePlacement } from "../services/placement-analysis";
 import { gradeOpenAnswer } from "../services/graders/open-answer";
+import { getPlacementRules } from "../services/placement-rules";
+import { logger } from "../lib/logger";
+import { withRedis } from "../services/redis";
 
 const router: IRouter = Router();
 
@@ -52,9 +55,40 @@ router.get("/placement-test", async (req, res): Promise<void> => {
   res.json({ questions: questionsWithOptions });
 });
 
+/** Raised inside the save when another submission completed placement first. */
+class PlacementAlreadyCompleted extends Error {}
+
 router.post("/placement-test/submit", requireAuth, async (req, res): Promise<void> => {
   const userId = req.session.userId!;
 
+  // One submission at a time per student. Marking calls the AI outside the
+  // plan allowance, and the "already completed" check below only sees
+  // submissions that have finished — so without this, many sent at once would
+  // each be marked and each place the student. Redis down: the save itself
+  // still refuses a second placement.
+  const lockKey = `v1:placement:submit:${userId}`;
+  const locked = await withRedis(
+    async (r) => (await r.set(lockKey, "1", "EX", 120, "NX")) === "OK",
+    true,
+  );
+  if (!locked) {
+    res.status(409).json({
+      error: "Your placement test is already being marked.",
+      errorAr: "يجري تقييم اختبار تحديد المستوى الخاص بك الآن.",
+    });
+    return;
+  }
+  try {
+    await submitPlacement(req, res, userId);
+  } catch (err) {
+    if (!(err instanceof PlacementAlreadyCompleted)) throw err;
+    res.status(409).json({ error: "Placement test already completed" });
+  } finally {
+    await withRedis((r) => r.del(lockKey), 0);
+  }
+});
+
+async function submitPlacement(req: Request, res: Response, userId: number): Promise<void> {
   // Reject retaking placement once completed (409)
   const [profile] = await db
     .select()
@@ -97,11 +131,15 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
   }
 
   const questionById = new Map(questions.map((q) => [q.id, q]));
+  // Only the questions the test shows count. A question switched off since the
+  // student loaded the test is ignored, not counted against them.
+  const activeQuestions = questions.filter((q) => q.isActive);
 
   // Validate each answer. A written question carries text instead of an option,
   // so the two shapes are checked separately rather than demanding both.
   const optionsByQuestion = new Map<number, string>();
-  let writtenAnswer: string | null = null;
+  /** Each written question's answer, so each is marked against its own question. */
+  const writtenAnswers = new Map<number, string>();
 
   for (const answer of answers) {
     const { questionId, selectedOptionId, responseText } = answer as {
@@ -114,10 +152,11 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
       res.status(400).json({ error: `Unknown question ID: ${questionId}` });
       return;
     }
+    if (!question.isActive) continue;
 
     if (question.type === "written") {
       if (typeof responseText === "string" && responseText.trim().length > 0) {
-        writtenAnswer = responseText.trim().slice(0, 4000);
+        writtenAnswers.set(questionId, responseText.trim().slice(0, 4000));
       }
       continue;
     }
@@ -143,7 +182,7 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
   const graded: AnsweredQuestion[] = [];
   let correct = 0;
 
-  for (const question of questions) {
+  for (const question of activeQuestions) {
     if (question.type === "written") continue;
     const selectedOptionId = optionsByQuestion.get(question.id);
     const isCorrect = selectedOptionId
@@ -165,29 +204,54 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
   const total = graded.length;
   const percentage = total > 0 ? (correct / total) * 100 : 0;
 
-  // A written answer is graded by the same grader lessons and quizzes use.
+  // Written answers are graded by the same grader lessons and quizzes use.
   // Inline, because placement happens once and the student is waiting for a
   // result they cannot proceed without — but never fatal: a failure here simply
-  // leaves writing unscored.
-  let writingScore: number | null = null;
-  if (writtenAnswer) {
-    try {
-      const verdict = await gradeOpenAnswer(
-        {
-          question: questions.find((q) => q.type === "written")?.questionText ?? "Write about yourself.",
-          studentAnswer: writtenAnswer,
-          passingScore: 60,
-        },
-        { userId, subscriptionPlan: await resolvePlanCode(userId) },
-      );
-      writingScore = verdict.score;
-    } catch {
-      // AI unavailable, over quota, or the answer was empty. The placement
-      // still completes on the objective questions alone.
-    }
-  }
+  // leaves that answer unscored.
+  //
+  // Not counted against the plan: students take placement straight after
+  // registering, nearly always on the free plan, whose allowance is zero — so
+  // the writing was never marked at all. Each answer is judged against the
+  // level its question was written for; with no level the grader assumed
+  // "beginner" and scored generously.
+  const planCode = await resolvePlanCode(userId);
+  const written = activeQuestions.filter((q) => q.type === "written" && writtenAnswers.has(q.id));
+  const writingScores = (
+    await Promise.all(
+      written.map(async (q) => {
+        try {
+          const verdict = await gradeOpenAnswer(
+            {
+              question: q.questionText,
+              studentAnswer: writtenAnswers.get(q.id)!,
+              levelCode: q.difficulty,
+              passingScore: 60,
+            },
+            { userId, subscriptionPlan: planCode, quotaExempt: true },
+          );
+          return verdict.score;
+        } catch (err) {
+          // AI off, out of budget, or the provider failed. The placement still
+          // completes on everything else; the reason is logged for the admin.
+          logger.warn(
+            { userId, questionId: q.id, reason: (err as { reason?: string })?.reason ?? String(err) },
+            "Placement writing left unmarked",
+          );
+          return null;
+        }
+      }),
+    )
+  ).filter((s): s is number => s !== null);
 
-  const outcome = scorePlacement(graded, writingScore);
+  const writingSample = written.length
+    ? written.map((q) => writtenAnswers.get(q.id)!).join("\n\n---\n\n")
+    : null;
+  const writingScore = writingScores.length
+    ? Math.round(writingScores.reduce((a, b) => a + b, 0) / writingScores.length)
+    : null;
+
+  const rules = await getPlacementRules();
+  const outcome = scorePlacement(graded, writingScores, rules);
 
   // Resolve the student's curriculum
   let curriculumId = profile?.curriculumId ?? null;
@@ -226,7 +290,8 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
   // back, and a placement with no AI at all still assigns a level.
   const analysis = await analysePlacement(outcome, orderedCodes, {
     userId,
-    subscriptionPlan: await resolvePlanCode(userId),
+    subscriptionPlan: planCode,
+    quotaExempt: true,
   });
 
   const { levelCode, adjusted } = applyLevelAdjustment(
@@ -251,6 +316,18 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
   // that placement lands in level_progressions like every other level change
   // and an administrator override later has something to override.
   await db.transaction(async (tx) => {
+    // Claimed first and only once: a second submission that got this far
+    // (Redis down, or the lock expired) is refused here, before it can write
+    // a second result or move the student again.
+    if (profile) {
+      const claimed = await tx
+        .update(studentProfilesTable)
+        .set({ placementCompleted: true })
+        .where(and(eq(studentProfilesTable.userId, userId), eq(studentProfilesTable.placementCompleted, false)))
+        .returning({ userId: studentProfilesTable.userId });
+      if (claimed.length === 0) throw new PlacementAlreadyCompleted();
+    }
+
     await tx.insert(placementResultsTable).values({
       userId,
       curriculumId,
@@ -263,7 +340,7 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
       strengths: outcome.strengths,
       weaknesses: outcome.weaknesses,
       analysisAr: analysis?.analysisAr ?? null,
-      writingSample: writtenAnswer,
+      writingSample,
       writingScore,
       computedLevelCode: outcome.levelCode,
       adjustmentReason: adjusted ? (analysis?.adjustmentReason ?? "AI adjustment") : null,
@@ -281,11 +358,6 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
       },
       tx,
     );
-
-    await tx
-      .update(studentProfilesTable)
-      .set({ placementCompleted: true })
-      .where(eq(studentProfilesTable.userId, userId));
   });
 
   res.json({
@@ -309,6 +381,6 @@ router.post("/placement-test/submit", requireAuth, async (req, res): Promise<voi
     message: `You have been placed at ${level.name}`,
     messageAr: `تم تصنيفك في مستوى ${level.nameAr}`,
   });
-});
+}
 
 export default router;
