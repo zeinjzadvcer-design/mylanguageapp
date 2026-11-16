@@ -11,7 +11,7 @@ import {
   type Notification,
 } from "@workspace/api-client-react";
 import { formatDistanceToNow } from "date-fns";
-import { Bell, BookOpen, CheckCircle2, ClipboardCheck, GraduationCap, Loader2, XCircle } from "lucide-react";
+import { Bell, BookOpen, CheckCircle2, ClipboardCheck, GraduationCap, Loader2, Megaphone, XCircle } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
@@ -26,6 +26,7 @@ const ICONS: Record<Notification["kind"], typeof Bell> = {
   lesson_reminder: BookOpen,
   quiz_available: GraduationCap,
   evaluation_available: ClipboardCheck,
+  announcement: Megaphone,
 };
 
 const str = (v: unknown) => (typeof v === "string" ? v : null);
@@ -85,6 +86,13 @@ export function NotificationBell({ className }: { className?: string }) {
         return { title: n.quizAvailable.title, body: n.quizAvailable.body(quiz) };
       case "evaluation_available":
         return { title: n.evaluationAvailable.title, body: n.evaluationAvailable.body(quiz) };
+      case "announcement":
+        // Written by an admin, in Arabic, English or both: shown in the reader's
+        // language, falling back to whichever was written.
+        return {
+          title: pick(str(d.titleAr), str(d.title)) || n.title,
+          body: pick(str(d.bodyAr), str(d.body)),
+        };
       default:
         // A kind this build does not know yet: the API and the web app deploy
         // separately, and either can go first. Shown plainly rather than
