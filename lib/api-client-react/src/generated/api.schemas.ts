@@ -135,6 +135,7 @@ export const Permission = {
   studentsmanage: 'students.manage',
   settingsmanage: 'settings.manage',
   staffmanage: 'staff.manage',
+  announcementssend: 'announcements.send',
 } as const;
 
 /**
@@ -194,6 +195,7 @@ export const NotificationKind = {
   lesson_reminder: 'lesson_reminder',
   quiz_available: 'quiz_available',
   evaluation_available: 'evaluation_available',
+  announcement: 'announcement',
 } as const;
 
 /**
@@ -637,6 +639,29 @@ export const ContentBlockType = {
   review: 'review',
 } as const;
 
+/**
+ * Settings the author chose for this block. On an open-ended block, `answerMode` ("text" or "voice") is how students answer and `aiEvaluation` (false) means the answer is saved without a mark.
+ * @nullable
+ */
+export type ContentBlockConfig = { [key: string]: unknown } | null;
+
+export type ContentBlockOpenEndedAnswerMode = typeof ContentBlockOpenEndedAnswerMode[keyof typeof ContentBlockOpenEndedAnswerMode];
+
+
+export const ContentBlockOpenEndedAnswerMode = {
+  text: 'text',
+  voice: 'voice',
+} as const;
+
+/**
+ * On an open-ended block, how students answer it and whether AI marks it, with the server's defaults applied. Null on every other block.
+ * @nullable
+ */
+export type ContentBlockOpenEnded = {
+  answerMode: ContentBlockOpenEndedAnswerMode;
+  aiEvaluation: boolean;
+} | null;
+
 export type ContentBlockOptionsItem = {
   id: string;
   text: string;
@@ -722,6 +747,16 @@ export interface ContentBlock {
      * @nullable
      */
   groupId?: string | null;
+  /**
+     * Settings the author chose for this block. On an open-ended block, `answerMode` ("text" or "voice") is how students answer and `aiEvaluation` (false) means the answer is saved without a mark.
+     * @nullable
+     */
+  config?: ContentBlockConfig;
+  /**
+     * On an open-ended block, how students answer it and whether AI marks it, with the server's defaults applied. Null on every other block.
+     * @nullable
+     */
+  openEnded?: ContentBlockOpenEnded;
   /** The student reads the passage aloud and the recording is scored by matching their words against it. On a text block this turns a passage to read into an exercise. */
   expectsReferenceReading?: boolean;
   /** @nullable */

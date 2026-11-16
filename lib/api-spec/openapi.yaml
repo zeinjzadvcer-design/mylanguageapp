@@ -3044,6 +3044,7 @@ components:
         - students.manage
         - settings.manage
         - staff.manage
+        - announcements.send
 
     AuthUser:
       description: The signed-in user, with what they are allowed to do.
@@ -3143,7 +3144,7 @@ components:
           type: number
         kind:
           type: string
-          enum: [subscription_approved, subscription_rejected, lesson_reminder, quiz_available, evaluation_available]
+          enum: [subscription_approved, subscription_rejected, lesson_reminder, quiz_available, evaluation_available, announcement]
         data:
           type: object
           additionalProperties: true
@@ -3714,6 +3715,25 @@ components:
             Consecutive blocks sharing this id are items of one block, shown to
             the student as "item 2 of 3". Null for a block on its own.
           type: ["string", "null"]
+        config:
+          description: >-
+            Settings the author chose for this block. On an open-ended block,
+            `answerMode` ("text" or "voice") is how students answer and
+            `aiEvaluation` (false) means the answer is saved without a mark.
+          type: ["object", "null"]
+          additionalProperties: true
+        openEnded:
+          description: >-
+            On an open-ended block, how students answer it and whether AI marks
+            it, with the server's defaults applied. Null on every other block.
+          type: ["object", "null"]
+          required: [answerMode, aiEvaluation]
+          properties:
+            answerMode:
+              type: string
+              enum: [text, voice]
+            aiEvaluation:
+              type: boolean
         expectsReferenceReading:
           description: >-
             The student reads the passage aloud and the recording is scored by
