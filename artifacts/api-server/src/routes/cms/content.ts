@@ -11,8 +11,9 @@ import {
   db, lessonsTable, contentBlocksTable, exercisesTable, exerciseOptionsTable,
 } from "@workspace/db";
 import { requirePermission } from "../../middlewares/auth";
-import { hasPermission } from "../../services/access-policy";
+import { refuseLessonChange, refuseLoadedLessonChange } from "./lesson-guard";
 import { audit } from "../../services/cms-audit";
+import { isFilledOption, openEndedSettings } from "../../services/lesson-content";
 import { invalidate, CK } from "../../services/cache";
 
 const router: IRouter = Router();
@@ -46,6 +47,9 @@ router.get("/cms/lessons/:lessonId/blocks", requirePermission("content.view"), a
     const first = blockExercises[0];
     return {
       ...block,
+      // How students answer it and whether AI marks it, as the server applies
+      // them: the editor shows these rather than guessing the defaults.
+      openEnded: block.type === "open_ended" ? openEndedSettings(block.config) : null,
       exercise: first ?? null,
       options: first ? allOptions.filter(o => o.exerciseId === first.id) : [],
       exercises: blockExercises.map(e => ({
@@ -63,10 +67,7 @@ router.post("/cms/lessons/:lessonId/blocks", requirePermission("content.edit"), 
 
   const [lesson] = await db.select().from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
   if (!lesson || lesson.softDeletedAt) { res.status(404).json({ error: "Lesson not found" }); return; }
-  // content_manager cannot mutate published/archived lessons; only admins can do so after unpublishing
-  if (!hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(lesson.status)) {
-    res.status(403).json({ error: `Cannot edit a ${lesson.status} lesson. Unpublish it first or contact an admin.` }); return;
-  }
+  if (refuseLoadedLessonChange(req, res, lesson)) return;
 
   const {
     type, order, title, titleAr, instructions, instructionsAr,
@@ -111,11 +112,7 @@ router.patch("/cms/lessons/:lessonId/blocks/:blockId", requirePermission("conten
   const blockId = parseInt(req.params.blockId as string, 10);
   if (isNaN(lessonId) || isNaN(blockId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
-  const [parentLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (!parentLesson) { res.status(404).json({ error: "Lesson not found" }); return; }
-  if (!hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(parentLesson.status)) {
-    res.status(403).json({ error: `Cannot edit blocks of a ${parentLesson.status} lesson.` }); return;
-  }
+  if (await refuseLessonChange(req, res, lessonId)) return;
 
   const allowed = ["type", "order", "title", "titleAr", "instructions", "instructionsAr",
     "content", "contentAr", "audioNote", "prompt", "promptAr", "exampleAudio",
@@ -146,10 +143,7 @@ router.delete("/cms/lessons/:lessonId/blocks/:blockId", requirePermission("conte
   const blockId = parseInt(req.params.blockId as string, 10);
   if (isNaN(lessonId) || isNaN(blockId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
-  const [pLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (pLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(pLesson.status)) {
-    res.status(403).json({ error: `Cannot delete blocks from a ${pLesson.status} lesson.` }); return;
-  }
+  if (await refuseLessonChange(req, res, lessonId)) return;
 
   await db.delete(contentBlocksTable)
     .where(and(eq(contentBlocksTable.id, blockId), eq(contentBlocksTable.lessonId, lessonId)));
@@ -163,10 +157,7 @@ router.post("/cms/lessons/:lessonId/blocks/reorder", requirePermission("content.
   const lessonId = parseInt(req.params.lessonId as string, 10);
   if (isNaN(lessonId)) { res.status(400).json({ error: "Invalid lesson ID" }); return; }
 
-  const [rLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (rLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(rLesson.status)) {
-    res.status(403).json({ error: `Cannot reorder blocks of a ${rLesson.status} lesson.` }); return;
-  }
+  if (await refuseLessonChange(req, res, lessonId)) return;
 
   const { blockIds } = req.body;
   if (!Array.isArray(blockIds) || blockIds.some(id => typeof id !== "number")) {
@@ -191,10 +182,7 @@ router.post("/cms/lessons/:lessonId/blocks/:blockId/exercise", requirePermission
   const blockId = parseInt(req.params.blockId as string, 10);
   if (isNaN(lessonId) || isNaN(blockId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
-  const [exLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (exLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(exLesson.status)) {
-    res.status(403).json({ error: `Cannot add exercises to a ${exLesson.status} lesson.` }); return;
-  }
+  if (await refuseLessonChange(req, res, lessonId)) return;
 
   const {
     exerciseType, question, questionAr, correctOptionId,
@@ -231,7 +219,9 @@ router.post("/cms/lessons/:lessonId/blocks/:blockId/exercise", requirePermission
   // Create options if provided
   const createdOptions = [];
   if (Array.isArray(options)) {
-    for (const opt of options) {
+    // Blank rows from the four-option form are not options, and students saw
+    // them as empty answers to choose from.
+    for (const opt of options.filter(isFilledOption)) {
       const [o] = await db.insert(exerciseOptionsTable).values({
         exerciseId: exercise.id, optionId: opt.optionId, text: opt.text, textAr: opt.textAr ?? null,
       }).returning();
@@ -250,10 +240,7 @@ router.patch("/cms/lessons/:lessonId/exercises/:exerciseId", requirePermission("
   const exerciseId = parseInt(req.params.exerciseId as string, 10);
   if (isNaN(lessonId) || isNaN(exerciseId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
-  const [upLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (upLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(upLesson.status)) {
-    res.status(403).json({ error: `Cannot update exercises of a ${upLesson.status} lesson.` }); return;
-  }
+  if (await refuseLessonChange(req, res, lessonId)) return;
 
   const allowed = ["exerciseType", "question", "questionAr", "correctOptionId",
     "explanation", "explanationAr", "prompt", "promptAr",
@@ -272,7 +259,7 @@ router.patch("/cms/lessons/:lessonId/exercises/:exerciseId", requirePermission("
   // Replace options if provided
   if (Array.isArray(req.body.options)) {
     await db.delete(exerciseOptionsTable).where(eq(exerciseOptionsTable.exerciseId, exerciseId));
-    for (const opt of req.body.options) {
+    for (const opt of req.body.options.filter(isFilledOption)) {
       await db.insert(exerciseOptionsTable).values({
         exerciseId, optionId: opt.optionId, text: opt.text, textAr: opt.textAr ?? null,
       });
@@ -289,10 +276,7 @@ router.delete("/cms/lessons/:lessonId/exercises/:exerciseId", requirePermission(
   const exerciseId = parseInt(req.params.exerciseId as string, 10);
   if (isNaN(lessonId) || isNaN(exerciseId)) { res.status(400).json({ error: "Invalid ID" }); return; }
 
-  const [delLesson] = await db.select({ status: lessonsTable.status }).from(lessonsTable).where(eq(lessonsTable.id, lessonId)).limit(1);
-  if (delLesson && !hasPermission(req.session.role, "content.publish") && ["published", "archived"].includes(delLesson.status)) {
-    res.status(403).json({ error: `Cannot delete exercises from a ${delLesson.status} lesson.` }); return;
-  }
+  if (await refuseLessonChange(req, res, lessonId)) return;
 
   await db.delete(exercisesTable).where(and(eq(exercisesTable.id, exerciseId), eq(exercisesTable.lessonId, lessonId)));
   await invalidate(CK.lessonContent(lessonId));
