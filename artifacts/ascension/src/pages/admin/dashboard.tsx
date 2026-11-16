@@ -120,6 +120,8 @@ export default function AdminDashboard() {
           { href: "/admin/capacity", title: ad.capacityTitle, body: ad.capacityBody, permission: "settings.manage" },
           { href: "/admin/ai", title: ad.aiTitle, body: ad.aiBody, permission: "settings.manage" },
           { href: "/admin/staff", title: ad.staffTitle, body: ad.staffBody, permission: "staff.manage" },
+          { href: "/admin/announcements", title: ad.announcementsTitle, body: ad.announcementsBody, permission: "announcements.send" },
+          { href: "/admin/placement-rules", title: ad.placementRulesTitle, body: ad.placementRulesBody, permission: "settings.manage" },
         ] as const).filter(({ permission }) => can(permission)).map(({ href, title, body }) => (
           <Card key={href} className="hover:border-primary/50 transition-colors">
             <Link href={href} className="block h-full">

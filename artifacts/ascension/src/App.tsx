@@ -30,6 +30,8 @@ import AdminLessons from '@/pages/admin/lessons';
 import AdminAiSettings from '@/pages/admin/ai-settings';
 import AdminCapacity from '@/pages/admin/capacity';
 import AdminPayments from '@/pages/admin/payments';
+import AdminAnnouncements from '@/pages/admin/announcements';
+import AdminPlacementRules from '@/pages/admin/placement-rules';
 import AdminStaff from '@/pages/admin/staff';
 
 // CMS pages
@@ -125,6 +127,8 @@ function Router() {
         <ProtectedRoute path="/admin/capacity" component={AdminCapacity} permission="settings.manage" />
         <ProtectedRoute path="/admin/payments" component={AdminPayments} permission="payments.review" />
         <ProtectedRoute path="/admin/staff" component={AdminStaff} permission="staff.manage" />
+        <ProtectedRoute path="/admin/announcements" component={AdminAnnouncements} permission="announcements.send" />
+        <ProtectedRoute path="/admin/placement-rules" component={AdminPlacementRules} permission="settings.manage" />
 
         {/* CMS routes */}
         <ProtectedRoute path="/cms" component={CMSDashboard} permission="content.view" cms />
