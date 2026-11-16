@@ -193,8 +193,23 @@ export function ConversationBlock({ lessonId, blockId, prompt }: Props) {
     if (e instanceof ConversationError) {
       // 429 is their allowance, 503 is the deployment. Both are "not now",
       // neither is the student's mistake, and neither is a crash.
-      if (e.status === 429 || e.status === 503) {
+      // 502 and 504 are the hosting platform's own pages, which can stand in
+      // for the app's 503 on the live site: the same "not now" for the student.
+      if (e.status === 503 || e.status === 502 || e.status === 504) {
+        // Never the server's own words: a provider error is not for students.
+        setUnavailable(cv.tryLater);
+        return;
+      }
+      if (e.status === 429) {
         setUnavailable(e.message);
+        return;
+      }
+      // A spoken turn that could not be used: the conversation itself is fine.
+      if (e.code === "EMPTY_TRANSCRIPT" || e.code === "AUDIO_UNAVAILABLE") {
+        toast({
+          title: e.code === "EMPTY_TRANSCRIPT" ? cv.notHeard : cv.recordingUnreadable,
+          variant: "destructive",
+        });
         return;
       }
       toast({ title: cv.cannotContinue, description: e.message, variant: "destructive" });
