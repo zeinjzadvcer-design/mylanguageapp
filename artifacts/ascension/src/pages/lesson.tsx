@@ -34,6 +34,7 @@ import { pollAttemptVerdict, type AttemptVerdict } from "@/lib/speech-api";
 import { ConversationBlock } from "@/components/conversation-block";
 import { useI18n } from "@/lib/i18n";
 import { useMicRecorder } from "@/hooks/use-mic-recorder";
+import { useSpeech } from "@/hooks/use-speech";
 import {
   ArrowRight,
   Volume2,
@@ -194,8 +195,8 @@ interface BlockState {
  *
  * This used to show the Arabic OR the English, preferring Arabic, so an author
  * who wrote both — the listening block asks for both — only ever had half of
- * them reach the student. The Arabic leads, with the English following left-to-right as the wording
- * the student is learning.
+ * them reach the student. The English leads, in the heavier weight, as the
+ * wording the student is learning; the Arabic follows as its translation.
  *
  * An item on a multi-item block may carry instructions of its own, which then
  * take the place of the block's.
@@ -220,18 +221,18 @@ function BlockHeader({ block, item }: { block: ContentBlock; item?: BlockItem })
           <span className="text-xs text-muted-foreground">{t.common.minutes(block.estimatedMinutes)}</span>
         )}
       </div>
-      {instructionsAr && (
-        <FormattedText
-          text={instructionsAr}
-          dir="rtl"
-          className="text-sm text-muted-foreground leading-relaxed"
-        />
-      )}
-      {instructionsEn && instructionsEn !== instructionsAr && (
+      {instructionsEn && (
         <FormattedText
           text={instructionsEn}
           dir="ltr"
-          className="text-sm text-muted-foreground leading-relaxed text-left"
+          className="text-sm font-semibold text-foreground leading-relaxed text-left"
+        />
+      )}
+      {instructionsAr && instructionsAr !== instructionsEn && (
+        <FormattedText
+          text={instructionsAr}
+          dir="rtl"
+          className="text-sm font-normal text-muted-foreground leading-relaxed"
         />
       )}
     </div>
@@ -322,11 +323,11 @@ function McqBlock({
       )}
 
       <div className="p-6 bg-secondary rounded-2xl text-center space-y-4">
-        {questionAr && (
-          <h3 className="text-lg font-medium text-muted-foreground">{questionAr}</h3>
-        )}
         {question && (
           <h2 className="text-2xl font-bold font-serif" dir="ltr">{question}</h2>
+        )}
+        {questionAr && (
+          <h3 className="text-lg font-normal text-muted-foreground" dir="rtl">{questionAr}</h3>
         )}
       </div>
 
@@ -416,9 +417,9 @@ function OpenEndedBlock({
   const ls = t.lesson;
   const sp = t.speaking;
 
-  // Spec 4C allows either. Writing and speaking are different skills, and a
-  // student who can say it but not spell it should still be able to answer.
-  const [mode, setMode] = useState<"text" | "voice">("text");
+  // The block's author decides whether this is answered in writing or aloud;
+  // writing and speaking are different skills, and the lesson is testing one.
+  const mode = block.openEnded?.answerMode === "voice" ? "voice" : "text";
 
   const prompt = item ? item.prompt : block.prompt;
   const promptAr = item ? item.promptAr : block.promptAr;
@@ -460,48 +461,24 @@ function OpenEndedBlock({
       <BlockHeader block={block} item={item} />
       {item && <ItemCounter block={block} questionIndex={block.questions!.indexOf(item)} />}
 
-      {block.contentAr && (
-        <FormattedText text={block.contentAr} dir="rtl" className="text-lg leading-relaxed text-foreground" />
-      )}
       {block.content && (
         <div className="p-6 bg-secondary/50 rounded-2xl border border-border">
-          <FormattedText text={block.content} dir="ltr" className="text-xl leading-relaxed font-serif text-foreground" />
+          <FormattedText text={block.content} dir="ltr" className="text-xl leading-relaxed font-serif font-semibold text-foreground" />
         </div>
       )}
-      {promptAr && (
-        <FormattedText text={promptAr} dir="rtl" className="text-base font-medium text-foreground" />
+      {block.contentAr && (
+        <FormattedText text={block.contentAr} dir="rtl" className="text-lg leading-relaxed font-normal text-foreground" />
       )}
       {prompt && (
-        <FormattedText text={prompt} dir="ltr" className="text-sm text-muted-foreground" />
+        <FormattedText text={prompt} dir="ltr" className="text-base font-semibold text-foreground" />
+      )}
+      {promptAr && (
+        <FormattedText text={promptAr} dir="rtl" className="text-sm font-normal text-muted-foreground" />
       )}
 
       <BlockIllustration block={block} />
 
       {isUsableUrl(block.audioUrl) && <AudioWidget url={block.audioUrl!} label={block.audioNote ?? undefined} />}
-
-      {!state.submitted && (
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant={mode === "text" ? "default" : "outline"}
-            size="sm"
-            className="flex-1 rounded-xl"
-            onClick={() => setMode("text")}
-          >
-            {ls.writing}
-          </Button>
-          <Button
-            type="button"
-            variant={mode === "voice" ? "default" : "outline"}
-            size="sm"
-            className="flex-1 rounded-xl gap-2"
-            onClick={() => setMode("voice")}
-          >
-            <Mic className="h-4 w-4" />
-            {ls.voice}
-          </Button>
-        </div>
-      )}
 
       {/* After submitting, show the answer that was actually given. Falling
           back to the textarea on `submitted` regardless of mode meant a spoken
@@ -609,6 +586,15 @@ function OpenEndedVerdict({ result }: { result: LessonActivityResult }) {
         <p className="text-sm text-blue-900">
           {ls.answerReceived}
         </p>
+      </div>
+    );
+  }
+
+  // The author switched marking off for this block: there is no verdict coming.
+  if (result.evaluationStatus === "skipped" && !explanation) {
+    return (
+      <div className="p-4 rounded-xl border bg-mint-soft border-mint/40">
+        <p className="text-sm">{ls.answerSaved}</p>
       </div>
     );
   }
@@ -747,21 +733,21 @@ function SpeakingBlock({
 
       {passage ?? (
         <>
-          {promptAr && (
+          {prompt && (
             <div className="text-center space-y-2 mb-4">
-              <FormattedText text={promptAr} dir="rtl" className="text-xl font-bold text-foreground" />
+              <FormattedText text={prompt} dir="ltr" className="text-xl font-bold text-foreground" />
             </div>
           )}
-          {prompt && (
-            <FormattedText text={prompt} dir="ltr" className="text-muted-foreground text-center" />
-          )}
-          {block.contentAr && (
-            <FormattedText text={block.contentAr} dir="rtl" className="text-lg leading-relaxed text-foreground text-center" />
+          {promptAr && (
+            <FormattedText text={promptAr} dir="rtl" className="font-normal text-muted-foreground text-center" />
           )}
           {block.content && (
             <div className="p-6 bg-secondary/50 rounded-2xl border text-center">
               <FormattedText text={block.content} dir="ltr" className="text-2xl font-bold font-serif" />
             </div>
+          )}
+          {block.contentAr && (
+            <FormattedText text={block.contentAr} dir="rtl" className="text-lg leading-relaxed font-normal text-foreground text-center" />
           )}
         </>
       )}
@@ -984,6 +970,9 @@ function SpeechVerdictCard({ verdict }: { verdict: AttemptVerdict }) {
 // ──────────────────────────────────────────────────────────────────────
 function VocabularyBlock({ block }: { block: ContentBlock }) {
   const { t } = useI18n();
+  // Each word is read by the browser's own voice, so a word needs no uploaded
+  // recording to be heard. An uploaded one still plays below, as before.
+  const speech = useSpeech();
   return (
     <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
       <BlockHeader block={block} />
@@ -994,9 +983,16 @@ function VocabularyBlock({ block }: { block: ContentBlock }) {
       {(block.vocabularyItems ?? []).map((vocab) => (
         <Card key={vocab.id} className="overflow-hidden border-2 border-border hover:border-primary/30 transition-colors">
           <CardContent className="p-0 flex items-stretch">
-            <div className="w-16 bg-primary/5 flex items-center justify-center border-s border-border">
+            <button
+              type="button"
+              aria-label={t.vocabulary.listen}
+              title={t.vocabulary.listen}
+              disabled={!speech.available}
+              onClick={() => speech.replay(vocab.word)}
+              className="w-16 bg-primary/5 flex items-center justify-center border-s border-border hover:bg-primary/10 transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
               <Volume2 className="h-6 w-6 text-primary" />
-            </div>
+            </button>
             <div className="p-4 flex-1">
               <div className="flex justify-between items-start mb-2">
                 <div className="text-xl font-bold text-foreground" dir="ltr">{vocab.word}</div>
@@ -1031,21 +1027,21 @@ function VocabularyBlock({ block }: { block: ContentBlock }) {
 function TextPassage({ block }: { block: ContentBlock }) {
   return (
     <>
-      {block.contentAr && (
-        <FormattedText
-          text={block.contentAr}
-          dir="rtl"
-          className="text-lg md:text-xl leading-relaxed text-foreground text-right"
-        />
-      )}
       {block.content && (
         <div className="p-6 bg-secondary/50 rounded-2xl border border-border">
           <FormattedText
             text={block.content}
             dir="ltr"
-            className="text-xl md:text-2xl leading-relaxed text-foreground font-serif text-left"
+            className="text-xl md:text-2xl leading-relaxed text-foreground font-serif font-semibold text-left"
           />
         </div>
+      )}
+      {block.contentAr && (
+        <FormattedText
+          text={block.contentAr}
+          dir="rtl"
+          className="text-lg md:text-xl leading-relaxed font-normal text-foreground text-right"
+        />
       )}
     </>
   );
@@ -1093,11 +1089,11 @@ function AudioPlaceholderBlock({ block }: { block: ContentBlock }) {
           </CardContent>
         </Card>
       )}
-      {block.contentAr && (
-        <FormattedText text={block.contentAr} dir="rtl" className="text-lg leading-relaxed text-foreground" />
-      )}
       {block.content && (
-        <FormattedText text={block.content} dir="ltr" className="text-lg leading-relaxed text-foreground font-serif" />
+        <FormattedText text={block.content} dir="ltr" className="text-lg leading-relaxed text-foreground font-serif font-semibold" />
+      )}
+      {block.contentAr && (
+        <FormattedText text={block.contentAr} dir="rtl" className="text-lg leading-relaxed font-normal text-foreground" />
       )}
     </div>
   );
@@ -1664,20 +1660,28 @@ export function LessonPlayer({
       return;
     }
 
+    // An open-ended question is answered the one way its author chose. Left
+    // unanswered, a required one asks for that answer; an optional one is
+    // skipped, as the Skip button would. Sending it empty is refused by the
+    // server, which showed the student a failed-to-send error.
+    if (currentBlock.type === "open_ended") {
+      const voice = currentBlock.openEnded?.answerMode === "voice";
+      const answered = voice ? st.hasRecording : (st.responseText ?? "").trim() !== "";
+      if (!answered) {
+        if (!currentBlock.isRequired) {
+          moveNext();
+          return;
+        }
+        toast({ variant: "destructive", title: voice ? ls.recordFirst : ls.writeFirst });
+        return;
+      }
+    }
+
     // Validate required fields before submitting
     if (currentBlock.isRequired) {
       if (currentBlock.type === "mcq" && !st.selectedOptionId) {
         toast({ variant: "destructive", title: ls.chooseFirst });
         return;
-      }
-      if (currentBlock.type === "open_ended") {
-        // Either form counts: the server transcribes a recording into the same
-        // answer a typed one would have been.
-        const typed = (st.responseText ?? "").trim() !== "";
-        if (!typed && !st.hasRecording) {
-          toast({ variant: "destructive", title: ls.answerFirst });
-          return;
-        }
       }
       if (isRecordingBlock(currentBlock) && !st.hasRecording) {
         toast({ variant: "destructive", title: ls.recordFirst });
@@ -2113,9 +2117,6 @@ export function LessonPlayer({
         return (
           <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
             <BlockHeader block={currentBlock} />
-            {currentBlock.contentAr && (
-              <FormattedText text={currentBlock.contentAr} dir="rtl" className="text-lg leading-relaxed text-foreground" />
-            )}
             {/* The CMS labels this field "Word to spell" and saves it to
                 `prompt`; `content` is the older home for the same thing. In a
                 lesson this block teaches the word rather than testing it — the
@@ -2127,6 +2128,9 @@ export function LessonPlayer({
                   {currentBlock.content || currentBlock.prompt}
                 </p>
               </div>
+            )}
+            {currentBlock.contentAr && (
+              <FormattedText text={currentBlock.contentAr} dir="rtl" className="text-lg leading-relaxed font-normal text-foreground" />
             )}
             <BlockIllustration block={currentBlock} />
             {isUsableUrl(currentBlock.audioUrl) && <AudioWidget url={currentBlock.audioUrl!} label={currentBlock.audioNote ?? undefined} />}
