@@ -1,4 +1,8 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useGetAdminLessons } from "@workspace/api-client-react";
+import { cmsApi } from "@/lib/cms-api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -12,6 +16,11 @@ export default function AdminLessons() {
   const { data: lessons, isLoading, error } = useGetAdminLessons();
   const { t, lang, pick } = useI18n();
   const al = t.admin.lessons;
+  const [levelId, setLevelId] = useState<string>("");
+  const { data: levels } = useQuery({
+    queryKey: ["cms-levels"],
+    queryFn: () => cmsApi.levels.list(),
+  });
 
   if (isLoading) {
     return (
@@ -30,6 +39,8 @@ export default function AdminLessons() {
     );
   }
 
+  const shown = levelId ? lessons.filter((l) => String(l.levelId) === levelId) : lessons;
+
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500">
       <div className="flex justify-between items-center">
@@ -45,6 +56,21 @@ export default function AdminLessons() {
         </Button>
       </div>
 
+      <Select value={levelId} onValueChange={(v) => setLevelId(v === "all" ? "" : v)}>
+        <SelectTrigger className="w-56">
+          <SelectValue placeholder={al.allLevels} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{al.allLevels}</SelectItem>
+          {(levels ?? []).map((lv: { id: number; code: string; name?: string | null; nameAr?: string | null }) => (
+            <SelectItem key={lv.id} value={String(lv.id)}>
+              {lv.code}
+              {pick(lv.nameAr, lv.name) ? ` — ${pick(lv.nameAr, lv.name)}` : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -59,7 +85,7 @@ export default function AdminLessons() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {lessons.map((lesson) => (
+              {shown.map((lesson) => (
                 <TableRow key={lesson.id}>
                   <TableCell className="font-mono text-muted-foreground">{lesson.id}</TableCell>
                   <TableCell>
@@ -86,7 +112,7 @@ export default function AdminLessons() {
                   </TableCell>
                 </TableRow>
               ))}
-              {lessons.length === 0 && (
+              {shown.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     {al.empty}

@@ -23,10 +23,23 @@ export default function CMSLessonsList() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<string>("");
+  const [levelId, setLevelId] = useState<string>("");
+
+  const { data: levels } = useQuery({
+    queryKey: ["cms-levels"],
+    queryFn: () => cmsApi.levels.list(),
+  });
 
   const { data, isLoading } = useQuery({
-    queryKey: ["cms-lessons", page, search, status],
-    queryFn: () => cmsApi.lessons.list({ page, limit: 20, search: search || undefined, status: status || undefined }),
+    queryKey: ["cms-lessons", page, search, status, levelId],
+    queryFn: () =>
+      cmsApi.lessons.list({
+        page,
+        limit: 20,
+        search: search || undefined,
+        status: status || undefined,
+        levelId: levelId || undefined,
+      }),
     placeholderData: (prev: any) => prev,
   });
 
@@ -87,7 +100,7 @@ export default function CMSLessonsList() {
         </div>
 
         {/* Filters */}
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 max-w-xs">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
             <Input
@@ -104,6 +117,19 @@ export default function CMSLessonsList() {
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
               {STATUSES.map(s => <SelectItem key={s} value={s} className="capitalize">{s.replace("_", " ")}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={levelId} onValueChange={v => { setLevelId(v === "all" ? "" : v); setPage(1); }}>
+            <SelectTrigger className="w-44 text-sm">
+              <SelectValue placeholder="All levels" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All levels</SelectItem>
+              {(levels ?? []).map((lv: { id: number; code: string; name?: string | null }) => (
+                <SelectItem key={lv.id} value={String(lv.id)}>
+                  {lv.code}{lv.name ? ` — ${lv.name}` : ""}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -156,7 +182,7 @@ export default function CMSLessonsList() {
                         <Link href={`/cms/lessons/${l.id}/preview`} title="Preview" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
                           <Eye className="h-3.5 w-3.5" />
                         </Link>
-                        {canEdit && (
+                        {canEdit && l.canEdit !== false && (
                           <Link href={`/cms/lessons/${l.id}/edit`} title="Edit" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
                             <Pencil className="h-3.5 w-3.5" />
                           </Link>
