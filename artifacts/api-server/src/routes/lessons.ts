@@ -47,6 +47,7 @@ import { envInt } from "../lib/env";
 import {
   toStudentContentBlocks,
   isRecordingBlock,
+  openEndedSettings,
   type StudentContentBlock,
 } from "../services/lesson-content";
 import { jobs } from "../services/jobs";
@@ -1066,6 +1067,27 @@ router.post(
         evaluationStatus = "pending";
         isCorrect = null;
         score = null;
+
+        if (exercise.exerciseType === "open_ended") {
+          // The author sets how this block is answered; the student does not choose.
+          const settings = openEndedSettings(block.config);
+          if (settings.answerMode === "voice" && mediaId === undefined) {
+            res.status(400).json({
+              error: "This question is answered with a recording.",
+              errorAr: "يُجاب عن هذا السؤال بتسجيل صوتي.",
+            });
+            return;
+          }
+          if (settings.answerMode === "text" && !responseText?.trim()) {
+            res.status(400).json({
+              error: "This question is answered in writing.",
+              errorAr: "يُجاب عن هذا السؤال كتابةً.",
+            });
+            return;
+          }
+          // Marking switched off: the answer is kept as given, and nothing waits on it.
+          if (!settings.aiEvaluation) evaluationStatus = "skipped";
+        }
       }
     } else if (mediaId !== undefined && isRecordingBlock(block)) {
       // A recording on a block with no exercise row. The pronunciation editor
