@@ -76,6 +76,12 @@ export interface OpenAnswerInput {
 export interface GradingContext {
   userId: number;
   subscriptionPlan: string | null;
+  /**
+   * Skip the plan's allowance: set only by placement, which every student takes
+   * once, straight after registering and so nearly always on the free plan.
+   * The call is still logged and still stopped by the monthly AI budget.
+   */
+  quotaExempt?: boolean;
 }
 
 /** Grading could not happen. The caller leaves the work pending. */
@@ -209,12 +215,14 @@ export async function gradeOpenAnswer(
   // leave the answer pending quietly instead of logging an error for a
   // situation that is working as designed.
   try {
-    await checkAndIncrement({
-      userId: ctx.userId,
-      subscriptionPlan: ctx.subscriptionPlan,
-      task: TASK,
-      feature: "open_answer_evaluation",
-    });
+    if (!ctx.quotaExempt) {
+      await checkAndIncrement({
+        userId: ctx.userId,
+        subscriptionPlan: ctx.subscriptionPlan,
+        task: TASK,
+        feature: "open_answer_evaluation",
+      });
+    }
   } catch (err) {
     const code = (err as { code?: string })?.code;
     throw new GradingUnavailableError(
