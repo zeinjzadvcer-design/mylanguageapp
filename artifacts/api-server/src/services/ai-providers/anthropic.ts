@@ -21,6 +21,7 @@ import {
   extractJsonObject,
   type ChatMessage,
   type ChatResult,
+  type ModelInfo,
 } from "./openai-compatible";
 
 /** Pinned: the wire format is versioned, and a silent change would be worse than a hard failure. */
@@ -51,11 +52,60 @@ function isRetryable(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+/**
+ * The models this key may use, for the picker at /admin/ai.
+ *
+ * Anthropic lists them at `/v1/models` behind the same `x-api-key` header as
+ * chat; the OpenAI adapter's `/models` with a Bearer token is refused here.
+ */
+export async function listModels(baseUrl: string, apiKey: string): Promise<ModelInfo[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/models?limit=1000`, {
+      headers: { "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION, accept: "application/json" },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === "AbortError";
+    throw new AIProviderError(
+      aborted ? "Listing models timed out" : "Could not reach the AI provider",
+      0,
+      true,
+      { cause: err },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as AnthropicError | null;
+    throw new AIProviderError(
+      payload?.error?.message
+        ? `Could not list models: ${payload.error.message}`
+        : `Could not list models (HTTP ${response.status})`,
+      response.status,
+      isRetryable(response.status),
+    );
+  }
+
+  const data = (await response.json()) as { data?: Array<{ id?: unknown }> };
+  return (data.data ?? [])
+    .map((m) => m.id)
+    .filter((id): id is string => typeof id === "string")
+    .map((id) => ({ id, ownedBy: "anthropic" }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
 export async function chat(
   config: ResolvedTaskConfig,
   messages: ChatMessage[],
-  opts: { jsonMode?: boolean } = {},
+  /** `timeoutMs` can only shorten the configured timeout, never extend it. */
+  opts: { jsonMode?: boolean; timeoutMs?: number } = {},
 ): Promise<ChatResult> {
+  const limitMs = Math.min(opts.timeoutMs ?? timeoutMs(), timeoutMs());
   // Anthropic takes the system prompt as its own field. Several `system`
   // messages are joined rather than dropped — losing one would quietly change
   // the model's instructions.
@@ -87,7 +137,7 @@ export async function chat(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs());
+  const timer = setTimeout(() => controller.abort(), limitMs);
 
   let response: Response;
   try {
@@ -105,7 +155,7 @@ export async function chat(
     const aborted = err instanceof Error && err.name === "AbortError";
     throw new AIProviderError(
       aborted
-        ? `AI request timed out after ${timeoutMs()}ms`
+        ? `AI request timed out after ${limitMs}ms`
         : "Could not reach the AI provider",
       0,
       true,

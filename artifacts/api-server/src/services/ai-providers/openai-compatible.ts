@@ -142,7 +142,8 @@ async function postJson<T>(
 export async function chat(
   config: ResolvedTaskConfig,
   messages: ChatMessage[],
-  opts: { jsonMode?: boolean } = {},
+  /** `timeoutMs` can only shorten the configured timeout, never extend it. */
+  opts: { jsonMode?: boolean; timeoutMs?: number } = {},
 ): Promise<ChatResult> {
   const body: Record<string, unknown> = {
     model: config.modelId,
@@ -161,6 +162,7 @@ export async function chat(
     endpoint(config.baseUrl, "chat/completions"),
     config.apiKey,
     body,
+    Math.min(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
   );
 
   const content = data.choices?.[0]?.message?.content;
@@ -309,15 +311,20 @@ export interface ConnectionTest {
 /**
  * One tiny real call, so an administrator finds out the configuration is wrong
  * here rather than when a student's answer fails to grade.
+ *
+ * `send` is the adapter to call. Callers go through `ai-providers/index.ts`,
+ * which picks it from the base URL: always sending the OpenAI shape made every
+ * test of an Anthropic provider fail, however good its key.
  */
 export async function testConnection(
   baseUrl: string,
   apiKey: string,
   modelId: string,
+  send: (config: ResolvedTaskConfig, messages: ChatMessage[]) => Promise<ChatResult> = chat,
 ): Promise<ConnectionTest> {
   const started = Date.now();
 
-  const result = await chat(
+  const result = await send(
     {
       task: "open_answer",
       baseUrl,
