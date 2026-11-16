@@ -75,6 +75,15 @@ const ADMIN_MAX_MINUTES = 24 * 60;
  */
 const HISTORY_WINDOW = 12;
 
+/**
+ * The longest a student waits for the tutor's reply, retries included.
+ *
+ * Kept well under the hosting gateway's limit, so a slow provider ends in this
+ * app's own "the tutor is unavailable, try again" rather than the platform's
+ * 504 page, and a student is not left watching a spinner for a minute and a half.
+ */
+const TUTOR_REPLY_DEADLINE_MS = 25_000;
+
 const ALREADY_OPEN_MESSAGE =
   "You already have a conversation open. Finish it before starting another.";
 
@@ -458,7 +467,7 @@ export async function startConversation(
         content:
           "Greet the student in one short sentence and ask them one opening question about this lesson's topic.",
       },
-    ]);
+    ], { deadlineMs: TUTOR_REPLY_DEADLINE_MS });
     greeting = result.content.trim();
     usage = result.usage;
     succeeded = true;
@@ -617,7 +626,7 @@ export async function takeTurn(
   let reply: string;
 
   try {
-    const result = await chat(config, messages);
+    const result = await chat(config, messages, { deadlineMs: TUTOR_REPLY_DEADLINE_MS });
     reply = result.content.trim();
     usage = result.usage;
     succeeded = true;

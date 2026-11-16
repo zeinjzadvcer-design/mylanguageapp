@@ -29,6 +29,25 @@ import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
+/**
+ * What a student is told when the tutor cannot run for a reason that is the
+ * deployment's, not theirs: the AI provider refused or timed out, or AI is
+ * switched off or not set up. The real reason (a provider's own words such as
+ * "invalid x-api-key", or which setting is missing) goes to the log only; it
+ * means nothing to a student and says more about the setup than they need.
+ */
+const TUTOR_UNAVAILABLE = {
+  error: "The tutor is not available right now. Please try again in a few minutes.",
+  errorAr: "المعلّم غير متاح الآن. يُرجى المحاولة بعد بضع دقائق.",
+};
+
+/**
+ * A spoken turn that could not be used, for a reason the student can act on:
+ * nothing was heard, or the recording could not be read. The conversation is
+ * still working, so these are a 422 with their own message, not "unavailable".
+ */
+const STUDENT_REASONS = new Set(["EMPTY_TRANSCRIPT", "AUDIO_UNAVAILABLE"]);
+
 function handleError(err: unknown, res: import("express").Response): void {
   if (err instanceof ConversationBlockedError) {
     // 409, not 400: the request was well formed, the conversation's state
@@ -39,7 +58,11 @@ function handleError(err: unknown, res: import("express").Response): void {
   if (err instanceof ConversationUnavailableError) {
     // A spent quota is the student's allowance, not a fault — 429. Anything
     // else here is the deployment's problem, not the request's.
-    const status = err.reason.startsWith("AI_QUOTA") ? 429 : 503;
+    const status = err.reason.startsWith("AI_QUOTA")
+      ? 429
+      : STUDENT_REASONS.has(err.reason)
+        ? 422
+        : 503;
     if (status === 503) {
       // The student gets a vague message by design, so this is the only place
       // the real cause is recorded. A transport failure carries its cause from
@@ -50,7 +73,11 @@ function handleError(err: unknown, res: import("express").Response): void {
         "conversation unavailable",
       );
     }
-    res.status(status).json({ error: err.message, code: err.reason });
+    // A spent allowance is the student's own and its message says what to do;
+    // anything else is replaced by the plain message above.
+    res
+      .status(status)
+      .json(status === 503 ? { ...TUTOR_UNAVAILABLE, code: err.reason } : { error: err.message, code: err.reason });
     return;
   }
   if (err instanceof MediaValidationError) {
