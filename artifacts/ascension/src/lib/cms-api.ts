@@ -166,6 +166,8 @@ export interface CMSLesson {
   title: string; titleAr: string; subtitle?: string | null;
   /** The lesson free-plan students get. Set in the lessons list. */
   isFreeLesson?: boolean;
+  /** Whether the caller may change this lesson. Set by the server. */
+  canEdit?: boolean;
   description?: string | null; status: LessonStatus;
   lessonType: string; estimatedMinutes: number; order: number;
   xpReward: number; passingScore: number; difficulty?: string | null;

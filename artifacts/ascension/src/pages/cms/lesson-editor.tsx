@@ -90,6 +90,9 @@ export default function LessonEditor({ lessonId }: Props) {
     xpReward: 50, passingScore: 75, difficulty: "intermediate",
     status: "draft",
   });
+  // The server says whether this caller may change this lesson: a lesson
+  // editor may change only their own lessons, and only while unpublished.
+  const mayChange = canEdit && (isNew || form.canEdit !== false);
   const [levels, setLevels] = useState<any[]>([]);
   const [curricula, setCurricula] = useState<any[]>([]);
   const [selectedCurriculum, setSelectedCurriculum] = useState<number | null>(null);
@@ -303,6 +306,17 @@ export default function LessonEditor({ lessonId }: Props) {
               {!isNew && <StatusBadge status={currentStatus} />}
             </div>
             {!isNew && <p className="text-xs text-gray-500 mt-0.5">ID: {lessonId}</p>}
+            {!isNew && canEdit && !mayChange && (
+              <p className="text-xs text-amber-700 mt-1">
+                Read only: {currentStatus === "published" || currentStatus === "archived"
+                  ? `only an admin can change a ${currentStatus} lesson.`
+                  : currentStatus === "in_review"
+                    ? "it is in review, and can be changed again once it is returned to draft."
+                    : currentStatus === "approved"
+                      ? "it has been approved, so only an admin can change it."
+                      : "you can only change lessons you created."}
+              </p>
+            )}
           </div>
 
           {/* Action buttons */}
@@ -312,12 +326,12 @@ export default function LessonEditor({ lessonId }: Props) {
                 <Eye className="h-3.5 w-3.5 mr-1.5" /> Preview
               </Button>
             )}
-            {canEdit && (
+            {mayChange && (
               <Button size="sm" onClick={saveMeta} disabled={saving}>
                 {saving ? "Saving…" : "Save Draft"}
               </Button>
             )}
-            {canEdit && !isNew && currentStatus === "draft" && (
+            {mayChange && !isNew && currentStatus === "draft" && (
               <Button size="sm" variant="outline" onClick={() => transition("submit", "Submitted for review")}>
                 <Send className="h-3.5 w-3.5 mr-1.5" /> Submit for Review
               </Button>
@@ -351,7 +365,8 @@ export default function LessonEditor({ lessonId }: Props) {
         <div className="grid md:grid-cols-3 gap-6">
           {/* Metadata panel */}
           <div className="md:col-span-1 space-y-4">
-            <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+            {/* A read-only lesson shows its details but cannot be typed into. */}
+            <fieldset disabled={!mayChange} className="min-w-0 rounded-lg border border-gray-200 bg-white p-4 space-y-3">
               <h2 className="text-sm font-semibold text-gray-700">Lesson Details</h2>
 
               <Field label="Title (English)" required>
@@ -438,14 +453,14 @@ export default function LessonEditor({ lessonId }: Props) {
               <p className="text-xs text-gray-400 -mt-1">
                 Students see these first, before the lesson starts.
               </p>
-            </div>
+            </fieldset>
           </div>
 
           {/* Content blocks panel */}
           <div className="md:col-span-2 space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-700">Content Blocks ({blockGroupList.length})</h2>
-              {canEdit && !isNew && (
+              {mayChange && !isNew && (
                 <BlockTypeMenu onSelect={addBlock} />
               )}
             </div>
@@ -458,7 +473,7 @@ export default function LessonEditor({ lessonId }: Props) {
 
             {blockGroupList.map((group, gi) => {
               const typeLabel = BLOCK_TYPES.find(t => t.value === group[0].type)?.label ?? group[0].type;
-              const addItemButton = canEdit && GROUPABLE_TYPES.includes(group[0].type) && (
+              const addItemButton = mayChange && GROUPABLE_TYPES.includes(group[0].type) && (
                 <div className="flex items-center gap-3">
                   <Button size="sm" variant="outline" onClick={() => addItem(group)}>
                     <Plus className="mr-1 h-3.5 w-3.5" /> Add item
@@ -485,7 +500,7 @@ export default function LessonEditor({ lessonId }: Props) {
                     onDelete={() => removeBlock(block.id)}
                     onUpdate={(u: Partial<CMSBlock>) => updateBlock(block.id, u)}
                     lessonId={lessonId!}
-                    isEditable={canEdit}
+                    isEditable={mayChange}
                     qc={qc}
                     footer={addItemButton}
                   />
@@ -500,7 +515,7 @@ export default function LessonEditor({ lessonId }: Props) {
                       {typeLabel}
                       <span className="ml-2 text-xs text-indigo-600">{group.length} items</span>
                     </span>
-                    {canEdit && (
+                    {mayChange && (
                       <div className="flex items-center gap-0.5">
                         <button onClick={() => moveGroup(gi, -1)} disabled={gi === 0} className="p-1 rounded hover:bg-indigo-100 disabled:opacity-30" title="Move block up">
                           <ArrowUp className="h-3 w-3" />
@@ -527,7 +542,7 @@ export default function LessonEditor({ lessonId }: Props) {
                         onDelete={() => { if (confirm(`Delete item ${ii + 1}?`)) removeBlock(block.id); }}
                         onUpdate={(u: Partial<CMSBlock>) => updateBlock(block.id, u)}
                         lessonId={lessonId!}
-                        isEditable={canEdit}
+                        isEditable={mayChange}
                         qc={qc}
                       />
                     ))}
@@ -982,6 +997,17 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
       )}
 
       {block.type === "open_ended" && (
+        <OpenEndedSettingsFields
+          config={localBlock.config}
+          saved={block.openEnded ?? null}
+          isEditable={isEditable}
+          onChange={(patch) =>
+            setLocalBlock((b: any) => ({ ...b, config: { ...(b.config ?? {}), ...patch } }))
+          }
+        />
+      )}
+
+      {block.type === "open_ended" && (
         <ExerciseListEditor
           block={block}
           noun="question"
@@ -1039,6 +1065,64 @@ function BlockEditor({ block, onUpdate, lessonId, isEditable, qc }: any) {
           <Button size="sm" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save Block"}</Button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * How an open-ended block is answered and marked. Kept on the block's `config`
+ * and saved with "Save Block"; the server enforces both.
+ */
+function OpenEndedSettingsFields({
+  config,
+  saved,
+  isEditable,
+  onChange,
+}: {
+  config: unknown;
+  /** The settings as the server applies them, defaults included; null before the block is saved as open-ended. */
+  saved: { answerMode: "text" | "voice"; aiEvaluation: boolean } | null;
+  isEditable: boolean;
+  onChange: (patch: { aiEvaluation?: boolean; answerMode?: "text" | "voice" }) => void;
+}) {
+  // An unsaved choice in this form, else what the server applies.
+  const edited = (config ?? {}) as { answerMode?: unknown; aiEvaluation?: unknown };
+  const settings = {
+    answerMode:
+      edited.answerMode === "voice" || edited.answerMode === "text"
+        ? edited.answerMode
+        : (saved?.answerMode ?? "text"),
+    aiEvaluation:
+      typeof edited.aiEvaluation === "boolean" ? edited.aiEvaluation : (saved?.aiEvaluation ?? true),
+  };
+  return (
+    <div className="space-y-3 rounded-md border border-gray-200 p-3">
+      <div className="space-y-1">
+        <Label className="text-xs text-gray-500">Students answer by</Label>
+        <Select
+          value={settings.answerMode}
+          disabled={!isEditable}
+          onValueChange={(v) => onChange({ answerMode: v as "text" | "voice" })}
+        >
+          <SelectTrigger className="text-sm"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="text">Writing</SelectItem>
+            <SelectItem value="voice">Voice recording</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <label className="flex items-start gap-2">
+        <Checkbox
+          checked={settings.aiEvaluation}
+          disabled={!isEditable}
+          onCheckedChange={(v) => onChange({ aiEvaluation: !!v })}
+        />
+        <span className="text-xs text-gray-600">
+          <strong>AI evaluates the answer.</strong>{" "}
+          The student gets a mark and feedback. Unticked, the answer is saved
+          without a mark and the student moves on.
+        </span>
+      </label>
     </div>
   );
 }
