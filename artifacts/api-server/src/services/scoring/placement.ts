@@ -112,24 +112,126 @@ const STRONG_AT = 80;
 /** Fewer answers than this and a skill is not called strong or weak. */
 const MIN_QUESTIONS_PER_SKILL = 2;
 
+// ─── Rules an administrator may change ────────────────────────────────────────
+
+/** Every level placement can assign, lowest first. */
+export const PLACEMENT_LEVEL_CODES = [
+  "A1.1", "A1.2", "A2.1", "A2.2", "B1.1", "B1.2",
+  "B2.1", "B2.2", "C1.1", "C1.2", "C2.1", "C2.2",
+] as const;
+export type PlacementLevelCode = (typeof PLACEMENT_LEVEL_CODES)[number];
+
+/**
+ * How answers become a level, set at /admin/placement-rules.
+ *
+ * The defaults are the constants above, so a site that never opens the page
+ * places students exactly as before. What stays out of reach on purpose: the
+ * AI's one-step limit (`applyLevelAdjustment`), which is what stops a model's
+ * mistake from putting a beginner in B2.
+ */
+export interface PlacementRules {
+  /** What a correct answer at each difficulty is worth. */
+  difficultyWeights: Record<Difficulty, number>;
+  /**
+   * The lowest weighted score, 0–100, that places a student at each level.
+   * Null: never assigned by placement. The lowest level in use must be 0, so
+   * every student lands somewhere.
+   */
+  levelThresholds: Record<PlacementLevelCode, number | null>;
+  /** What each marked written answer is worth, as a question weight. 0 shows it without counting it. */
+  writingWeight: number;
+  /** A skill at or below this is a weakness. */
+  weakBelow: number;
+  /** A skill at or above this is a strength. */
+  strongAt: number;
+}
+
+function defaultThresholds(): Record<PlacementLevelCode, number | null> {
+  const out = Object.fromEntries(PLACEMENT_LEVEL_CODES.map((c) => [c, null])) as Record<
+    PlacementLevelCode,
+    number | null
+  >;
+  for (const t of BAND_THRESHOLDS) out[`${t.band}.${t.half}` as PlacementLevelCode] = t.min;
+  return out;
+}
+
+export const DEFAULT_PLACEMENT_RULES: PlacementRules = {
+  difficultyWeights: { ...DIFFICULTY_WEIGHT },
+  levelThresholds: defaultThresholds(),
+  // Weighted as a B1 question: producing language is worth more than
+  // recognising it, but one prompt should not swing the whole result.
+  writingWeight: DIFFICULTY_WEIGHT.B1,
+  weakBelow: WEAK_BELOW,
+  strongAt: STRONG_AT,
+};
+
+/**
+ * What is wrong with a set of rules, in words an administrator can act on.
+ * Empty when they are usable. The shape (numbers in range) is checked by the
+ * route's schema; this is the part a schema cannot say.
+ */
+export function placementRulesProblems(rules: PlacementRules): string[] {
+  const problems: string[] = [];
+  const used = PLACEMENT_LEVEL_CODES.filter((c) => rules.levelThresholds[c] !== null);
+
+  if (used.length === 0) {
+    problems.push("At least one level must have a minimum score.");
+  } else {
+    if (rules.levelThresholds[used[0]] !== 0) {
+      problems.push(`The lowest level in use (${used[0]}) must start at 0, so every student is placed.`);
+    }
+    for (let i = 1; i < used.length; i++) {
+      const prev = rules.levelThresholds[used[i - 1]] as number;
+      const cur = rules.levelThresholds[used[i]] as number;
+      if (cur <= prev) {
+        problems.push(`${used[i]} must need a higher score than ${used[i - 1]} (${cur} is not above ${prev}).`);
+      }
+    }
+  }
+
+  if (rules.weakBelow >= rules.strongAt) {
+    problems.push("The weakness cut-off must be below the strength cut-off.");
+  }
+  if (Object.values(rules.difficultyWeights).some((w) => !(w > 0))) {
+    problems.push("Every difficulty must be worth more than 0.");
+  }
+  return problems;
+}
+
+/** The level a weighted score earns under these rules. */
+export function levelForScore(overall: number, rules: PlacementRules): PlacementLevelCode {
+  for (let i = PLACEMENT_LEVEL_CODES.length - 1; i >= 0; i--) {
+    const code = PLACEMENT_LEVEL_CODES[i];
+    const min = rules.levelThresholds[code];
+    if (min !== null && overall >= min) return code;
+  }
+  // Only reachable with rules that failed validation; the floor is the safe answer.
+  return PLACEMENT_LEVEL_CODES[0];
+}
+
 const clamp = (n: number): number =>
   Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
 
 /**
  * Score a completed placement test.
  *
- * `writingScore` comes from the open-answer grader when the test included a
- * written question. It is folded in as its own skill rather than averaged into
- * the total blind, so a student who writes well but guesses badly at grammar
- * shows up as exactly that.
+ * `writing` is the open-answer grader's score for each written answer that
+ * could be marked — one number, or one per written question. It is folded in
+ * as its own skill rather than averaged into the total blind, so a student who
+ * writes well but guesses badly at grammar shows up as exactly that.
  */
 export function scorePlacement(
   answers: AnsweredQuestion[],
-  writingScore?: number | null,
+  writing?: number | number[] | null,
+  rules: PlacementRules = DEFAULT_PLACEMENT_RULES,
 ): PlacementOutcome {
+  const weightOf = (d: Difficulty) => rules.difficultyWeights[d] ?? 1;
+  const writingScores = (writing == null ? [] : Array.isArray(writing) ? writing : [writing]).map(clamp);
+
   const skills: SkillScore[] = PLACEMENT_SKILLS.map((skill) => {
-    if (skill === "writing" && writingScore != null) {
-      return { skill, score: clamp(writingScore), answered: 1 };
+    if (skill === "writing" && writingScores.length > 0) {
+      const mean = writingScores.reduce((a, b) => a + b, 0) / writingScores.length;
+      return { skill, score: Math.round(mean), answered: writingScores.length };
     }
 
     const rows = answers.filter((a) => a.skill === skill);
@@ -138,7 +240,7 @@ export function scorePlacement(
     let earned = 0;
     let possible = 0;
     for (const row of rows) {
-      const weight = DIFFICULTY_WEIGHT[row.difficulty] ?? 1;
+      const weight = weightOf(row.difficulty);
       possible += weight;
       if (row.correct) earned += weight;
     }
@@ -156,23 +258,19 @@ export function scorePlacement(
   let earned = 0;
   let possible = 0;
   for (const row of answers) {
-    const weight = DIFFICULTY_WEIGHT[row.difficulty] ?? 1;
+    const weight = weightOf(row.difficulty);
     possible += weight;
     if (row.correct) earned += weight;
   }
-  if (writingScore != null) {
-    // Weighted as a B1 question: producing language is worth more than
-    // recognising it, but one prompt should not swing the whole result.
-    const weight = DIFFICULTY_WEIGHT.B1;
-    possible += weight;
-    earned += (clamp(writingScore) / 100) * weight;
+  for (const score of writingScores) {
+    possible += rules.writingWeight;
+    earned += (score / 100) * rules.writingWeight;
   }
 
   const overall = possible > 0 ? Math.round((earned / possible) * 100) : 0;
 
-  const placed =
-    BAND_THRESHOLDS.find((t) => overall >= t.min) ??
-    BAND_THRESHOLDS[BAND_THRESHOLDS.length - 1];
+  const levelCode = levelForScore(overall, rules);
+  const [band, half] = levelCode.split(".") as [Difficulty, string];
 
   const reportable = skills.filter(
     (s) => s.score !== null && s.answered >= MIN_QUESTIONS_PER_SKILL,
@@ -181,18 +279,85 @@ export function scorePlacement(
   return {
     overall,
     skills,
-    band: placed.band,
-    half: placed.half,
-    levelCode: `${placed.band}.${placed.half}`,
+    band,
+    half: half === "2" ? 2 : 1,
+    levelCode,
     strengths: reportable
-      .filter((s) => (s.score as number) >= STRONG_AT)
+      .filter((s) => (s.score as number) >= rules.strongAt)
       .sort((a, b) => (b.score as number) - (a.score as number))
       .map((s) => s.skill),
     weaknesses: reportable
-      .filter((s) => (s.score as number) <= WEAK_BELOW)
+      .filter((s) => (s.score as number) <= rules.weakBelow)
       .sort((a, b) => (a.score as number) - (b.score as number))
       .map((s) => s.skill),
   };
+}
+
+/** A question as the preview needs it: what it is worth and how easy it is to guess. */
+export interface PreviewQuestion {
+  type: "choice" | "written";
+  difficulty: Difficulty;
+  /** Choices offered; a guess is right one time in this many. */
+  optionCount: number;
+}
+
+export interface PlacementScenario {
+  /** "guess", "none", or "upTo:B1" — every choice question up to B1 right, the rest wrong. */
+  key: string;
+  overall: number;
+  levelCode: PlacementLevelCode;
+}
+
+/**
+ * What typical students would be placed at under a set of rules, on the
+ * questions actually in the test — so an administrator sees the effect of a
+ * change before any student does. Written answers are taken at
+ * `writingScore` in every scenario, or left unmarked when it is null.
+ */
+export function placementScenarios(
+  questions: PreviewQuestion[],
+  rules: PlacementRules,
+  writingScore: number | null,
+): PlacementScenario[] {
+  const choice = questions.filter((q) => q.type === "choice");
+  const writing = writingScore === null ? [] : questions.filter((q) => q.type === "written").map(() => writingScore);
+  const answers = (right: (q: PreviewQuestion) => boolean): AnsweredQuestion[] =>
+    choice.map((q) => ({ skill: "grammar", difficulty: q.difficulty, correct: right(q) }));
+  const scenario = (key: string, overall: number): PlacementScenario => ({
+    key,
+    overall,
+    levelCode: levelForScore(overall, rules),
+  });
+
+  // Guessing is an expectation, not a set of answers: each choice question is
+  // worth its weight divided by the number of choices.
+  let possible = 0;
+  let expected = 0;
+  for (const q of choice) {
+    const w = rules.difficultyWeights[q.difficulty];
+    possible += w;
+    expected += w / Math.max(1, q.optionCount);
+  }
+  for (const s of writing) {
+    possible += rules.writingWeight;
+    expected += (clamp(s) / 100) * rules.writingWeight;
+  }
+
+  const out = [
+    scenario("guess", possible > 0 ? Math.round((expected / possible) * 100) : 0),
+    scenario("none", scorePlacement(answers(() => false), writing, rules).overall),
+  ];
+  for (const band of BANDS) {
+    if (!choice.some((q) => q.difficulty === band)) continue;
+    const upTo = BANDS.indexOf(band);
+    out.push(
+      scenario(
+        `upTo:${band}`,
+        scorePlacement(answers((q) => BANDS.indexOf(q.difficulty) <= upTo), writing, rules).overall,
+      ),
+    );
+  }
+  return out;
 }
 
 /**
