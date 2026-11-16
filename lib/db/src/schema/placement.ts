@@ -96,3 +96,18 @@ export const placementResultsTable = pgTable("placement_results", {
 }));
 
 export type PlacementResult = typeof placementResultsTable.$inferSelect;
+
+/**
+ * How placement turns answers into a level, set at /admin/placement-rules.
+ * Exactly one row, id = 1. Null rules mean the defaults in the API's
+ * scoring/placement.ts, which is what a new site starts with.
+ */
+export const placementSettingsTable = pgTable("placement_settings", {
+  id: integer("id").primaryKey().default(1),
+  rules: jsonb("rules"),
+  updatedBy: integer("updated_by").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
