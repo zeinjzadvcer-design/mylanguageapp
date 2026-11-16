@@ -13,6 +13,8 @@ export const NOTIFICATION_KINDS = [
   "lesson_reminder",
   "quiz_available",
   "evaluation_available",
+  /** Written and sent by an admin, to every student or to chosen plans. */
+  "announcement",
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
@@ -49,3 +51,27 @@ export const notificationsTable = pgTable(
 );
 
 export type Notification = typeof notificationsTable.$inferSelect;
+
+/**
+ * Announcements an admin has sent, one row per send.
+ *
+ * Each student's copy is an ordinary notification (kind "announcement") made
+ * when it is sent, so the bell needs nothing new. This row is the record of
+ * what was said, to whom, by whom, and how many students it reached.
+ */
+export const announcementsTable = pgTable("announcements", {
+  id: serial("id").primaryKey(),
+  title: text("title"),
+  titleAr: text("title_ar"),
+  body: text("body"),
+  bodyAr: text("body_ar"),
+  /** An app path the notification opens, such as /lessons. */
+  link: text("link"),
+  /** The plans it went to, "free" included. Null means every student. */
+  planCodes: text("plan_codes").array(),
+  recipientCount: integer("recipient_count").notNull().default(0),
+  createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Announcement = typeof announcementsTable.$inferSelect;
