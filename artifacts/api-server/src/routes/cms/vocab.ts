@@ -6,6 +6,7 @@ import { Router, type IRouter } from "express";
 import { eq, and, isNull, ilike, or } from "drizzle-orm";
 import { db, pool, vocabularyTable } from "@workspace/db";
 import { requirePermission } from "../../middlewares/auth";
+import { lessonIdFrom, refuseLessonChange } from "./lesson-guard";
 import { audit } from "../../services/cms-audit";
 import { invalidate, invalidatePrefix, CK } from "../../services/cache";
 
@@ -43,13 +44,17 @@ router.get("/cms/vocabulary", requirePermission("content.view"), async (req, res
 });
 
 router.post("/cms/vocabulary", requirePermission("content.edit"), async (req, res): Promise<void> => {
-  const { levelId, lessonId, word, translation, definition, partOfSpeech,
+  const { levelId, word, translation, definition, partOfSpeech,
     exampleSentence, exampleSentenceAr, pronunciation, audioNote,
     difficulty, tags } = req.body;
+  const lessonId = lessonIdFrom(req.body.lessonId);
+  if (lessonId === "invalid") { res.status(400).json({ error: "Invalid lesson ID" }); return; }
 
   if (!levelId || !word || !translation) {
     res.status(400).json({ error: "levelId, word, and translation are required" }); return;
   }
+  // A word attached to a lesson is part of that lesson's content.
+  if (lessonId && (await refuseLessonChange(req, res, lessonId))) return;
 
   const [item] = await db.insert(vocabularyTable).values({
     levelId, lessonId: lessonId ?? null,
@@ -73,12 +78,20 @@ router.patch("/cms/vocabulary/:id", requirePermission("content.edit"), async (re
 
   const [existing] = await db.select().from(vocabularyTable).where(eq(vocabularyTable.id, id)).limit(1);
   if (!existing || existing.deletedAt) { res.status(404).json({ error: "Vocabulary item not found" }); return; }
+  // Both the lesson it leaves and the lesson it joins must be the caller's to change.
+  const newLessonId = lessonIdFrom(req.body.lessonId);
+  if (newLessonId === "invalid") { res.status(400).json({ error: "Invalid lesson ID" }); return; }
+  for (const lessonId of new Set([existing.lessonId, newLessonId].filter((v): v is number => typeof v === "number"))) {
+    if (await refuseLessonChange(req, res, lessonId)) return;
+  }
 
   const allowed = ["levelId", "lessonId", "word", "translation", "definition",
     "partOfSpeech", "exampleSentence", "exampleSentenceAr",
     "pronunciation", "audioNote", "difficulty", "tags"];
   const update: Record<string, unknown> = { updatedAt: new Date() };
   for (const f of allowed) { if (req.body[f] !== undefined) update[f] = req.body[f]; }
+  // The id the guard checked, not the raw body value.
+  if (newLessonId !== undefined) update.lessonId = newLessonId;
 
   const [item] = await db.update(vocabularyTable).set(update).where(eq(vocabularyTable.id, id)).returning();
   await audit(req.session.userId!, "update", "vocabulary", id, null, null);
@@ -98,6 +111,7 @@ router.delete("/cms/vocabulary/:id", requirePermission("content.edit"), async (r
 
   const [item] = await db.select().from(vocabularyTable).where(eq(vocabularyTable.id, id)).limit(1);
   if (!item) { res.status(404).json({ error: "Vocabulary item not found" }); return; }
+  if (item.lessonId && (await refuseLessonChange(req, res, item.lessonId))) return;
 
   await db.update(vocabularyTable).set({ deletedAt: new Date() }).where(eq(vocabularyTable.id, id));
   await audit(req.session.userId!, "delete", "vocabulary", id, null, null, { word: item.word });
